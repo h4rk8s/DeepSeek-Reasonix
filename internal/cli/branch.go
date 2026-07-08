@@ -132,6 +132,7 @@ func (m *chatTUI) replayActiveBranch(title string) {
 	m.planMode = false
 	m.ctrl.SetPlanMode(false)
 	m.sessionSwitch = true
+	m.syncWindowTitle()
 
 	// Discard the previous session's transcript so the viewport only shows the
 	// newly loaded session. Without this the transcript accumulates across
@@ -146,8 +147,5 @@ func (m *chatTUI) replayActiveBranch(title string) {
 	if title != "" {
 		m.commitLine(dim("  -- " + title + " --"))
 	}
-	m.commitTranscriptSource(transcriptSource{
-		kind:    transcriptSourceReplayBundle,
-		history: append([]provider.Message(nil), m.ctrl.History()...),
-	})
+	m.replayHistory(append([]provider.Message(nil), m.ctrl.History()...), transcriptContentWidth(m.width, m.nativeScrollback))
 }

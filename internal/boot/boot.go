@@ -1759,6 +1759,34 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 		}
 	}
 
+	var imageUnderstanding control.ImageUnderstanding
+	if cmd := strings.TrimSpace(cfg.Agent.ImageUnderstandingCommand); cmd != "" {
+		iu, err := control.NewCommandImageUnderstandingForRoot(cmd, root)
+		if err != nil {
+			slog.Warn("image understanding command disabled", "command", cmd, "err", err)
+			sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: fmt.Sprintf("image_understanding_command disabled: %v", err)})
+		} else {
+			imageUnderstanding = iu
+		}
+	} else if im := strings.TrimSpace(cfg.Agent.ImageUnderstandingModel); im != "" {
+		ie, ok := cfg.ResolveModel(im)
+		if !ok {
+			slog.Warn("image understanding model is not a configured provider", "model", im)
+			sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: fmt.Sprintf("image_understanding_model %q not found — image understanding disabled", im)})
+		} else if !config.EffectiveVision(ie) {
+			slog.Warn("image understanding model is not marked vision-capable", "model", im)
+			sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: fmt.Sprintf("image_understanding_model %q is not marked vision-capable — image understanding disabled", im)})
+		} else {
+			visionProv, err := NewProviderWithProxy(ie, proxySpec)
+			if err != nil {
+				slog.Warn("image understanding provider construction failed", "model", im, "err", err)
+				sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: fmt.Sprintf("image understanding construction failed: %v — disabled", err)})
+			} else {
+				imageUnderstanding = control.NewBillableProviderImageUnderstanding(visionProv, ie.Price, sink)
+			}
+		}
+	}
+
 	ctrlOpts := control.Options{
 		TaskBudget:                     taskBudgetFromConfig(cfg),
 		GoalTokenBudget:                cfg.Agent.GoalTokenBudget,
@@ -1816,6 +1844,8 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 		ReasoningLanguage:      cfg.ReasoningLanguage(),
 		DisableColdResumePrune: !cfg.ColdResumePruneEnabled(),
 		Shell:                  shell,
+		ImageUnderstanding:     imageUnderstanding,
+		ImageUnderstandingLog:  cfg.UIImageUnderstandingLog(),
 		ApprovalTimeout:        opts.ApprovalTimeout,
 		RuntimeProfile:         runtimeProfile,
 		Ablation:               opts.Ablation,

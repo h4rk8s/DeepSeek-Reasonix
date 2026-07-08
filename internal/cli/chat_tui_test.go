@@ -299,9 +299,9 @@ func TestCompletionMenuPadsWithNonBreakingSpaces(t *testing.T) {
 }
 
 // TestTranscriptViewportSizing proves the viewport tracks the terminal size and
-// gets the rows left over after the pinned bottom region (input box + the one
-// available information row = 4 with an empty 1-line composer and no Git or
-// telemetry), and is fed the committed transcript.
+// gets the rows left over after the pinned bottom region (input box + the
+// three-row status block = 6 with an empty 1-line composer), and is fed the
+// committed transcript.
 func TestTranscriptViewportSizing(t *testing.T) {
 	ctrl := control.New(control.Options{})
 	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 80)
@@ -309,36 +309,31 @@ func TestTranscriptViewportSizing(t *testing.T) {
 	m0, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = m0.(chatTUI)
 
-	if got := m.bottomRows(); got != 4 {
-		t.Fatalf("bottomRows with an empty composer = %d, want 4 (input 1 + border 2 + status 1)", got)
+	if got := m.bottomRows(); got != 6 {
+		t.Fatalf("bottomRows with an empty composer = %d, want 6 (input 1 + border 2 + status 3)", got)
 	}
 	if m.viewport.Width() != 79 {
 		t.Errorf("viewport content width = %d, want 79 (terminal 80 - 1 scrollbar column)", m.viewport.Width())
 	}
-	if want := m.transcriptHeight(); m.viewport.Height() != want || want != 20 {
-		t.Errorf("viewport height = %d, transcriptHeight = %d, want 20 (24-4)", m.viewport.Height(), want)
+	if want := m.transcriptHeight(); m.viewport.Height() != want || want != 18 {
+		t.Errorf("viewport height = %d, transcriptHeight = %d, want 18 (24-6)", m.viewport.Height(), want)
 	}
 	if m.viewport.TotalLineCount() == 0 {
 		t.Errorf("viewport should hold the committed banner after the first resize")
 	}
 }
 
-// TestStatusLineWrapAccounting proves that computeStatusLineCount correctly
-// predicts the rendered row count of the status block (working + mode/state line
-// + data line) when wrapping is triggered on a narrow terminal, and that
-// bottomRows reserves the right height so the viewport fills the screen without
-// overlap.
+// TestStatusLineWrapAccounting proves that the adaptive status footer accounts
+// for semantic wrapping on narrow terminals without overlapping the composer.
 func TestStatusLineWrapAccounting(t *testing.T) {
 	ctrl := control.New(control.Options{})
 	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 30)
 
-	// Narrow terminal: mode+state line and data line will both wrap.
 	m0, _ := m.Update(tea.WindowSizeMsg{Width: 30, Height: 12})
 	m = m0.(chatTUI)
 
-	// At width 30 the status block should be detectably wrapped.
 	if m.statusLineCount <= 2 {
-		t.Fatalf("statusLineCount on a narrow terminal (30 cols) = %d, want > 2 (wrapping should be detected)", m.statusLineCount)
+		t.Fatalf("statusLineCount on a narrow terminal (30 cols) = %d, want > 2", m.statusLineCount)
 	}
 
 	// Verify the height budget covers the full screen.
@@ -365,14 +360,14 @@ func TestStatusLineWrapAccounting(t *testing.T) {
 		t.Fatalf("statusLineCount when running (%d) should be > idle (%d)", runCount, idleCount)
 	}
 
-	// Reset and test that a custom statusline command is also counted.
+	// Reset and test that a custom statusline command is still fixed-height.
 	m.state = tuiIdle
 	m.statuslineCmd = "custom"
 	m.statuslineOut = "model: claude-3 · ctx: 45% · tokens: 128K · cache: 87% · rate: 1.2s · jobs: 3 running · balance: ¥152.30"
 	m0, _ = m.Update(tea.WindowSizeMsg{Width: 35, Height: 12})
 	m = m0.(chatTUI)
 	if m.statusLineCount <= 2 {
-		t.Fatalf("statusLineCount with custom statusline on 35 cols = %d, want > 2 (custom output should wrap)", m.statusLineCount)
+		t.Fatalf("statusLineCount with custom statusline on 35 cols = %d, want > 2", m.statusLineCount)
 	}
 	if got := m.transcriptHeight() + m.bottomRows(); got != m.height {
 		t.Fatalf("with custom statusline: transcriptHeight(%d) + bottomRows(%d) = %d, want %d",
@@ -380,10 +375,23 @@ func TestStatusLineWrapAccounting(t *testing.T) {
 	}
 }
 
+func TestCompactStatusLineNeverWraps(t *testing.T) {
+	line := "  YOLO · tool approvals skipped (shift+tab toggles plan · ctrl+y yolo) · effort auto · 2026-07-06-reasonix-dev@jawa/reasonix-composer-state-visibility (+72 -0)"
+	got := compactStatusLine(line, 46)
+	if strings.Contains(got, "\n") {
+		t.Fatalf("compactStatusLine wrapped: %q", got)
+	}
+	if w := ansi.StringWidth(got); w > 46 {
+		t.Fatalf("compactStatusLine width = %d, want <= 46: %q", w, got)
+	}
+	if !strings.Contains(got, "…") {
+		t.Fatalf("compactStatusLine should use ellipsis for overflow: %q", got)
+	}
+}
+
 // TestStatusLineRenderedHeightMatchesBudget proves that the actual rendered
 // line count of View()'s bottom area matches what bottomRows() predicts,
-// specifically at the CJK 2-char-overflow boundary where an off-by-one would
-// hide the bottom row of the viewport.
+// including at CJK overflow boundaries where semantic groups wrap.
 func TestStatusLineRenderedHeightMatchesBudget(t *testing.T) {
 	ctrl := control.New(control.Options{})
 	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 46)
@@ -432,6 +440,46 @@ func TestStatusLineRenderedHeightMatchesBudget(t *testing.T) {
 	}
 }
 
+func TestRunningQueueAndTodoKeepComposerVisible(t *testing.T) {
+	m := newInboxTestChatTUI(t)
+	m.width = 54
+	m.state = tuiRunning
+	m.elapsed = 157
+	m.turnTokens = 4900
+	m.seedInbox(
+		"重启再进，对于这类检测你过一下，再看看有什么问题",
+		"或者叫 sandboxprobe",
+		"之前 iOS 有一个，由于检测是否能检测到我们的模拟器或者其他属性",
+		"现在 APK 使用没问题，但是检测有问题",
+		"不过现在时区没问题了，没有弹出验证码了",
+	)
+	m.todoArgs = `{"todos":[
+		{"content":"诊断 region 信号","status":"in_progress","activeForm":"诊断 region 信号"},
+		{"content":"检查直播状态","status":"pending"},
+		{"content":"整理验证命令","status":"pending"},
+		{"content":"汇报风险","status":"pending"}
+	]}`
+	m.input.SetValue("保留输入框")
+
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 54, Height: 20})
+	m = next.(chatTUI)
+
+	view := ansi.Strip(m.View().Content)
+	if lines := strings.Count(view, "\n") + 1; lines != m.height {
+		t.Fatalf("View() total lines = %d, want %d:\n%s", lines, m.height, view)
+	}
+	if !strings.Contains(view, "保留输入框") {
+		t.Fatalf("composer draft was pushed out of the frame:\n%s", view)
+	}
+	if !strings.Contains(view, "[5]") {
+		t.Fatalf("queued feedback preview should still render above composer:\n%s", view)
+	}
+	if got, want := m.transcriptHeight()+m.bottomRows(), m.height; got != want {
+		t.Fatalf("transcriptHeight(%d) + bottomRows(%d) = %d, want %d",
+			m.transcriptHeight(), m.bottomRows(), got, want)
+	}
+}
+
 func TestManualNewlineGrowsComposerWithoutHidingFirstLine(t *testing.T) {
 	ctrl := control.New(control.Options{})
 	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 40)
@@ -451,16 +499,79 @@ func TestManualNewlineGrowsComposerWithoutHidingFirstLine(t *testing.T) {
 	}
 }
 
-func TestEmptyComposerShowsOnlyPrompt(t *testing.T) {
+func TestConfiguredEmptyComposerShowsOnlyPrompt(t *testing.T) {
 	ctrl := control.New(control.Options{})
 	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 60)
+	setChatTextareaPrompt(&m.input, "› ")
 	m0, _ := m.Update(tea.WindowSizeMsg{Width: 60, Height: 16})
 	m = m0.(chatTUI)
 
 	firstLine := strings.Split(ansi.Strip(m.renderComposerInput()), "\n")[0]
-	if strings.TrimSpace(firstLine) != "❯" {
+	if strings.TrimSpace(firstLine) != "›" {
 		t.Fatalf("empty composer = %q, want only the prompt", firstLine)
 	}
+}
+
+func TestComposerPromptOnlyOnFirstLineForManualNewlines(t *testing.T) {
+	ctrl := control.New(control.Options{})
+	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 40)
+	setChatTextareaPrompt(&m.input, "› ")
+
+	m0, _ := m.Update(tea.WindowSizeMsg{Width: 40, Height: 12})
+	m = m0.(chatTUI)
+	m.input.SetValue("fsafdas\nfdsfdsa\n")
+
+	view := ansi.Strip(m.View().Content)
+	if got := strings.Count(view, "› "); got != 1 {
+		t.Fatalf("composer prompt occurrences = %d, want 1:\n%s", got, view)
+	}
+	if !strings.Contains(view, "› fsafdas") {
+		t.Fatalf("first composer line should keep the prompt:\n%s", view)
+	}
+	if strings.Contains(view, "› fdsfdsa") {
+		t.Fatalf("continuation composer line should be indented without another prompt:\n%s", view)
+	}
+}
+
+func TestComposerPromptAlignsWithSubmittedPrompt(t *testing.T) {
+	prevColor := activeColorProfile
+	activeColorProfile = colorprofile.ANSI256
+	defer func() { activeColorProfile = prevColor }()
+
+	ctrl := control.New(control.Options{})
+	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 42)
+	setChatTextareaPrompt(&m.input, "› ")
+
+	m0, _ := m.Update(tea.WindowSizeMsg{Width: 42, Height: 12})
+	m = m0.(chatTUI)
+	m.commitLine(renderUserBubble("历史输入", m.width, m.planMode))
+	m.transcriptDirty = true
+	m0, _ = m.Update(tea.WindowSizeMsg{Width: 42, Height: 12})
+	m = m0.(chatTUI)
+	m.input.SetValue("正在输入")
+
+	view := ansi.Strip(m.View().Content)
+	submitted := firstLineContaining(view, "› 历史输入")
+	composer := firstLineContaining(view, "› 正在输入")
+	if submitted == "" {
+		t.Fatalf("submitted prompt line missing:\n%s", view)
+	}
+	if composer == "" {
+		t.Fatalf("composer prompt line missing:\n%s", view)
+	}
+	if got, want := strings.Index(composer, "›"), strings.Index(submitted, "›"); got != want {
+		t.Fatalf("composer prompt column = %d, want submitted prompt column %d\nsubmitted=%q\ncomposer=%q\nview:\n%s",
+			got, want, submitted, composer, view)
+	}
+}
+
+func firstLineContaining(s, needle string) string {
+	for _, line := range strings.Split(s, "\n") {
+		if strings.Contains(line, needle) {
+			return line
+		}
+	}
+	return ""
 }
 
 func TestManualNewlineCanExceedVisibleComposerRows(t *testing.T) {
@@ -565,8 +676,8 @@ func TestTranscriptResizeRerendersCommittedMarkdownAtNewWidth(t *testing.T) {
 	if newLines >= oldLines {
 		t.Fatalf("wider transcript kept old hard wrapping: old lines=%d new lines=%d\n%s", oldLines, newLines, newRendered)
 	}
-	if got := m.transcriptSources[answer]; got.kind != transcriptSourceMarkdown || got.raw != raw {
-		t.Fatalf("committed answer lost markdown source: %+v", got)
+	if got := m.transcriptSources[answer]; got.kind != transcriptSourceAssistant || got.raw != raw {
+		t.Fatalf("committed answer lost assistant source: %+v", got)
 	}
 }
 
@@ -602,6 +713,24 @@ func TestTranscriptResizeKeepsScrolledReaderOnSameBlock(t *testing.T) {
 	newThirdBlockStart := newSecondBlockStart + transcriptBlockLineCount(m.transcript[1], newContentWidth)
 	if offset := m.viewport.YOffset(); offset < newSecondBlockStart || offset >= newThirdBlockStart {
 		t.Fatalf("resize moved reader outside ANCHOR-1 block: offset=%d block=[%d,%d)", offset, newSecondBlockStart, newThirdBlockStart)
+	}
+}
+
+func TestComposerPromptOnlyOnFirstLineForSoftWraps(t *testing.T) {
+	ctrl := control.New(control.Options{})
+	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 24)
+	setChatTextareaPrompt(&m.input, "› ")
+
+	m0, _ := m.Update(tea.WindowSizeMsg{Width: 24, Height: 12})
+	m = m0.(chatTUI)
+	m.input.SetValue(strings.Repeat("x", 80))
+
+	if got := m.input.Height(); got <= 1 {
+		t.Fatalf("input height after soft wrap = %d, want > 1", got)
+	}
+	view := ansi.Strip(m.View().Content)
+	if got := strings.Count(view, "› "); got != 1 {
+		t.Fatalf("composer prompt occurrences after soft wrap = %d, want 1:\n%s", got, view)
 	}
 }
 
@@ -857,6 +986,21 @@ func TestMarkdownDividerFitsTranscriptContentWidth(t *testing.T) {
 	}
 	if w := visibleWidth(lines[0]); w != m.viewport.Width() {
 		t.Fatalf("markdown divider width = %d, want %d: %q", w, m.viewport.Width(), lines[0])
+	}
+}
+
+func TestWrapTranscriptEntriesMatchesJoinedTranscript(t *testing.T) {
+	entries := []string{"first", "second\nthird", ""}
+	wrapped, lineMap := wrapTranscriptEntries(entries, 80)
+	want := wrapTranscript(strings.Join(entries, "\n"), 80)
+	if wrapped != want {
+		t.Fatalf("wrapped entries differ from joined transcript:\nwant %q\ngot  %q", want, wrapped)
+	}
+	if len(lineMap) != len(strings.Split(wrapped, "\n")) {
+		t.Fatalf("line map length = %d, wrapped lines = %d", len(lineMap), len(strings.Split(wrapped, "\n")))
+	}
+	if lineMap[0] != 0 || lineMap[1] != 1 || lineMap[2] != 1 {
+		t.Fatalf("unexpected line map: %v", lineMap)
 	}
 }
 
@@ -1343,6 +1487,24 @@ func TestIngestEventRoutesByKind(t *testing.T) {
 	}
 }
 
+func TestIngestUsageCanHideTranscriptLine(t *testing.T) {
+	m := newTestChatTUI()
+	m.showTurnUsage = false
+	m.ingestEvent(event.Event{Kind: event.Usage, Usage: &provider.Usage{
+		PromptTokens:     1000,
+		CompletionTokens: 200,
+		TotalTokens:      1200,
+		CacheHitTokens:   900,
+		CacheMissTokens:  100,
+	}})
+	if m.turnTokens != 200 {
+		t.Fatalf("turnTokens = %d, want usage completion tokens retained", m.turnTokens)
+	}
+	if got := *m.pendingCommit; len(got) != 0 {
+		t.Fatalf("hidden usage should not commit transcript lines, got %v", got)
+	}
+}
+
 func TestIngestEventShowsReasoningInVerboseMode(t *testing.T) {
 	m := newTestChatTUI()
 	m.showReasoning = true
@@ -1429,10 +1591,10 @@ func TestUserBubbleIsLightweightTranscriptLine(t *testing.T) {
 		t.Fatalf("user bubble missing prompt text: %q", plain)
 	}
 	if got == plain {
-		t.Fatalf("user bubble should use themed foreground color when color is enabled: %q", got)
+		t.Fatalf("user bubble should use themed block styling when color is enabled: %q", got)
 	}
-	if w := ansi.StringWidth(plain); w > 20 {
-		t.Fatalf("user bubble should not render as a full-width input-like block, width=%d text=%q", w, plain)
+	if w := ansi.StringWidth(plain); w != transcriptContentWidth(80, false) {
+		t.Fatalf("user bubble should render as a transcript-width block, width=%d text=%q", w, plain)
 	}
 }
 
@@ -1570,6 +1732,168 @@ func TestCtrlHomeEndScrollKeyBindings(t *testing.T) {
 	}
 }
 
+func TestJumpToBottomPromptTracksOffscreenOutput(t *testing.T) {
+	ctrl := control.New(control.Options{})
+	ch := make(chan event.Event, 1)
+	notice := agentEventMsg(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: "line"})
+	adv := func(m chatTUI, msg tea.Msg) chatTUI {
+		n, _ := m.Update(msg)
+		return n.(chatTUI)
+	}
+
+	cur := adv(newChatTUI(ctrl, "", ch, 80), tea.WindowSizeMsg{Width: 80, Height: 10})
+	for i := 0; i < 40; i++ {
+		cur = adv(cur, notice)
+	}
+	bottom := cur.viewport.YOffset()
+	cur = adv(cur, tea.MouseWheelMsg{Button: tea.MouseWheelUp})
+	if cur.viewport.AtBottom() {
+		t.Fatal("wheel-up should leave the bottom")
+	}
+	readOffset := cur.viewport.YOffset()
+
+	cur = adv(cur, notice)
+	if got := cur.jumpToBottomNewMessages; got != 1 {
+		t.Fatalf("new-message count = %d, want 1", got)
+	}
+	if got := cur.viewport.YOffset(); got != readOffset {
+		t.Fatalf("offscreen output should preserve reading offset, got %d want %d", got, readOffset)
+	}
+	view := ansi.Strip(cur.View().Content)
+	if !strings.Contains(view, "1 new message (ctrl+End) ↓") {
+		t.Fatalf("view missing jump prompt:\n%s", view)
+	}
+	if cur.viewport.YOffset() == bottom {
+		t.Fatal("new-message prompt should not force-scroll to bottom")
+	}
+}
+
+func TestJumpToBottomPromptVisibleWhenScrolledAway(t *testing.T) {
+	ctrl := control.New(control.Options{})
+	ch := make(chan event.Event, 1)
+	notice := agentEventMsg(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: "line"})
+	adv := func(m chatTUI, msg tea.Msg) chatTUI {
+		n, _ := m.Update(msg)
+		return n.(chatTUI)
+	}
+
+	cur := adv(newChatTUI(ctrl, "", ch, 80), tea.WindowSizeMsg{Width: 80, Height: 10})
+	for i := 0; i < 40; i++ {
+		cur = adv(cur, notice)
+	}
+	cur = adv(cur, tea.MouseWheelMsg{Button: tea.MouseWheelUp})
+	if cur.viewport.AtBottom() {
+		t.Fatal("wheel-up should leave the bottom")
+	}
+	if cur.jumpToBottomNewMessages != 0 {
+		t.Fatalf("plain jump prompt should not count unseen messages, got %d", cur.jumpToBottomNewMessages)
+	}
+	view := ansi.Strip(cur.View().Content)
+	if !strings.Contains(view, "Jump to bottom (ctrl+End) ↓") {
+		t.Fatalf("view missing plain jump prompt:\n%s", view)
+	}
+	if strings.Contains(view, "new message") {
+		t.Fatalf("plain jump prompt should not claim new output:\n%s", view)
+	}
+}
+
+func TestCtrlEndClearsJumpToBottomPrompt(t *testing.T) {
+	ctrl := control.New(control.Options{})
+	ch := make(chan event.Event, 1)
+	notice := agentEventMsg(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: "line"})
+	adv := func(m chatTUI, msg tea.Msg) chatTUI {
+		n, _ := m.Update(msg)
+		return n.(chatTUI)
+	}
+
+	cur := adv(newChatTUI(ctrl, "", ch, 80), tea.WindowSizeMsg{Width: 80, Height: 10})
+	for i := 0; i < 40; i++ {
+		cur = adv(cur, notice)
+	}
+	cur = adv(cur, tea.KeyPressMsg{Code: tea.KeyPgUp})
+	cur = adv(cur, notice)
+	if cur.jumpToBottomNewMessages == 0 {
+		t.Fatal("test did not create a jump-to-bottom prompt")
+	}
+
+	cur = adv(cur, tea.KeyPressMsg{Code: tea.KeyEnd, Mod: tea.ModCtrl})
+	if !cur.viewport.AtBottom() {
+		t.Fatalf("ctrl+end should jump to bottom, YOffset=%d", cur.viewport.YOffset())
+	}
+	if cur.jumpToBottomNewMessages != 0 {
+		t.Fatalf("ctrl+end should clear jump prompt, got %d", cur.jumpToBottomNewMessages)
+	}
+	if strings.Contains(ansi.Strip(cur.View().Content), "new message") {
+		t.Fatalf("jump prompt still rendered after ctrl+end:\n%s", ansi.Strip(cur.View().Content))
+	}
+}
+
+func TestClickPlainJumpToBottomPrompt(t *testing.T) {
+	ctrl := control.New(control.Options{})
+	ch := make(chan event.Event, 1)
+	notice := agentEventMsg(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: "line"})
+	adv := func(m chatTUI, msg tea.Msg) chatTUI {
+		n, _ := m.Update(msg)
+		return n.(chatTUI)
+	}
+
+	cur := adv(newChatTUI(ctrl, "", ch, 80), tea.WindowSizeMsg{Width: 80, Height: 10})
+	for i := 0; i < 40; i++ {
+		cur = adv(cur, notice)
+	}
+	cur = adv(cur, tea.KeyPressMsg{Code: tea.KeyPgUp})
+	if cur.viewport.AtBottom() {
+		t.Fatal("page-up should leave the bottom")
+	}
+	if cur.jumpToBottomNewMessages != 0 {
+		t.Fatalf("test should start with plain jump prompt, got %d unseen messages", cur.jumpToBottomNewMessages)
+	}
+
+	left, right := cur.jumpToBottomPromptBounds(cur.width)
+	cur = adv(cur, tea.MouseClickMsg{Button: tea.MouseLeft, X: (left + right) / 2, Y: cur.viewport.Height()})
+	if !cur.viewport.AtBottom() {
+		t.Fatalf("clicking plain jump prompt should jump to bottom, YOffset=%d", cur.viewport.YOffset())
+	}
+	if cur.sel.active {
+		t.Fatal("clicking plain jump prompt should not start transcript selection")
+	}
+	if strings.Contains(ansi.Strip(cur.View().Content), "Jump to bottom") {
+		t.Fatalf("plain jump prompt still rendered after click:\n%s", ansi.Strip(cur.View().Content))
+	}
+}
+
+func TestClickJumpToBottomPromptClearsIt(t *testing.T) {
+	ctrl := control.New(control.Options{})
+	ch := make(chan event.Event, 1)
+	notice := agentEventMsg(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: "line"})
+	adv := func(m chatTUI, msg tea.Msg) chatTUI {
+		n, _ := m.Update(msg)
+		return n.(chatTUI)
+	}
+
+	cur := adv(newChatTUI(ctrl, "", ch, 80), tea.WindowSizeMsg{Width: 80, Height: 10})
+	for i := 0; i < 40; i++ {
+		cur = adv(cur, notice)
+	}
+	cur = adv(cur, tea.KeyPressMsg{Code: tea.KeyPgUp})
+	cur = adv(cur, notice)
+	if cur.jumpToBottomNewMessages == 0 {
+		t.Fatal("test did not create a jump-to-bottom prompt")
+	}
+
+	left, right := cur.jumpToBottomPromptBounds(cur.width)
+	cur = adv(cur, tea.MouseClickMsg{Button: tea.MouseLeft, X: (left + right) / 2, Y: cur.viewport.Height()})
+	if !cur.viewport.AtBottom() {
+		t.Fatalf("clicking jump prompt should jump to bottom, YOffset=%d", cur.viewport.YOffset())
+	}
+	if cur.jumpToBottomNewMessages != 0 {
+		t.Fatalf("clicking jump prompt should clear it, got %d", cur.jumpToBottomNewMessages)
+	}
+	if cur.sel.active {
+		t.Fatal("clicking jump prompt should not start transcript selection")
+	}
+}
+
 func TestMouseWheelAndPageKeysScrollTranscript(t *testing.T) {
 	ctrl := control.New(control.Options{})
 	ch := make(chan event.Event, 1)
@@ -1614,6 +1938,46 @@ func TestMouseWheelAndPageKeysScrollTranscript(t *testing.T) {
 	}
 }
 
+func TestMouseSelectionReleaseStopsDragBeforeHoverAndWheel(t *testing.T) {
+	ctrl := control.New(control.Options{})
+	ch := make(chan event.Event, 1)
+	adv := func(m chatTUI, msg tea.Msg) chatTUI {
+		n, _ := m.Update(msg)
+		return n.(chatTUI)
+	}
+
+	cur := adv(newChatTUI(ctrl, "", ch, 80), tea.WindowSizeMsg{Width: 80, Height: 10})
+	for i := 0; i < 40; i++ {
+		cur = adv(cur, agentEventMsg(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: fmt.Sprintf("line %02d abcdefghijklmnopqrstuvwxyz", i)}))
+	}
+	cur.viewport.GotoTop()
+
+	cur = adv(cur, tea.MouseClickMsg{Button: tea.MouseLeft, X: 0, Y: 1})
+	cur = adv(cur, tea.MouseMotionMsg{Button: tea.MouseLeft, X: 12, Y: 2})
+	cur = adv(cur, tea.MouseReleaseMsg{Button: tea.MouseLeft, X: 12, Y: 2})
+	if !cur.sel.active || cur.sel.empty() {
+		t.Fatalf("drag release should leave a visible copied selection, got %+v", cur.sel)
+	}
+	if cur.selecting {
+		t.Fatal("mouse release must end the live selection drag")
+	}
+	before := cur.sel
+
+	cur = adv(cur, tea.MouseMotionMsg{X: 30, Y: 4})
+	if cur.sel != before {
+		t.Fatalf("hover after release changed selection: got %+v want %+v", cur.sel, before)
+	}
+
+	offsetBefore := cur.viewport.YOffset()
+	cur = adv(cur, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	if got := cur.viewport.YOffset(); got <= offsetBefore {
+		t.Fatalf("wheel after release should still scroll transcript, got offset %d <= %d", got, offsetBefore)
+	}
+	if cur.sel != before {
+		t.Fatalf("wheel after release changed selection: got %+v want %+v", cur.sel, before)
+	}
+}
+
 func TestRunningStreamPreservesScrolledReadingPosition(t *testing.T) {
 	ctrl := control.New(control.Options{})
 	ch := make(chan event.Event, 1)
@@ -1648,6 +2012,308 @@ func TestRunningStreamPreservesScrolledReadingPosition(t *testing.T) {
 	}
 	if cur.viewport.AtBottom() {
 		t.Fatal("one wheel-down step from the reading position should not jump straight to bottom")
+	}
+}
+
+func TestLazyReasoningExpandKeepsLowerViewportAnchor(t *testing.T) {
+	ctrl := control.New(control.Options{})
+	ch := make(chan event.Event, 1)
+	adv := func(m chatTUI, msg tea.Msg) chatTUI {
+		n, _ := m.Update(msg)
+		return n.(chatTUI)
+	}
+	screenRowOf := func(t *testing.T, m chatTUI, needle string) int {
+		t.Helper()
+		for i, ln := range m.wrappedLines {
+			if strings.Contains(ansi.Strip(ln), needle) {
+				return i - m.viewport.YOffset()
+			}
+		}
+		t.Fatalf("could not find %q in wrapped transcript:\n%s", needle, strings.Join(m.wrappedLines, "\n"))
+		return 0
+	}
+
+	cur := adv(newChatTUI(ctrl, "", ch, 80), tea.WindowSizeMsg{Width: 80, Height: 16})
+	cur.lazyReasoning = true
+	summary := formatReasoningSummary(1)
+	cur.transcript = cur.transcript[:0]
+	for i := 0; i < 10; i++ {
+		cur.transcript = append(cur.transcript, fmt.Sprintf("before-%02d", i))
+	}
+	reasoningIdx := len(cur.transcript)
+	cur.transcript = append(cur.transcript, renderReasoningSummary(summary, cur.width, false))
+	cur.transcript = append(cur.transcript, "anchor below reasoning")
+	for i := 0; i < 20; i++ {
+		cur.transcript = append(cur.transcript, fmt.Sprintf("tail-%02d", i))
+	}
+	cur.completedReasoning = map[int]*completedReasoningBlock{
+		0: {
+			raw:        "line one\nline two\nline three\nline four\nline five",
+			summary:    summary,
+			summaryIdx: reasoningIdx,
+		},
+	}
+	cur.nextReasoningID = 1
+	cur.rebuildReasoningIndex()
+	cur.transcriptDirty = true
+	cur = adv(cur, tea.WindowSizeMsg{Width: 80, Height: 16})
+	cur.viewport.SetYOffset(8)
+
+	beforeRow := screenRowOf(t, cur, "anchor below reasoning")
+	if beforeRow < 0 || beforeRow >= cur.viewport.Height() {
+		t.Fatalf("anchor should start visible, row=%d height=%d offset=%d", beforeRow, cur.viewport.Height(), cur.viewport.YOffset())
+	}
+	if !cur.toggleReasoningAtTranscriptIdx(reasoningIdx) {
+		t.Fatal("expected reasoning click to expand")
+	}
+	cur = adv(cur, tea.WindowSizeMsg{Width: 80, Height: 16})
+	afterRow := screenRowOf(t, cur, "anchor below reasoning")
+	if afterRow != beforeRow {
+		t.Fatalf("anchor row moved after expanding reasoning: before=%d after=%d offset=%d", beforeRow, afterRow, cur.viewport.YOffset())
+	}
+	if cur.viewport.YOffset() <= 8 {
+		t.Fatalf("expanding a block above the anchor should scroll down to keep lower content stable, offset=%d", cur.viewport.YOffset())
+	}
+}
+
+func TestLazyReasoningMouseClickKeepsLowerViewportAnchor(t *testing.T) {
+	ctrl := control.New(control.Options{})
+	ch := make(chan event.Event, 1)
+	adv := func(m chatTUI, msg tea.Msg) chatTUI {
+		n, _ := m.Update(msg)
+		return n.(chatTUI)
+	}
+	screenRowOf := func(t *testing.T, m chatTUI, needle string) int {
+		t.Helper()
+		for i, ln := range m.wrappedLines {
+			if strings.Contains(ansi.Strip(ln), needle) {
+				return i - m.viewport.YOffset()
+			}
+		}
+		t.Fatalf("could not find %q in wrapped transcript:\n%s", needle, strings.Join(m.wrappedLines, "\n"))
+		return 0
+	}
+	contentLineOf := func(t *testing.T, m chatTUI, needle string) int {
+		t.Helper()
+		for i, ln := range m.wrappedLines {
+			if strings.Contains(ansi.Strip(ln), needle) {
+				return i
+			}
+		}
+		t.Fatalf("could not find %q in wrapped transcript:\n%s", needle, strings.Join(m.wrappedLines, "\n"))
+		return 0
+	}
+
+	cur := adv(newChatTUI(ctrl, "", ch, 80), tea.WindowSizeMsg{Width: 80, Height: 16})
+	cur.lazyReasoning = true
+	summary := formatReasoningSummary(1)
+	cur.transcript = cur.transcript[:0]
+	for i := 0; i < 10; i++ {
+		cur.transcript = append(cur.transcript, fmt.Sprintf("before-%02d", i))
+	}
+	reasoningIdx := len(cur.transcript)
+	cur.transcript = append(cur.transcript, renderReasoningSummary(summary, cur.width, false))
+	cur.transcript = append(cur.transcript, "anchor below reasoning")
+	for i := 0; i < 20; i++ {
+		cur.transcript = append(cur.transcript, fmt.Sprintf("tail-%02d", i))
+	}
+	cur.completedReasoning = map[int]*completedReasoningBlock{
+		0: {
+			raw:        "line one\nline two\nline three\nline four\nline five",
+			summary:    summary,
+			summaryIdx: reasoningIdx,
+		},
+	}
+	cur.nextReasoningID = 1
+	cur.rebuildReasoningIndex()
+	cur.transcriptDirty = true
+	cur = adv(cur, tea.WindowSizeMsg{Width: 80, Height: 16})
+	cur.viewport.SetYOffset(8)
+
+	beforeRow := screenRowOf(t, cur, "anchor below reasoning")
+	clickLine := contentLineOf(t, cur, "Thought for")
+	clickY := clickLine - cur.viewport.YOffset()
+	if clickY < 0 || clickY >= cur.viewport.Height() {
+		t.Fatalf("reasoning summary should be clickable onscreen, clickY=%d height=%d offset=%d", clickY, cur.viewport.Height(), cur.viewport.YOffset())
+	}
+
+	cur = adv(cur, tea.MouseClickMsg{Button: tea.MouseLeft, X: 4, Y: clickY})
+	afterRow := screenRowOf(t, cur, "anchor below reasoning")
+	if afterRow != beforeRow {
+		t.Fatalf("anchor row moved after mouse expansion: before=%d after=%d offset=%d", beforeRow, afterRow, cur.viewport.YOffset())
+	}
+	if cur.viewport.YOffset() <= 8 {
+		t.Fatalf("mouse expansion should scroll down to keep lower content stable, offset=%d", cur.viewport.YOffset())
+	}
+}
+
+func TestLazyReasoningCollapsedHoverOnlyHitsSummaryText(t *testing.T) {
+	m := newTestChatTUI()
+	m.lazyReasoning = true
+	summary := formatReasoningSummary(0)
+	m.transcript = []string{
+		renderReasoningSummary(summary, m.width, false),
+		"answer below",
+	}
+	m.completedReasoning = map[int]*completedReasoningBlock{
+		0: {
+			raw:        "line one\nline two",
+			summary:    summary,
+			summaryIdx: 0,
+		},
+	}
+	m.nextReasoningID = 1
+	m.rebuildReasoningIndex()
+	wrapped, lineMap := wrapTranscriptEntries(m.transcript, 120)
+	m.wrappedLines = strings.Split(wrapped, "\n")
+	m.wrappedLineTranscriptIdx = lineMap
+
+	width := m.collapsedDisclosureWidth(0)
+	if width <= 0 {
+		t.Fatalf("collapsed reasoning summary should have a positive hit width")
+	}
+	idx, kind, ok := m.clickableAtPosition(0, width-1)
+	if !ok || idx != 0 || kind != transcriptHoverReasoning {
+		t.Fatalf("summary text should be clickable, got idx=%d kind=%v ok=%v", idx, kind, ok)
+	}
+	if idx, kind, ok := m.clickableAtPosition(0, width); ok {
+		t.Fatalf("first cell after summary text should not be clickable, got idx=%d kind=%v", idx, kind)
+	}
+	if idx, kind, ok := m.clickableAtPosition(0, width+20); ok {
+		t.Fatalf("empty tail of the wrapped row should not be clickable, got idx=%d kind=%v", idx, kind)
+	}
+}
+
+func TestLazyReasoningHoverThenMouseClickKeepsLowerViewportAnchor(t *testing.T) {
+	ctrl := control.New(control.Options{})
+	ch := make(chan event.Event, 1)
+	adv := func(m chatTUI, msg tea.Msg) chatTUI {
+		n, _ := m.Update(msg)
+		return n.(chatTUI)
+	}
+	screenRowOf := func(t *testing.T, m chatTUI, needle string) int {
+		t.Helper()
+		for i, ln := range m.wrappedLines {
+			if strings.Contains(ansi.Strip(ln), needle) {
+				return i - m.viewport.YOffset()
+			}
+		}
+		t.Fatalf("could not find %q in wrapped transcript:\n%s", needle, strings.Join(m.wrappedLines, "\n"))
+		return 0
+	}
+	contentLineOf := func(t *testing.T, m chatTUI, needle string) int {
+		t.Helper()
+		for i, ln := range m.wrappedLines {
+			if strings.Contains(ansi.Strip(ln), needle) {
+				return i
+			}
+		}
+		t.Fatalf("could not find %q in wrapped transcript:\n%s", needle, strings.Join(m.wrappedLines, "\n"))
+		return 0
+	}
+
+	cur := adv(newChatTUI(ctrl, "", ch, 80), tea.WindowSizeMsg{Width: 80, Height: 16})
+	cur.lazyReasoning = true
+	summary := formatReasoningSummary(1)
+	cur.transcript = cur.transcript[:0]
+	for i := 0; i < 10; i++ {
+		cur.transcript = append(cur.transcript, fmt.Sprintf("before-%02d", i))
+	}
+	reasoningIdx := len(cur.transcript)
+	cur.transcript = append(cur.transcript, renderReasoningSummary(summary, cur.width, false))
+	cur.transcript = append(cur.transcript, "anchor below reasoning")
+	for i := 0; i < 20; i++ {
+		cur.transcript = append(cur.transcript, fmt.Sprintf("tail-%02d", i))
+	}
+	cur.completedReasoning = map[int]*completedReasoningBlock{
+		0: {
+			raw:        "line one\nline two\nline three\nline four\nline five",
+			summary:    summary,
+			summaryIdx: reasoningIdx,
+		},
+	}
+	cur.nextReasoningID = 1
+	cur.rebuildReasoningIndex()
+	cur.transcriptDirty = true
+	cur = adv(cur, tea.WindowSizeMsg{Width: 80, Height: 16})
+	cur.viewport.SetYOffset(8)
+
+	clickLine := contentLineOf(t, cur, "Thought for")
+	clickY := clickLine - cur.viewport.YOffset()
+	cur = adv(cur, tea.MouseMotionMsg{X: 4, Y: clickY})
+	beforeRow := screenRowOf(t, cur, "anchor below reasoning")
+	cur = adv(cur, tea.MouseClickMsg{Button: tea.MouseLeft, X: 4, Y: clickY})
+	afterRow := screenRowOf(t, cur, "anchor below reasoning")
+	if afterRow != beforeRow {
+		t.Fatalf("anchor row moved after hover+mouse expansion: before=%d after=%d offset=%d", beforeRow, afterRow, cur.viewport.YOffset())
+	}
+	if cur.viewport.YOffset() <= 8 {
+		t.Fatalf("hover+mouse expansion should scroll down to keep lower content stable, offset=%d", cur.viewport.YOffset())
+	}
+}
+
+func TestLazyReasoningMouseClickKeepsAnchorWhenTranscriptDoesNotOverflow(t *testing.T) {
+	ctrl := control.New(control.Options{})
+	ch := make(chan event.Event, 1)
+	adv := func(m chatTUI, msg tea.Msg) chatTUI {
+		n, _ := m.Update(msg)
+		return n.(chatTUI)
+	}
+	screenRowOf := func(t *testing.T, m chatTUI, needle string) int {
+		t.Helper()
+		for i, ln := range m.wrappedLines {
+			if strings.Contains(ansi.Strip(ln), needle) {
+				return i - m.viewport.YOffset()
+			}
+		}
+		t.Fatalf("could not find %q in wrapped transcript:\n%s", needle, strings.Join(m.wrappedLines, "\n"))
+		return 0
+	}
+	contentLineOf := func(t *testing.T, m chatTUI, needle string) int {
+		t.Helper()
+		for i, ln := range m.wrappedLines {
+			if strings.Contains(ansi.Strip(ln), needle) {
+				return i
+			}
+		}
+		t.Fatalf("could not find %q in wrapped transcript:\n%s", needle, strings.Join(m.wrappedLines, "\n"))
+		return 0
+	}
+
+	cur := adv(newChatTUI(ctrl, "", ch, 80), tea.WindowSizeMsg{Width: 80, Height: 18})
+	cur.lazyReasoning = true
+	summary := formatReasoningSummary(0)
+	cur.transcript = []string{
+		renderUserBubble("hello", cur.width, false),
+		renderReasoningSummary(summary, cur.width, false),
+		"anchor answer below reasoning",
+	}
+	cur.completedReasoning = map[int]*completedReasoningBlock{
+		0: {
+			raw:        "line one\nline two\nline three\nline four\nline five",
+			summary:    summary,
+			summaryIdx: 1,
+		},
+	}
+	cur.nextReasoningID = 1
+	cur.rebuildReasoningIndex()
+	cur.transcriptDirty = true
+	cur = adv(cur, tea.WindowSizeMsg{Width: 80, Height: 18})
+	if cur.viewport.YOffset() != 0 {
+		t.Fatalf("short transcript should start without scroll offset, got %d", cur.viewport.YOffset())
+	}
+
+	beforeRow := screenRowOf(t, cur, "anchor answer below reasoning")
+	clickLine := contentLineOf(t, cur, "Thought for")
+	cur = adv(cur, tea.MouseMotionMsg{X: 4, Y: clickLine})
+	cur = adv(cur, tea.MouseClickMsg{Button: tea.MouseLeft, X: 4, Y: clickLine})
+	afterRow := screenRowOf(t, cur, "anchor answer below reasoning")
+	if afterRow != beforeRow {
+		t.Fatalf("short transcript anchor row moved after expansion: before=%d after=%d offset=%d\n%s",
+			beforeRow, afterRow, cur.viewport.YOffset(), strings.Join(cur.wrappedLines, "\n"))
+	}
+	if cur.viewport.YOffset() <= 0 {
+		t.Fatalf("short transcript expansion should create enough scroll room to preserve anchor, offset=%d", cur.viewport.YOffset())
 	}
 }
 
@@ -2300,6 +2966,7 @@ func TestToggleMouseCaptureFlipsModeAndClearsGestures(t *testing.T) {
 	m.transcript = []string{"hello world"}
 	m.wrappedLines = []string{"hello world"}
 	m.sel = selection{active: true, anchor: selPos{line: 0, col: 0}, head: selPos{line: 0, col: 5}}
+	m.selecting = true
 	m.scrollbarDrag = true
 	m.autoScroll = 1
 
@@ -2307,7 +2974,7 @@ func TestToggleMouseCaptureFlipsModeAndClearsGestures(t *testing.T) {
 	if !m.mouseCaptureOff {
 		t.Fatal("first toggle should turn mouse capture off")
 	}
-	if m.sel.active || m.scrollbarDrag || m.autoScroll != 0 {
+	if m.sel.active || m.selecting || m.scrollbarDrag || m.autoScroll != 0 {
 		t.Fatal("toggling mouse capture should clear any in-flight selection/drag")
 	}
 	if got := (*m.pendingCommit)[len(*m.pendingCommit)-1]; !strings.Contains(got, i18n.M.MouseCaptureOffHint) {
@@ -2325,7 +2992,7 @@ func TestToggleMouseCaptureFlipsModeAndClearsGestures(t *testing.T) {
 
 // TestViewMouseModeFollowsCapture proves View() requests MouseModeNone (so
 // the terminal's native right-click menu and click-drag selection work) while
-// mouseCaptureOff is set, and MouseModeCellMotion (in-app selection/scrollbar/
+// mouseCaptureOff is set, and MouseModeAllMotion (hover/selection/scrollbar/
 // wheel-scroll) otherwise.
 func TestViewMouseModeFollowsCapture(t *testing.T) {
 	ctrl := control.New(control.Options{})
@@ -2333,8 +3000,8 @@ func TestViewMouseModeFollowsCapture(t *testing.T) {
 	m0, _ := m.Update(tea.WindowSizeMsg{Width: 60, Height: 20})
 	m = m0.(chatTUI)
 
-	if got := m.View().MouseMode; got != tea.MouseModeCellMotion {
-		t.Fatalf("MouseMode with capture on = %v, want MouseModeCellMotion", got)
+	if got := m.View().MouseMode; got != tea.MouseModeAllMotion {
+		t.Fatalf("MouseMode with capture on = %v, want MouseModeAllMotion", got)
 	}
 
 	m.mouseCaptureOff = true
@@ -3004,7 +3671,22 @@ func TestQueueIndicatorRendering(t *testing.T) {
 		t.Fatalf("queue indicator should show message previews, got %q", qi)
 	}
 
+	m = newInboxTestChatTUI(t)
+	m.state = tuiRunning
+	m.seedInbox("see @.reasonix/attachments/clipboard-20260710-130309.438441-000001.png")
+	m.queueEditCursor = -1
+	qi = m.renderQueueIndicator()
+	if strings.Contains(qi, "@.reasonix/attachments") {
+		t.Fatalf("queue indicator should not expose raw attachment paths, got %q", qi)
+	}
+	if !strings.Contains(qi, "[image1]") {
+		t.Fatalf("queue indicator should show image token preview, got %q", qi)
+	}
+
 	// Highlight marker should appear for the browsed item.
+	m = newInboxTestChatTUI(t)
+	m.state = tuiRunning
+	m.seedInbox("first msg", "second msg")
 	m.queueEditCursor = 1
 	qi = m.renderQueueIndicator()
 	if !strings.Contains(qi, "▸") {
@@ -3040,8 +3722,8 @@ func TestViewAltScreenFillsHeight(t *testing.T) {
 	if !v.AltScreen {
 		t.Error("View must request alt-screen so resize repaints the whole grid")
 	}
-	if v.MouseMode != tea.MouseModeCellMotion {
-		t.Error("View must enable mouse so the wheel scrolls the transcript")
+	if v.MouseMode != tea.MouseModeAllMotion {
+		t.Error("View must enable full mouse tracking so hover and wheel scrolling work")
 	}
 	if lines := strings.Count(v.Content, "\n") + 1; lines != 24 {
 		t.Errorf("alt-screen frame = %d lines, want 24 (full terminal height)", lines)

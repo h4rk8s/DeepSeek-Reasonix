@@ -402,7 +402,7 @@ func (c *Coordinator) deliverPlan(ctx context.Context, input string, outcome pla
 	plan := outcome.text
 	// A submitted plan is never a no-op conclusion: [no_changes] marks the
 	// ABSENCE of a plan, which by construction cannot be a field of one.
-	if !outcome.structured && isNoOpPlan(plan) {
+	if !outcome.structured && (isNoOpPlan(plan) || isPlannerGreetingNoTask(plan)) {
 		c.persistExecutorNoOp(ctx, input, plan)
 		// The relayed conclusion is planner text; keep its source so sinks
 		// attribute it like every other planner emission. Display goes through
@@ -474,6 +474,54 @@ const (
 // contract just costs one executor round.
 func isNoOpPlan(plan string) bool {
 	return strings.ToLower(lastNonEmptyLine(plan)) == noChangesMarker
+}
+
+func isPlannerGreetingNoTask(plan string) bool {
+	lower := strings.ToLower(strings.TrimSpace(plan))
+	if lower == "" {
+		return false
+	}
+	// Keep this heuristic intentionally narrow. It only deduplicates short
+	// user-facing greeting / no-task replies so the executor does not answer
+	// the same opening turn again. Real no-op task conclusions still require
+	// the explicit [no_changes] marker above.
+	if strings.Count(lower, "\n") > 8 || len([]rune(lower)) > 500 {
+		return false
+	}
+	actionTerms := []string{
+		" edit ", " write ", " create ", " delete ", " modify ", " run ", " execute ", " test ", " fix ", " build ",
+		"修改", "写入", "创建", "删除", "执行", "运行", "修复", "测试", "构建",
+	}
+	padded := " " + lower + " "
+	for _, term := range actionTerms {
+		if strings.Contains(padded, term) {
+			return false
+		}
+	}
+	noTaskPhrases := []string{
+		"no concrete task",
+		"no specific task",
+		"no task to execute",
+		"ready to help",
+		"what would you like to work on",
+		"what would you like me to help",
+		"how can i help",
+		"tell me what you need",
+		"没有具体任务",
+		"没有明确任务",
+		"没有需要执行",
+		"随时告诉我",
+		"随时准备帮",
+		"有什么需要",
+		"需要我帮忙",
+		"请告诉我",
+	}
+	for _, phrase := range noTaskPhrases {
+		if strings.Contains(lower, phrase) {
+			return true
+		}
+	}
+	return false
 }
 
 func lastNonEmptyLine(s string) string {
@@ -572,7 +620,6 @@ func (c *Coordinator) planFromStream(ctx context.Context, input string) (string,
 		switch chunk.Type {
 		case provider.ChunkText:
 			text.WriteString(chunk.Text)
-			c.sink.Emit(event.Event{Kind: event.Text, Text: chunk.Text, Source: event.UsageSourcePlanner})
 		case provider.ChunkUsage:
 			usage = chunk.Usage
 		case provider.ChunkError:
@@ -771,10 +818,13 @@ func boundedToolNames(names []string, max int) string {
 // use it so dual-model sessions surface the user's words, not the handoff
 // boilerplate (#3860).
 func HandoffTask(s string) string {
-	trimmed := strings.TrimSpace(s)
-	if !strings.HasPrefix(trimmed, "# "+executorHandoffMarker) {
+	trimmed := strings.TrimSpace(StripTransientUserBlocks(s))
+	marker := "# " + executorHandoffMarker
+	markerIdx := strings.Index(trimmed, marker)
+	if markerIdx < 0 {
 		return s
 	}
+	trimmed = trimmed[markerIdx:]
 	const header = "Original task:\n"
 	_, after, ok := strings.Cut(trimmed, header)
 	if !ok {
@@ -784,7 +834,7 @@ func HandoffTask(s string) string {
 	if j := strings.Index(rest, "\n\nPlanner output:"); j >= 0 {
 		rest = rest[:j]
 	}
-	if task := strings.TrimSpace(rest); task != "" {
+	if task := strings.TrimSpace(StripTransientUserBlocks(rest)); task != "" {
 		return task
 	}
 	return s

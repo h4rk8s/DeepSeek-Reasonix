@@ -60,7 +60,10 @@ func (m *chatTUI) runEffortCommand(input string) tea.Cmd {
 	if err := func() error {
 		unlock := config.LockUserConfigEdits()
 		defer unlock()
-		edit := config.LoadForEdit(path)
+		edit, err := config.LoadForEditReadOnlyStrict(path)
+		if err != nil {
+			return err
+		}
 		if _, ok := edit.Provider(entry.Name); !ok {
 			if err := edit.UpsertProvider(*entry); err != nil {
 				return err
