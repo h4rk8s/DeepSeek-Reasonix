@@ -239,7 +239,9 @@ command = "cwd-project-bin"
 		t.Fatal(err)
 	}
 
-	migrateLegacyConfigForCLI()
+	if err := migrateLegacyConfigForCLI(); err != nil {
+		t.Fatal(err)
+	}
 	if cfg := config.LoadForEdit(config.UserConfigPath()); hasPluginNamed(cfg, "cwd-project") {
 		t.Fatalf("early CLI legacy migration imported the cwd project plugin: %+v", cfg.Plugins)
 	}
@@ -681,6 +683,78 @@ func TestConfigLoadIgnoresRetiredAutoPlan(t *testing.T) {
 	}
 	if cfg.Agent.AutoPlan != "off" || cfg.Agent.AutoPlanClassifier != "" {
 		t.Fatalf("retired auto-plan config = (%q, %q), want off/empty", cfg.Agent.AutoPlan, cfg.Agent.AutoPlanClassifier)
+	}
+}
+
+func TestConfigLazyReasoningCommandWritesUserConfig(t *testing.T) {
+	isolateCLIConfigHome(t)
+
+	out := captureStdout(t, func() {
+		if rc := Run([]string{"config", "lazy-reasoning", "on"}, "test-version"); rc != 0 {
+			t.Fatalf("config lazy-reasoning rc = %d, want 0", rc)
+		}
+	})
+	if !strings.Contains(out, "ui.lazy_reasoning = true") {
+		t.Fatalf("config lazy-reasoning output = %q", out)
+	}
+	cfg := config.LoadForEdit(config.UserConfigPath())
+	if !cfg.UI.LazyReasoning {
+		t.Fatalf("saved ui.lazy_reasoning = false, want true")
+	}
+
+	out = captureStdout(t, func() {
+		if rc := Run([]string{"config", "lazy-reasoning", "status"}, "test-version"); rc != 0 {
+			t.Fatalf("config lazy-reasoning status rc = %d, want 0", rc)
+		}
+	})
+	if !strings.Contains(out, "ui.lazy_reasoning = true") {
+		t.Fatalf("config lazy-reasoning status output = %q", out)
+	}
+}
+
+func TestConfigLazyReasoningRefusesInvalidUserConfig(t *testing.T) {
+	isolateCLIConfigHome(t)
+	path := config.UserConfigPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original := "this is not toml = [\n"
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	errOut := captureStderr(t, func() {
+		if rc := Run([]string{"config", "lazy-reasoning", "on"}, "test-version"); rc != 1 {
+			t.Fatalf("config lazy-reasoning invalid rc = %d, want 1", rc)
+		}
+	})
+	if !strings.Contains(errOut, "refusing to run with invalid config") ||
+		!strings.Contains(errOut, path) ||
+		!strings.Contains(errOut, "toml") {
+		t.Fatalf("config lazy-reasoning invalid stderr = %q", errOut)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != original {
+		t.Fatalf("invalid user config was overwritten:\n%s", got)
+	}
+}
+
+func TestConfigLazyReasoningLocalIsRejected(t *testing.T) {
+	isolateCLIConfigHome(t)
+
+	errOut := captureStderr(t, func() {
+		if rc := Run([]string{"config", "lazy-reasoning", "--local", "on"}, "test-version"); rc != 2 {
+			t.Fatalf("config lazy-reasoning --local rc = %d, want 2", rc)
+		}
+	})
+	if !strings.Contains(errOut, "--local is not supported") {
+		t.Fatalf("config lazy-reasoning --local stderr = %q", errOut)
+	}
+	if _, err := os.Stat("reasonix.toml"); !os.IsNotExist(err) {
+		t.Fatalf("reasonix.toml should not be written, stat err=%v", err)
 	}
 }
 

@@ -8,7 +8,12 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
+
 	"reasonix/internal/agent"
+	"reasonix/internal/config"
+	"reasonix/internal/control"
+	"reasonix/internal/event"
 )
 
 func TestRenameSessionUpdatesCustomTitle(t *testing.T) {
@@ -80,5 +85,81 @@ func TestSessionPickerLabelPrefersCustomTitle(t *testing.T) {
 	}
 	if strings.Contains(got, "My Topic Name") {
 		t.Errorf("label %q should prefer custom title over topic title", got)
+	}
+}
+
+func TestSessionWindowTitleUsesCustomTitleOnly(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := filepath.Join(dir, "test-session.jsonl")
+	if err := os.WriteFile(sessionPath, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := agent.SaveBranchMetaPreserveUpdated(sessionPath, agent.BranchMeta{
+		TopicTitle: "Auto Topic",
+	}); err != nil {
+		t.Fatalf("seed meta: %v", err)
+	}
+	if got := sessionWindowTitle(sessionPath); got != "" {
+		t.Fatalf("sessionWindowTitle with only topic title = %q, want empty", got)
+	}
+	if err := agent.RenameSession(sessionPath, "  Custom Title  "); err != nil {
+		t.Fatalf("RenameSession failed: %v", err)
+	}
+	if got := sessionWindowTitle(sessionPath); got != "Custom Title" {
+		t.Fatalf("sessionWindowTitle = %q, want Custom Title", got)
+	}
+}
+
+func TestRenameCurrentSessionUpdatesTerminalWindowTitle(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := filepath.Join(dir, "test-session.jsonl")
+	if err := os.WriteFile(sessionPath, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctrl := control.New(control.Options{
+		SessionDir:  dir,
+		SessionPath: sessionPath,
+		Label:       "test",
+	})
+	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 80)
+	m.terminalTitleItems = []string{config.TerminalTitleSessionTitle}
+
+	m.runRenameCommand("/rename aphone开发线程")
+
+	if got := m.windowTitle; got != "aphone开发线程" {
+		t.Fatalf("windowTitle = %q, want aphone开发线程", got)
+	}
+	if got := m.View().WindowTitle; got != "aphone开发线程" {
+		t.Fatalf("View().WindowTitle = %q, want aphone开发线程", got)
+	}
+}
+
+func TestRenameRunsImmediatelyWhileTurnRunning(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := filepath.Join(dir, "test-session.jsonl")
+	if err := os.WriteFile(sessionPath, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctrl := control.New(control.Options{
+		SessionDir:  dir,
+		SessionPath: sessionPath,
+		Label:       "test",
+	})
+	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 80)
+	m.state = tuiRunning
+	m.terminalTitleItems = []string{config.TerminalTitleSessionTitle}
+	m.input.SetValue("/rename live title")
+
+	next, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	updated := next.(chatTUI)
+
+	if queued := updated.inboxBodies(); len(queued) != 0 {
+		t.Fatalf("/rename while running queued feedback: %+v", queued)
+	}
+	if got := updated.windowTitle; got != "live title" {
+		t.Fatalf("windowTitle = %q, want live title", got)
+	}
+	if got := updated.input.Value(); got != "" {
+		t.Fatalf("input after /rename = %q, want empty", got)
 	}
 }

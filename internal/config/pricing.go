@@ -277,7 +277,10 @@ func ApplyUserConfigUpgradesOnStartup(path string) (bool, error) {
 	if header.ConfigVersion >= Default().ConfigVersion {
 		return false, nil
 	}
-	cfg := LoadForEdit(path)
+	cfg, err := LoadForEditReadOnlyStrict(path)
+	if err != nil {
+		return false, err
+	}
 	changed := false
 	if header.ConfigVersion < deepSeekPricingResetConfigVersion {
 		resetOfficialProviderPricingDefaults(cfg)

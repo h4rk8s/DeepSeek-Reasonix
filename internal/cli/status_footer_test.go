@@ -191,10 +191,10 @@ func TestStatusFooterSemanticPaletteAcrossThemes(t *testing.T) {
 	activeColorProfile = colorprofile.ANSI256
 
 	for _, tt := range []struct {
-		mode, labelSGR, valueSGR, infoSGR string
+		mode, modelSGR, labelSGR, valueSGR string
 	}{
-		{mode: "dark", labelSGR: "\033[38;5;248m", valueSGR: "\033[38;5;251m", infoSGR: "\033[38;5;80m"},
-		{mode: "light", labelSGR: "\033[38;5;241m", valueSGR: "\033[38;5;239m", infoSGR: "\033[38;5;25m"},
+		{mode: "dark", modelSGR: "\033[1;38;5;179m", labelSGR: "\033[38;5;248m", valueSGR: "\033[38;5;251m"},
+		{mode: "light", modelSGR: "\033[1;38;5;136m", labelSGR: "\033[38;5;241m", valueSGR: "\033[38;5;239m"},
 	} {
 		t.Run(tt.mode, func(t *testing.T) {
 			configureCLITheme(tt.mode)
@@ -203,9 +203,8 @@ func TestStatusFooterSemanticPaletteAcrossThemes(t *testing.T) {
 			m.effortLevel = "auto"
 			got := m.statusModelWorkGroup(80)
 			for _, want := range []string{
-				tt.labelSGR + "MODEL",
-				tt.infoSGR + "deepseek-v4-flash",
-				tt.labelSGR + "EFFORT",
+				tt.modelSGR + "DS v4 flash",
+				tt.labelSGR + "effort",
 				tt.valueSGR + "auto",
 			} {
 				if !strings.Contains(got, want) {
@@ -214,8 +213,8 @@ func TestStatusFooterSemanticPaletteAcrossThemes(t *testing.T) {
 			}
 			primary := m.primaryStatusLine(" Auto ", false, false)
 			if !strings.Contains(primary, tt.valueSGR+i18n.M.ChatStatusIdle) ||
-				!strings.Contains(primary, tt.labelSGR+i18n.M.ChatStatusCycleHintCompact) {
-				t.Fatalf("%s interaction hints should use readable semantic contrast: %q", tt.mode, primary)
+				strings.Contains(primary, i18n.M.ChatStatusCycleHintCompact) {
+				t.Fatalf("%s primary status should preserve state without shortcut noise: %q", tt.mode, primary)
 			}
 		})
 	}
@@ -305,7 +304,7 @@ func TestStatusFooterNoColorKeepsSemanticLabels(t *testing.T) {
 	if strings.Contains(block, "\033[") {
 		t.Fatalf("NO_COLOR footer contains escapes: %q", block)
 	}
-	for _, want := range []string{"MODEL deepseek-v4-flash", "EFFORT auto", "BAL ¥12.34"} {
+	for _, want := range []string{"DS v4 flash", "effort auto", "¥12.34"} {
 		if !strings.Contains(block, want) {
 			t.Fatalf("NO_COLOR footer missing %q:\n%s", want, block)
 		}
@@ -315,11 +314,11 @@ func TestStatusFooterNoColorKeepsSemanticLabels(t *testing.T) {
 func TestStatusFooterUsesReadableLocalizedHintAndWrapsCleanly(t *testing.T) {
 	defer i18n.DetectLanguage("en")
 	for _, tt := range []struct {
-		lang, compact, session string
+		lang, session string
 	}{
-		{lang: "en", compact: "Shift+Tab ask/auto/plan · Ctrl+Y YOLO", session: "MODEL deepseek-v4-flash   EFFORT auto"},
-		{lang: "zh", compact: "Shift+Tab 询问/自动/计划 · Ctrl+Y YOLO", session: "模型 deepseek-v4-flash   强度 auto"},
-		{lang: "zh-TW", compact: "Shift+Tab 詢問/自動/計畫 · Ctrl+Y YOLO", session: "模型 deepseek-v4-flash   強度 auto"},
+		{lang: "en", session: "DS v4 flash · effort auto"},
+		{lang: "zh", session: "DS v4 flash · 强度 auto"},
+		{lang: "zh-TW", session: "DS v4 flash · 強度 auto"},
 	} {
 		t.Run(tt.lang, func(t *testing.T) {
 			i18n.DetectLanguage(tt.lang)
@@ -331,11 +330,11 @@ func TestStatusFooterUsesReadableLocalizedHintAndWrapsCleanly(t *testing.T) {
 			primary := m.primaryStatusLine(" Auto ", false, false)
 			block := ansi.Strip(m.renderStatusBlock(primary, 80))
 			lines := strings.Split(block, "\n")
-			if len(lines) != 2 {
-				t.Fatalf("localized footer rows = %d, want wrapped primary/session rows without an empty data band:\n%s", len(lines), block)
+			if len(lines) != 3 {
+				t.Fatalf("localized footer rows = %d, want primary/session, divider, and environment rows:\n%s", len(lines), block)
 			}
-			if !strings.Contains(lines[0], tt.compact) || !strings.Contains(lines[1], tt.session) {
-				t.Fatalf("localized footer did not keep readable shortcut and session groups:\n%s", block)
+			if !strings.Contains(lines[0], tt.session) || strings.Contains(block, "Shift+Tab") || strings.Contains(block, "Ctrl+Y") {
+				t.Fatalf("localized footer did not keep the compact session group:\n%s", block)
 			}
 			if strings.Contains(block, "WORK") || strings.Contains(block, "模式") {
 				t.Fatalf("localized footer should not show execution-mode UI:\n%s", block)
@@ -369,12 +368,12 @@ func TestStatusFooterLocalizesMetricLabelsAndKeepsNarrowRows(t *testing.T) {
 	}{
 		{
 			lang:      "zh",
-			session:   "模型 deepseek-v4-flash   强度 auto",
+			session:   "DS v4 flash · 强度 auto",
 			telemetry: []string{"缓存", "上下文", "压缩", "任务", "余额"},
 		},
 		{
 			lang:      "zh-TW",
-			session:   "模型 deepseek-v4-flash   強度 auto",
+			session:   "DS v4 flash · 強度 auto",
 			telemetry: []string{"快取", "上下文", "壓縮", "任務", "餘額"},
 		},
 	} {
@@ -431,7 +430,7 @@ func TestStatusFooterSwapsModelAndGitGroups(t *testing.T) {
 	if len(lines) != 3 {
 		t.Fatalf("wide status block lines = %d, want two data rows plus divider:\n%s", len(lines), strings.Join(lines, "\n"))
 	}
-	if !strings.Contains(lines[0], "MODEL deepseek-v4-flash   EFFORT auto") {
+	if !strings.Contains(lines[0], "DS v4 flash · effort auto") {
 		t.Fatalf("first row should keep model and effort in one session group:\n%s", strings.Join(lines, "\n"))
 	}
 	if strings.Contains(lines[0], "DeepSeek-Reasonix@") {
@@ -443,7 +442,7 @@ func TestStatusFooterSwapsModelAndGitGroups(t *testing.T) {
 	if !strings.Contains(lines[2], "DeepSeek-Reasonix@feature/responsive-footer") || strings.Contains(lines[2], "…") {
 		t.Fatalf("second row should preserve the full Git identity when it fits:\n%s", strings.Join(lines, "\n"))
 	}
-	if !strings.Contains(lines[2], "+1199 -244 ?3") || !strings.HasSuffix(lines[2], "BAL ¥12.34") {
+	if !strings.Contains(lines[2], "+1199 -244 ?3") || !strings.HasSuffix(lines[2], "¥12.34") {
 		t.Fatalf("second row should preserve Git changes and right-anchor telemetry:\n%s", strings.Join(lines, "\n"))
 	}
 	for i, line := range lines {
@@ -453,30 +452,34 @@ func TestStatusFooterSwapsModelAndGitGroups(t *testing.T) {
 	}
 }
 
-func TestStatusFooterWithoutGitLeftAlignsTelemetry(t *testing.T) {
+func TestStatusFooterWithoutGitKeepsWorkspaceAndTelemetry(t *testing.T) {
 	defer i18n.DetectLanguage("en")
 	i18n.DetectLanguage("en")
 
 	m := newTestChatTUI()
 	m.balance = "¥12.34"
 	line := ansi.Strip(m.layoutGitTelemetry(120))
-	if !strings.HasPrefix(line, statusFooterIndent+"BAL ¥12.34") {
-		t.Fatalf("non-Git telemetry should be left aligned, got %q", line)
+	if !strings.HasPrefix(line, statusFooterIndent) || !strings.Contains(line, "/internal/cli") {
+		t.Fatalf("non-Git data row should retain the workspace identity, got %q", line)
 	}
-	if visibleWidth(line) >= 120 {
-		t.Fatalf("non-Git telemetry unexpectedly retained right-alignment padding: %q", line)
+	if !strings.HasSuffix(line, "¥12.34") {
+		t.Fatalf("non-Git data row should right-anchor telemetry, got %q", line)
+	}
+	if visibleWidth(line) != 120 {
+		t.Fatalf("non-Git data row width = %d, want 120: %q", visibleWidth(line), line)
 	}
 }
 
-func TestStatusFooterOmitsEmptyDataBand(t *testing.T) {
+func TestStatusFooterIncludesWorkspaceDataBand(t *testing.T) {
 	m := newTestChatTUI()
 	primary := "  Auto · ready"
 	block := ansi.Strip(m.renderStatusBlock(primary, 120))
-	if block != primary {
-		t.Fatalf("empty Git/telemetry status block = %q, want only %q", block, primary)
+	lines := strings.Split(block, "\n")
+	if len(lines) != 3 {
+		t.Fatalf("workspace status block has %d rows, want primary, divider, and data: %q", len(lines), block)
 	}
-	if strings.Contains(block, "─") {
-		t.Fatalf("empty Git/telemetry status block retained a divider: %q", block)
+	if lines[0] != primary || strings.Trim(lines[1], "─ ") != "" || !strings.Contains(lines[2], "/internal/cli") {
+		t.Fatalf("workspace status block lost its semantic rows: %q", block)
 	}
 }
 
@@ -490,15 +493,21 @@ func TestStatusFooterMediumLayoutLeftAlignsModelWork(t *testing.T) {
 
 	primary := m.primaryStatusLine(" Auto ", false, false)
 	lines := strings.Split(ansi.Strip(m.renderStatusBlock(primary, 82)), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("medium footer rows = %d, want primary plus model/effort without an empty data band:\n%s", len(lines), strings.Join(lines, "\n"))
+	divider := -1
+	for i, line := range lines {
+		if strings.Trim(line, "─ ") == "" && strings.Contains(line, "─") {
+			divider = i
+			break
+		}
 	}
-	modelRow := lines[1]
-	if !strings.HasPrefix(modelRow, statusFooterIndent+"MODEL deepseek-v4-flash") ||
-		!strings.Contains(modelRow, "EFFORT auto") {
-		t.Fatalf("medium model/effort row should be left aligned, got %q:\n%s", modelRow, strings.Join(lines, "\n"))
+	if divider < 1 {
+		t.Fatalf("medium footer should place model/effort before the divider:\n%s", strings.Join(lines, "\n"))
 	}
-	if strings.Count(strings.TrimLeft(modelRow, " "), "MODEL") != 1 {
+	modelRow := lines[divider-1]
+	if !strings.Contains(modelRow, "DS v4 flash · effort auto") {
+		t.Fatalf("medium model/effort row should remain grouped, got %q:\n%s", modelRow, strings.Join(lines, "\n"))
+	}
+	if strings.Count(modelRow, "DS v4 flash") != 1 {
 		t.Fatalf("medium model/work row should remain a single semantic group: %q", modelRow)
 	}
 }
@@ -513,14 +522,20 @@ func TestStatusFooterStacksGitAndTelemetryWithoutFloatingContinuation(t *testing
 	m.balance = "¥123.45"
 
 	lines := strings.Split(ansi.Strip(m.layoutGitTelemetry(56)), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("stacked Git/telemetry rows = %d, want 2:\n%s", len(lines), strings.Join(lines, "\n"))
+	if len(lines) < 2 {
+		t.Fatalf("stacked Git/telemetry rows = %d, want adaptive wrapping:\n%s", len(lines), strings.Join(lines, "\n"))
 	}
-	if !strings.HasPrefix(lines[0], statusFooterIndent+"DeepSeek-Reasonix@") || !strings.Contains(lines[0], "+20 -4") {
-		t.Fatalf("Git should own the complete first row:\n%s", strings.Join(lines, "\n"))
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "Deep") || !strings.Contains(joined, "+20 -4") {
+		t.Fatalf("adaptive rows should retain Git identity and changes:\n%s", joined)
 	}
-	if !strings.HasPrefix(lines[1], statusFooterIndent+"BAL ¥123.45") {
-		t.Fatalf("stacked telemetry should be left aligned, got %q", lines[1])
+	if !strings.Contains(joined, "¥123.45") {
+		t.Fatalf("adaptive rows should retain balance: %q", joined)
+	}
+	for i, line := range lines {
+		if got := visibleWidth(line); got > 56 {
+			t.Fatalf("row %d width = %d, want <= 56: %q", i, got, line)
+		}
 	}
 }
 

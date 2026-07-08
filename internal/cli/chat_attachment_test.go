@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/base64"
 	"math"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -216,6 +217,14 @@ func TestDisplayLineForImageRefs(t *testing.T) {
 	}
 }
 
+func TestDisplayLineForImageRefsAfterChinesePunctuation(t *testing.T) {
+	got := displayLineForImageRefs("我从 Magisk 过来后，@.reasonix/attachments/clipboard-20260710-133417.967634-000004.png 下面只有两部文件")
+	want := "我从 Magisk 过来后，[image1] 下面只有两部文件"
+	if got != want {
+		t.Fatalf("displayLineForImageRefs = %q, want %q", got, want)
+	}
+}
+
 func TestPastedFileRef(t *testing.T) {
 	dir := t.TempDir()
 	pdf := filepath.Join(dir, "report.pdf")
@@ -254,8 +263,6 @@ func TestPastedFileRefShellEscapedSpaces(t *testing.T) {
 	}
 	escaped := strings.ReplaceAll(path, " ", `\ `)
 
-	// The returned ref keeps whitespace escaped so it survives @-token parsing
-	// on submit (control.parseRefTokens unescapes it back to the real path).
 	want := "@" + control.EscapeRefPath(filepath.Clean(path))
 	if got, ok := pastedFileRef(escaped); !ok || got != want {
 		t.Fatalf("pastedFileRef(shell escaped pdf) = %q, %v; want %s", got, ok, want)
@@ -283,6 +290,24 @@ func TestPastedImageSources(t *testing.T) {
 			ok:   true,
 		},
 		{
+			name: "markdown link image",
+			text: "[Image #1](file:///tmp/CleanShot%202026.png)",
+			want: []string{"file:///tmp/CleanShot%202026.png"},
+			ok:   true,
+		},
+		{
+			name: "html image source",
+			text: `<img alt="CleanShot" src="file:///tmp/CleanShot%202026.png">`,
+			want: []string{"file:///tmp/CleanShot%202026.png"},
+			ok:   true,
+		},
+		{
+			name: "angle wrapped file URL",
+			text: "<file:///tmp/CleanShot%202026.png>",
+			want: []string{"file:///tmp/CleanShot%202026.png"},
+			ok:   true,
+		},
+		{
 			name:      "shell escaped path with spaces",
 			text:      `/Users/jawa/Library/Application\ Support/CleanShot/media/CleanShot\ 2026-07-06\ at\ 11.33.14@2x.png`,
 			want:      []string{`/Users/jawa/Library/Application\ Support/CleanShot/media/CleanShot\ 2026-07-06\ at\ 11.33.14@2x.png`},
@@ -307,6 +332,13 @@ func TestPastedImageSources(t *testing.T) {
 			text: `'/tmp/first image.png' "/tmp/second image.jpg"`,
 			want: []string{`'/tmp/first image.png'`, `"/tmp/second image.jpg"`},
 			ok:   true,
+		},
+		{
+			name:      "at-prefixed shell escaped path with spaces",
+			text:      `@/Users/jawa/Library/Application\ Support/CleanShot/media/media_UtsBKjOyVs/CleanShot\ 2026-07-06\ at\ 17.29.25@2x.png`,
+			want:      []string{`@/Users/jawa/Library/Application\ Support/CleanShot/media/media_UtsBKjOyVs/CleanShot\ 2026-07-06\ at\ 17.29.25@2x.png`},
+			ok:        true,
+			posixOnly: true,
 		},
 		{
 			name: "sentence with image path remains text",
@@ -339,6 +371,33 @@ func TestPastedImageSources(t *testing.T) {
 				t.Fatalf("sources = %v, want %v", got, c.want)
 			}
 		})
+	}
+}
+
+func writeTinyPNG(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := base64.StdEncoding.DecodeString(tinyPNGBase64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertSingleImageToken(t *testing.T, updated chatTUI) {
+	t.Helper()
+	if got := updated.input.Value(); got != "[image #1] " {
+		t.Fatalf("input after paste = %q, want image token", got)
+	}
+	if len(updated.pastedBlocks) != 1 || !updated.pastedBlocks[0].image {
+		t.Fatalf("pastedBlocks = %+v, want one image block", updated.pastedBlocks)
+	}
+	if text := updated.pastedBlocks[0].text; !strings.HasPrefix(text, "@.reasonix/attachments/clipboard-") || !strings.HasSuffix(text, ".png") {
+		t.Fatalf("image block text = %q, want saved attachment ref", text)
 	}
 }
 
@@ -400,6 +459,228 @@ func TestPasteShellEscapedImagePathWithoutWhitespaceInsertsImageToken(t *testing
 	}
 	if len(updated.pastedBlocks) != 1 || !updated.pastedBlocks[0].image {
 		t.Fatalf("pastedBlocks = %+v, want one image block", updated.pastedBlocks)
+	}
+	if text := updated.pastedBlocks[0].text; !strings.HasPrefix(text, "@.reasonix/attachments/clipboard-") || !strings.HasSuffix(text, ".png") {
+		t.Fatalf("image block text = %q, want saved attachment ref", text)
+	}
+}
+
+func TestPasteUnescapedAtImagePathWithSpacesInsertsImageToken(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	path := filepath.Join(root, "Library", "Application Support", "CleanShot", "media", "media_uqlxszAEbJ", "CleanShot 2026-07-09 at 17.13.43@2x.png")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := base64.StdEncoding.DecodeString(tinyPNGBase64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := newTestChatTUI()
+	next, _ := m.Update(tea.PasteMsg{Content: "@" + path})
+	updated := next.(chatTUI)
+
+	if got := updated.input.Value(); got != "[image #1] " {
+		t.Fatalf("input after paste = %q, want image token", got)
+	}
+	if len(updated.pastedBlocks) != 1 || !updated.pastedBlocks[0].image {
+		t.Fatalf("pastedBlocks = %+v, want one image block", updated.pastedBlocks)
+	}
+	if text := updated.pastedBlocks[0].text; !strings.HasPrefix(text, "@.reasonix/attachments/clipboard-") || !strings.HasSuffix(text, ".png") {
+		t.Fatalf("image block text = %q, want saved attachment ref", text)
+	}
+}
+
+func TestPasteImagePathWhileRunningInsertsImageToken(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	path := filepath.Join(root, "Library", "Application Support", "CleanShot", "media", "media_running", "CleanShot 2026-07-09 at 20.11.45@2x.png")
+	writeTinyPNG(t, path)
+
+	m := newTestChatTUI()
+	m.state = tuiRunning
+	next, _ := m.Update(tea.PasteMsg{Content: "@" + path})
+	updated := next.(chatTUI)
+
+	assertSingleImageToken(t, updated)
+}
+
+func TestPasteWrappedUnescapedAtImagePathWithSpacesInsertsImageToken(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	path := filepath.Join(root, "Library", "Application Support", "CleanShot", "media", "media_KPL5MdRm81", "CleanShot 2026-07-09 at 20.11.45@2x.png")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := base64.StdEncoding.DecodeString(tinyPNGBase64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	pasted := "@" + strings.Replace(path, " at 20.", " at\n20.", 1)
+	m := newTestChatTUI()
+	next, _ := m.Update(tea.PasteMsg{Content: pasted})
+	updated := next.(chatTUI)
+
+	if got := updated.input.Value(); got != "[image #1] " {
+		t.Fatalf("input after paste = %q, want image token", got)
+	}
+	if len(updated.pastedBlocks) != 1 || !updated.pastedBlocks[0].image {
+		t.Fatalf("pastedBlocks = %+v, want one image block", updated.pastedBlocks)
+	}
+	if text := updated.pastedBlocks[0].text; !strings.HasPrefix(text, "@.reasonix/attachments/clipboard-") || !strings.HasSuffix(text, ".png") {
+		t.Fatalf("image block text = %q, want saved attachment ref", text)
+	}
+}
+
+func TestPastePromptPrefixedWrappedImagePathInsertsImageToken(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	path := filepath.Join(root, "Library", "Application Support", "CleanShot", "media", "media_prompt", "CleanShot 2026-07-09 at 20.11.45@2x.png")
+	writeTinyPNG(t, path)
+
+	pasted := "› @" + strings.Replace(path, " at 20.", " at\n› 20.", 1)
+	m := newTestChatTUI()
+	next, _ := m.Update(tea.PasteMsg{Content: pasted})
+	updated := next.(chatTUI)
+
+	assertSingleImageToken(t, updated)
+}
+
+func TestPasteAsciiPromptPrefixedWrappedImagePathInsertsImageToken(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	path := filepath.Join(root, "Library", "Application Support", "CleanShot", "media", "media_ascii_prompt", "CleanShot 2026-07-09 at 20.11.45@2x.png")
+	writeTinyPNG(t, path)
+
+	pasted := "> @" + strings.Replace(path, "CleanShot", "Clean\n> Shot", 1)
+	m := newTestChatTUI()
+	next, _ := m.Update(tea.PasteMsg{Content: pasted})
+	updated := next.(chatTUI)
+
+	assertSingleImageToken(t, updated)
+}
+
+func TestPasteHardWrappedImagePathWithoutSpaceInsertsImageToken(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	path := filepath.Join(root, "Library", "Application Support", "CleanShot", "media", "media_split", "CleanShot 2026-07-09 at 20.11.45@2x.png")
+	writeTinyPNG(t, path)
+
+	pasted := "@" + strings.Replace(path, "CleanShot", "Clean\nShot", 1)
+	m := newTestChatTUI()
+	next, _ := m.Update(tea.PasteMsg{Content: pasted})
+	updated := next.(chatTUI)
+
+	assertSingleImageToken(t, updated)
+}
+
+func TestPasteFileURLImagePathInsertsImageToken(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	path := filepath.Join(root, "Library", "Application Support", "CleanShot", "media", "media_file_url", "CleanShot 2026-07-09 at 20.11.45@2x.png")
+	writeTinyPNG(t, path)
+	fileURL := (&url.URL{Scheme: "file", Path: path}).String()
+
+	m := newTestChatTUI()
+	next, _ := m.Update(tea.PasteMsg{Content: fileURL})
+	updated := next.(chatTUI)
+
+	assertSingleImageToken(t, updated)
+}
+
+func TestPasteHTMLImagePathInsertsImageToken(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	path := filepath.Join(root, "Library", "Application Support", "CleanShot", "media", "media_html", "CleanShot 2026-07-09 at 20.11.45@2x.png")
+	writeTinyPNG(t, path)
+	fileURL := (&url.URL{Scheme: "file", Path: path}).String()
+
+	m := newTestChatTUI()
+	next, _ := m.Update(tea.PasteMsg{Content: `<img alt="CleanShot" src="` + fileURL + `">`})
+	updated := next.(chatTUI)
+
+	assertSingleImageToken(t, updated)
+}
+
+func TestPasteMarkdownLinkImagePathInsertsImageToken(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	path := filepath.Join(root, "Library", "Application Support", "CleanShot", "media", "media_markdown", "CleanShot 2026-07-09 at 20.11.45@2x.png")
+	writeTinyPNG(t, path)
+	fileURL := (&url.URL{Scheme: "file", Path: path}).String()
+
+	m := newTestChatTUI()
+	next, _ := m.Update(tea.PasteMsg{Content: `[Image #1](` + fileURL + `)`})
+	updated := next.(chatTUI)
+
+	assertSingleImageToken(t, updated)
+}
+
+func TestPasteMultipleFileURLImagePathsInsertsMultipleImageTokens(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	path1 := filepath.Join(root, "Library", "Application Support", "CleanShot", "media", "media_multi", "CleanShot 2026-07-09 at 20.11.45@2x.png")
+	path2 := filepath.Join(root, "Library", "Application Support", "CleanShot", "media", "media_multi", "CleanShot 2026-07-09 at 20.11.46@2x.png")
+	writeTinyPNG(t, path1)
+	writeTinyPNG(t, path2)
+	fileURL1 := (&url.URL{Scheme: "file", Path: path1}).String()
+	fileURL2 := (&url.URL{Scheme: "file", Path: path2}).String()
+
+	m := newTestChatTUI()
+	next, _ := m.Update(tea.PasteMsg{Content: fileURL1 + "\n" + fileURL2})
+	updated := next.(chatTUI)
+
+	if got := updated.input.Value(); got != "[image #1] [image #2] " {
+		t.Fatalf("input after paste = %q, want two image tokens", got)
+	}
+	if len(updated.pastedBlocks) != 2 || !updated.pastedBlocks[0].image || !updated.pastedBlocks[1].image {
+		t.Fatalf("pastedBlocks = %+v, want two image blocks", updated.pastedBlocks)
+	}
+}
+
+func TestTypedAtShellEscapedImagePathInsertsImageToken(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX shell-escaped paths are not decoded on Windows")
+	}
+	root := t.TempDir()
+	t.Chdir(root)
+	path := filepath.Join(root, "Library", "Application Support", "CleanShot", "media", "media_UtsBKjOyVs", "CleanShot 2026-07-06 at 17.29.25@2x.png")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := base64.StdEncoding.DecodeString(tinyPNGBase64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := newTestChatTUI()
+	typed := "@" + strings.ReplaceAll(path, " ", `\ `)
+	var model tea.Model = m
+	for _, r := range typed {
+		next, _ := model.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
+		model = next
+	}
+	updated := model.(chatTUI)
+
+	if got := updated.input.Value(); got != "[image #1] " {
+		t.Fatalf("input after typed image path = %q, want image token", got)
+	}
+	if len(updated.pastedBlocks) != 1 || !updated.pastedBlocks[0].image {
+		t.Fatalf("pastedBlocks = %+v, want one image block", updated.pastedBlocks)
+	}
+	if text := updated.pastedBlocks[0].text; !strings.HasPrefix(text, "@.reasonix/attachments/clipboard-") || !strings.HasSuffix(text, ".png") {
+		t.Fatalf("image block text = %q, want saved attachment ref", text)
 	}
 }
 

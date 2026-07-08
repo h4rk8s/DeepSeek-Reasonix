@@ -251,6 +251,7 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	orig.Skills.DisabledSkills = []string{"review", "explore"}
 	orig.Skills.DisableImplicitInvocation = true
 	orig.Skills.MaxDepth = 2
+	orig.TerminalTitle.Items = []string{"app-name", "session-title", "git-branch"}
 	orig.Bot.ToolApprovalMode = "auto"
 	orig.Bot.Control = BotControlConfig{Enabled: true, Addr: "127.0.0.1:39001", TokenEnv: "BOT_CONTROL_TOKEN"}
 	orig.Bot.Feishu.OutboundMediaRoots = []string{"/tmp/reasonix-media", "/srv/shots"}
@@ -520,6 +521,9 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	}
 	if got.SkillMaxDepth() != 2 {
 		t.Errorf("skills.max_depth = %d, want 2", got.SkillMaxDepth())
+	}
+	if want := []string{"app-name", "session-title", "git-branch"}; !reflect.DeepEqual(got.TerminalTitleItems(), want) {
+		t.Errorf("terminal title items = %v, want %v", got.TerminalTitleItems(), want)
 	}
 	if len(got.Plugins) != 2 {
 		t.Fatalf("plugins count = %d, want 2", len(got.Plugins))
@@ -973,6 +977,47 @@ func TestShowTurnUsageDefaultsOnAndRendersFalseOverride(t *testing.T) {
 	}
 	if got.UI.ShowTurnUsage {
 		t.Fatal("ui.show_turn_usage false override did not round-trip")
+	}
+}
+
+func TestProjectDeltaRendersUIShowUsage(t *testing.T) {
+	c := Default()
+	showUsage := false
+	c.UI.ShowUsage = &showUsage
+
+	delta := RenderTOMLProjectDelta(c)
+	for _, want := range []string{"[ui]", `show_usage = false`} {
+		if !strings.Contains(delta, want) {
+			t.Fatalf("project delta missing %q:\n%s", want, delta)
+		}
+	}
+
+	got := Default()
+	if _, err := toml.Decode(delta, got); err != nil {
+		t.Fatalf("decode project delta: %v\n%s", err, delta)
+	}
+	if got.UIShowUsage() {
+		t.Fatalf("ui.show_usage = true, want false")
+	}
+}
+
+func TestProjectDeltaRendersUILazyReasoning(t *testing.T) {
+	c := Default()
+	c.UI.LazyReasoning = true
+
+	delta := RenderTOMLProjectDelta(c)
+	for _, want := range []string{"[ui]", "lazy_reasoning = true"} {
+		if !strings.Contains(delta, want) {
+			t.Fatalf("project delta missing %q:\n%s", want, delta)
+		}
+	}
+
+	got := Default()
+	if _, err := toml.Decode(delta, got); err != nil {
+		t.Fatalf("decode project delta: %v\n%s", err, delta)
+	}
+	if !got.UI.LazyReasoning {
+		t.Fatalf("ui.lazy_reasoning = false, want true")
 	}
 }
 
