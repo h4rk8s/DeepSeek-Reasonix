@@ -101,37 +101,8 @@ func renderTurnReceipt(u *provider.Usage, p *provider.Pricing, d *event.CacheDia
 // wide terminals and move as one unit on narrow terminals.
 func (m chatTUI) primaryStatusLine(modeTag string, shellMode, cancelRequested bool) string {
 	status := statusFooterIndent + modeTag
-	switch {
-	case m.rewind != nil:
-		status += " · ⟲ rewind"
-	case m.mcpImport != nil:
-		status += " · MCP import"
-	case m.resumePick != nil:
-		status += " · " + i18n.M.StatusResumePicker
-	case m.quickPick != nil:
-		status += " · " + m.quickPick.title
-	case m.mcp != nil:
-		status += " · MCP"
-	case m.skillPick != nil:
-		status += " · " + i18n.M.SkillPickerStatusLabel
-	case m.chooser != nil:
-		status += " · " + i18n.M.ChatStatusQuestion
-	case m.pendingApproval != nil && m.pendingApproval.Tool == planApprovalTool:
-		status += " · " + i18n.M.ChatStatusPlanApproval
-	case m.pendingApproval != nil:
-		status += " · " + i18n.M.ChatStatusToolApproval
-	case m.clipboardImagePending:
-		status += " · " + yellow(i18n.M.ClipboardImagePastingHint)
-	case m.copyNoticeText != "":
-		status += " · " + green(m.copyNoticeText)
-	case cancelRequested:
-		status += " · " + i18n.M.CtrlCQuitHint
-	case shellMode:
-		status += " · " + i18n.M.ShellModeHint
-	case m.ctrl != nil && m.ctrl.AutoApproveTools():
-		status += " · " + footerValue(i18n.M.ChatStatusYoloIdle) + " · " + footerHint(i18n.M.ChatStatusCycleHintCompact)
-	default:
-		status += " · " + footerValue(i18n.M.ChatStatusIdle) + " · " + footerHint(i18n.M.ChatStatusCycleHintCompact)
+	if state := m.statusStateText(shellMode, cancelRequested); state != "" {
+		status += " · " + footerValue(ansi.Strip(state))
 	}
 	if mt := m.mouseTag(); mt != "" {
 		status += " · " + mt
@@ -146,51 +117,21 @@ func (m chatTUI) statusModelWorkGroup(maxWidth int) string {
 	if m.statuslineCmd != "" && m.statuslineOut != "" {
 		return ""
 	}
-	model := strings.TrimSpace(m.label)
-	work := ""
-	if m.runtimeProfile != "" {
-		work = runtimeProfileDisplay(m.runtimeProfile)
-	}
 	if maxWidth <= 0 {
 		maxWidth = 1
 	}
-
-	const separator = "   "
-	tail := make([]string, 0, 2)
-	if effort := m.effortTag(); effort != "" {
-		tail = append(tail, effort)
+	fields := make([]string, 0, 3)
+	for _, field := range []string{m.modelComboTag(), m.effortTag(), m.workModeTag()} {
+		if field != "" {
+			fields = append(fields, field)
+		}
 	}
-	if work != "" {
-		tail = append(tail, footerMetric(i18n.M.ChatStatusWorkLabel, footerSecondary(work)))
-	}
-	if model == "" && len(tail) == 0 {
+	if len(fields) == 0 {
 		return ""
 	}
-
-	fields := append([]string(nil), tail...)
-	if model != "" {
-		fields = append([]string{footerMetric(i18n.M.ChatStatusModelLabel, footerInfo(model))}, fields...)
-	}
-	full := strings.Join(fields, separator)
+	full := strings.Join(fields, " · ")
 	if visibleWidth(full) <= maxWidth {
 		return full
-	}
-
-	// Model names own the flexible slot. Keep effort and work intact while they
-	// fit, and compact only the model before falling back to a bounded plain group.
-	if model != "" {
-		tailWidth := visibleWidth(strings.Join(tail, separator))
-		if len(tail) > 0 {
-			tailWidth += visibleWidth(separator)
-		}
-		modelBudget := maxWidth - tailWidth - visibleWidth(i18n.M.ChatStatusModelLabel+" ")
-		if modelBudget >= 4 {
-			modelField := footerMetric(i18n.M.ChatStatusModelLabel, footerInfo(compactMiddle(model, modelBudget)))
-			if len(tail) == 0 {
-				return modelField
-			}
-			return modelField + separator + strings.Join(tail, separator)
-		}
 	}
 	return footerHint(compactMiddle(ansi.Strip(full), maxWidth))
 }
@@ -255,16 +196,17 @@ func (m chatTUI) statusTelemetryGroups() []string {
 	var data []string
 	if m.ctrl != nil {
 		if body, rate, ok := m.cacheStatus(); ok {
-			data = append(data, footerMetric(i18n.M.ChatStatusCacheLabel, themeFg(cacheStatusColor(rate), body)))
+			data = append(data, themeFg(cacheStatusColor(rate), body))
 		}
-		used, window := m.ctrl.ContextSnapshot()
-		data = append(data, renderContextStatusGroups(used, window, m.ctrl.CompactRatio())...)
+		if context := m.contextTag(); context != "" {
+			data = append(data, context)
+		}
 		if jt := m.jobsTag(); jt != "" {
-			data = append(data, footerMetric(i18n.M.ChatStatusJobsLabel, footerInfo(ansi.Strip(jt))))
+			data = append(data, jt)
 		}
 	}
-	if m.balance != "" {
-		data = append(data, footerMetric(i18n.M.ChatStatusBalanceLabel, footerValue(m.balance)))
+	if balance := m.balanceTag(); balance != "" {
+		data = append(data, balance)
 	}
 	return data
 }
@@ -363,32 +305,63 @@ func rightAlignStatusGroup(group string, width int) string {
 }
 
 func (m chatTUI) layoutGitTelemetry(width int) string {
+	width = max(width, 1)
 	telemetryGroups := m.statusTelemetryGroups()
 	telemetry := strings.Join(telemetryGroups, "  ")
+	available := max(width-visibleWidth(statusFooterIndent), 1)
+	workspace := m.workspaceLabel()
 	hasGit := strings.TrimSpace(m.gitStatus.Repo) != "" && strings.TrimSpace(m.gitStatus.Branch) != ""
-	if !hasGit {
-		// Without a Git identity there is no left-hand peer to balance. Keep the
-		// telemetry anchored to the normal footer indent instead of leaving a
-		// repo-sized visual hole across most of a wide terminal.
-		return packStatusGroups(telemetryGroups, width)
+
+	var identityLines []string
+	switch {
+	case workspace != "" && hasGit:
+		git := m.gitStatus.RenderWithin(available, activeCLITheme.warn)
+		if visibleWidth(workspace)+3+visibleWidth(git) <= available {
+			identityLines = append(identityLines, statusFooterIndent+dim(workspace)+" · "+git)
+		} else {
+			// Give the Git identity enough room to retain branch and dirty state,
+			// then spend the remaining columns on the workspace. If both cannot
+			// remain legible on one row, keep them as two independently bounded
+			// semantic rows instead of overflowing the terminal.
+			gitBudget := max(available*2/3, 1)
+			git = m.gitStatus.RenderWithin(gitBudget, activeCLITheme.warn)
+			workspaceBudget := available - visibleWidth(git) - 3
+			if workspaceBudget >= 8 {
+				identityLines = append(identityLines, statusFooterIndent+dim(compactMiddle(workspace, workspaceBudget))+" · "+git)
+			} else {
+				identityLines = append(identityLines,
+					statusFooterIndent+dim(compactMiddle(workspace, available)),
+					statusFooterIndent+m.gitStatus.RenderWithin(available, activeCLITheme.warn),
+				)
+			}
+		}
+	case workspace != "":
+		identityLines = append(identityLines, statusFooterIndent+dim(compactMiddle(workspace, available)))
+	case hasGit:
+		identityLines = append(identityLines, statusFooterIndent+m.gitStatus.RenderWithin(available, activeCLITheme.warn))
 	}
 
-	fullGitBudget := max(width-visibleWidth(statusFooterIndent), 1)
-	git := m.gitStatus.RenderWithin(fullGitBudget, activeCLITheme.warn)
-	gitLine := statusFooterIndent + git
+	if len(identityLines) == 0 {
+		if visibleWidth(telemetry) > width {
+			return packStatusGroups(telemetryGroups, width)
+		}
+		return rightAlignStatusGroup(telemetry, width)
+	}
 	if telemetry == "" {
-		return gitLine
+		return strings.Join(identityLines, "\n")
 	}
 
 	telemetryWidth := visibleWidth(telemetry)
-	if visibleWidth(gitLine)+statusFooterGroupGap+telemetryWidth <= width {
-		return gitLine + strings.Repeat(" ", width-visibleWidth(gitLine)-telemetryWidth) + telemetry
+	last := identityLines[len(identityLines)-1]
+	if visibleWidth(last)+statusFooterGroupGap+telemetryWidth <= width {
+		identityLines[len(identityLines)-1] = last + strings.Repeat(" ", width-visibleWidth(last)-telemetryWidth) + telemetry
+		return strings.Join(identityLines, "\n")
 	}
 
 	// Under width pressure Git gets its own full row instead of being shortened
 	// merely to keep telemetry beside it. Telemetry then packs left-to-right by
 	// semantic group, so no right-aligned fragment floats on a continuation row.
-	return gitLine + "\n" + packStatusGroups(telemetryGroups, width)
+	return strings.Join(identityLines, "\n") + "\n" + packStatusGroups(telemetryGroups, width)
 }
 
 func packStatusGroups(groups []string, width int) string {

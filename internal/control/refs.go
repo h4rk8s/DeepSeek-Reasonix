@@ -555,17 +555,80 @@ func (c *Controller) inputImages(line string) []string {
 	if !c.imageInputEnabled() {
 		return nil
 	}
+	return c.inputImageDataURLs(line)
+}
+
+func (c *Controller) inputImageDataURLs(line string) []string {
 	var urls []string
+	seen := map[string]bool{}
 	for _, r := range c.detectRefs(line) {
 		baseDir := c.workspaceRoot
 		if r.baseDir != "" {
 			baseDir = r.baseDir
 		}
 		if url, err := visionRefImageDataURL(r, baseDir); err == nil {
+			if seen[url] {
+				continue
+			}
+			seen[url] = true
 			urls = append(urls, url)
 		}
 	}
 	return urls
+}
+
+func (c *Controller) inputImageRefs(line string) []ImageUnderstandingRef {
+	var images []ImageUnderstandingRef
+	seen := map[string]bool{}
+	for _, r := range c.detectRefs(line) {
+		baseDir := c.workspaceRoot
+		if r.baseDir != "" {
+			baseDir = r.baseDir
+		}
+		url, err := visionRefImageDataURL(r, baseDir)
+		if err != nil {
+			continue
+		}
+		path, err := imageRefLocalPath(r, baseDir)
+		if err != nil {
+			continue
+		}
+		key := path
+		if key == "" {
+			key = url
+		}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		sha, _ := fileSHA256(path)
+		images = append(images, ImageUnderstandingRef{
+			Source:  imageRefSource(r),
+			Path:    path,
+			DataURL: url,
+			SHA256:  sha,
+		})
+	}
+	return images
+}
+
+func imageRefLocalPath(r ref, baseDir string) (string, error) {
+	switch r.kind {
+	case refImage:
+		clean, err := cleanAttachmentPath(r.path)
+		if err != nil {
+			return "", err
+		}
+		return filepath.Abs(clean)
+	case refFile:
+		absPath, absBase, ok := resolveAbsRef(r.path, baseDir)
+		if !ok || absBase == "" {
+			return "", os.ErrNotExist
+		}
+		return absPath, nil
+	default:
+		return "", fmt.Errorf("reference is not an image")
+	}
 }
 
 func visionRefImageDataURL(r ref, baseDir string) (string, error) {

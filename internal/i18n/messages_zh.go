@@ -228,12 +228,14 @@ var Chinese = Messages{
 	CmdClear:            "丢弃当前上下文",
 	CmdCls:              "清屏（保留 LLM 上下文）",
 	CmdCompact:          "压缩上下文",
+	CmdRecap:            "摘要当前对话",
 	CmdRewind:           "回滚到更早的一轮",
 	CmdTree:             "查看对话分支树",
 	CmdBranch:           "创建对话分支",
 	CmdSwitchBranch:     "切换对话分支",
 	CmdResume:           "恢复已保存的会话",
 	CmdRename:           "重命名会话",
+	CmdTitle:            "配置终端标题",
 	CmdModel:            "切换模型",
 	CmdStatus:           "显示会话状态",
 	CmdWorkMode:         "切换工作模式",
@@ -546,6 +548,8 @@ var Chinese = Messages{
   reasonix config compact-ratio [--local] [65..85]       配置自动压缩阈值
   reasonix config telemetry [auto|on|off]                配置不含内容的 CLI 使用统计
   reasonix report [list|show|send|delete] [ID]           审阅并明确发送本地 CLI 崩溃报告
+  reasonix config lazy-reasoning [off|on|status]         配置 thinking 折叠后点击展开
+  reasonix config image-understanding-log [off|summary|detail|status]  配置图片理解记录详情
   reasonix mcp <add|remove|list|import>                 管理 reasonix.toml 里的 MCP 服务器
   reasonix subagent <list|create|edit|delete|try|run>   管理和运行隔离子智能体 profile
   reasonix init                                         查看如何生成项目记忆（AGENTS.md）

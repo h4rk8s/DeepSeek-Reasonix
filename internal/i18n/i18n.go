@@ -220,12 +220,14 @@ type Messages struct {
 	CmdClear            string // /clear
 	CmdCls              string // /cls
 	CmdCompact          string // /compact
+	CmdRecap            string // /recap
 	CmdRewind           string // /rewind
 	CmdTree             string // /tree
 	CmdBranch           string // /branch
 	CmdSwitchBranch     string // /switch
 	CmdResume           string // /resume
 	CmdRename           string // /rename
+	CmdTitle            string // /title
 	CmdModel            string // /model
 	CmdStatus           string // /status
 	CmdWorkMode         string // /work-mode

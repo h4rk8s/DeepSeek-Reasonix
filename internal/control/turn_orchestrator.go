@@ -225,6 +225,7 @@ func (o *turnOrchestrator) runOrchestratedTurn(ctx context.Context, turn orchest
 	if blocked {
 		return nil
 	}
+	input = c.withImageUnderstanding(ctx, input, turn.raw, turn.input)
 	startMessages := c.messageCount()
 	defer c.snapshotActivityIfChanged(startMessages)
 	defer c.recordDisplayForNewUser(startMessages, turn.display)

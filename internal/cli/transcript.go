@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/base64"
+	"fmt"
 	"math"
 	"os"
 	"strconv"
@@ -21,6 +22,7 @@ type transcriptSourceKind uint8
 const (
 	transcriptSourceFixed transcriptSourceKind = iota
 	transcriptSourceMarkdown
+	transcriptSourceAssistant
 	transcriptSourceUser
 	transcriptSourceReasoning
 	transcriptSourceToolCard
@@ -93,6 +95,13 @@ func (m *chatTUI) renderTranscriptSource(source transcriptSource, terminalWidth 
 	contentWidth := transcriptContentWidth(terminalWidth, m.nativeScrollback)
 	switch source.kind {
 	case transcriptSourceMarkdown:
+		renderer := newMarkdownRenderer(contentWidth)
+		rendered := renderer.Render(source.raw)
+		if rendered == "" {
+			rendered = source.raw
+		}
+		return strings.TrimRight(rendered, "\n")
+	case transcriptSourceAssistant:
 		return renderAssistantMarkdown(source.raw, contentWidth)
 	case transcriptSourceUser:
 		return renderUserBubble(source.raw, terminalWidth, source.planMode)
@@ -363,6 +372,27 @@ func remoteClipboardSession() bool {
 // reach the user's local desktop clipboard, so it deliberately falls back to
 // OSC 52. A failed local write also falls back, but the UI labels that path as
 // an unverified terminal request rather than claiming a successful copy.
+
+// wrapTranscriptEntries wraps transcript entries independently and records which
+// original transcript entry produced each visual row. Click handlers use the
+// mapping to toggle folded blocks without guessing from styled terminal text.
+func wrapTranscriptEntries(entries []string, width int) (string, []int) {
+	if len(entries) == 0 {
+		return "", []int{-1}
+	}
+	wrapped := make([]string, 0, len(entries))
+	lineToEntry := make([]int, 0, len(entries))
+	for i, entry := range entries {
+		rendered := wrapTranscript(entry, width)
+		lines := strings.Split(rendered, "\n")
+		wrapped = append(wrapped, lines...)
+		for range lines {
+			lineToEntry = append(lineToEntry, i)
+		}
+	}
+	return strings.Join(wrapped, "\n"), lineToEntry
+}
+
 func copyToClipboard(text string) tea.Cmd {
 	return copyToClipboardWithStatus(text, 0, false)
 }
@@ -431,9 +461,10 @@ func edgeScrollDir(y, height int) int {
 // (absolute, scroll-independent) and a visual column.
 type selPos struct{ line, col int }
 
-// selection is the live left-drag text selection over the transcript. anchor is
-// where the drag began, head where it currently is; active gates rendering and
-// copy. Coordinates are absolute content lines so scrolling never moves them.
+// selection is the visible text selection over the transcript. anchor is where
+// the drag began, head where it ended or currently is; active gates rendering
+// and copy. Coordinates are absolute content lines so scrolling never moves
+// them. chatTUI.selecting tracks whether a drag is still in progress.
 type selection struct {
 	active       bool
 	anchor, head selPos
@@ -488,6 +519,65 @@ func (m chatTUI) renderTranscript() string {
 		bar[r] = scrollbarCell(r, total, h, thumbStart, thumbSize)
 	}
 	return lipgloss.JoinHorizontal(lipgloss.Top, strings.Join(rows, "\n"), strings.Join(bar, "\n"))
+}
+
+func (m chatTUI) showJumpToBottomPrompt() bool {
+	return !m.nativeScrollback && !m.viewport.AtBottom()
+}
+
+func (m *chatTUI) clearJumpToBottomNotice() {
+	m.jumpToBottomNewMessages = 0
+	m.jumpToBottomTurnNoted = false
+}
+
+func (m *chatTUI) noteOffscreenTranscriptGrowth() {
+	if m.state == tuiRunning {
+		if m.jumpToBottomTurnNoted {
+			return
+		}
+		m.jumpToBottomTurnNoted = true
+	}
+	m.jumpToBottomNewMessages++
+}
+
+func (m chatTUI) jumpToBottomPromptText() string {
+	n := m.jumpToBottomNewMessages
+	if n <= 0 {
+		return "Jump to bottom (ctrl+End) ↓"
+	}
+	if n <= 1 {
+		return "1 new message (ctrl+End) ↓"
+	}
+	return fmt.Sprintf("%d new messages (ctrl+End) ↓", n)
+}
+
+func (m chatTUI) renderJumpToBottomPrompt(width int) string {
+	if !m.showJumpToBottomPrompt() {
+		return ""
+	}
+	pill := lipgloss.NewStyle().
+		Foreground(themeLipColor(activeCLITheme.muted)).
+		Background(themeLipColor(activeCLITheme.border)).
+		Padding(0, 1).
+		Render(m.jumpToBottomPromptText())
+	return lipgloss.PlaceHorizontal(width, lipgloss.Center, pill)
+}
+
+func (m chatTUI) jumpToBottomPromptBounds(width int) (left, right int) {
+	labelW := visibleWidth(m.jumpToBottomPromptText()) + 2 // horizontal padding
+	if labelW >= width {
+		return 0, width
+	}
+	left = (width - labelW) / 2
+	return left, left + labelW
+}
+
+func (m chatTUI) hitJumpToBottomPrompt(x, y int) bool {
+	if !m.showJumpToBottomPrompt() || y != m.viewport.Height() {
+		return false
+	}
+	left, right := m.jumpToBottomPromptBounds(m.width)
+	return x >= left && x < right
 }
 
 // selSpan returns the [lo, hi) visual-column span of the selection on content

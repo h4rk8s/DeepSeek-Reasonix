@@ -120,7 +120,7 @@ func (m chatTUI) gitTag() string {
 	if strings.TrimSpace(m.gitStatus.Repo) == "" || strings.TrimSpace(m.gitStatus.Branch) == "" {
 		return ""
 	}
-	return m.gitStatus.render(themeFg(m.statusModeColor(), m.gitStatus.Repo), m.gitStatus.Branch)
+	return m.gitStatus.RenderWithin(48, m.statusModeColor())
 }
 
 var (

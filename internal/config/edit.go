@@ -505,6 +505,29 @@ func (c *Config) SetShowReasoning(on bool) error {
 	return nil
 }
 
+// SetLazyReasoning keeps completed thinking collapsed but available for
+// click-to-expand. It only affects presentation.
+func (c *Config) SetLazyReasoning(on bool) error {
+	c.UI.LazyReasoning = on
+	return nil
+}
+
+// SetImageUnderstandingLog controls how much OCR/vision sidecar output is
+// committed to the transcript for image attachments.
+func (c *Config) SetImageUnderstandingLog(mode string) error {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "off", "none", "false", "0", "disabled":
+		c.UI.ImageUnderstandingLog = "off"
+	case "summary", "on", "true", "1", "enabled":
+		c.UI.ImageUnderstandingLog = "summary"
+	case "detail", "details", "verbose", "full":
+		c.UI.ImageUnderstandingLog = "detail"
+	default:
+		return fmt.Errorf("image_understanding_log must be off, summary, or detail")
+	}
+	return nil
+}
+
 // SetProviderThinking updates a provider's provider-specific thinking mode knob.
 func (c *Config) SetProviderThinking(name, thinking string) error {
 	for i := range c.Providers {
