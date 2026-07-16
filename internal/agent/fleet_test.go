@@ -215,7 +215,21 @@ func TestFleetSchemaStableAndBounds(t *testing.T) {
 		}
 	}
 	// Profile names must not be enumerated in schema (cache stability).
-	if strings.Contains(schema, "doc-rewriter") || strings.Contains(schema, "enum") {
+	var decoded struct {
+		Properties struct {
+			Tasks struct {
+				Items struct {
+					Properties map[string]struct {
+						Enum []string `json:"enum"`
+					} `json:"properties"`
+				} `json:"items"`
+			} `json:"tasks"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal([]byte(schema), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(schema, "doc-rewriter") || len(decoded.Properties.Tasks.Items.Properties["profile"].Enum) != 0 {
 		t.Fatalf("schema must not embed profile names: %s", schema)
 	}
 	if f.Name() != "fleet" {

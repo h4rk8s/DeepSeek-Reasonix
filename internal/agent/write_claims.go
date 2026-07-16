@@ -106,6 +106,39 @@ func WholeWorkspaceWriteClaim(workspaceRoot string) (WritePathSet, error) {
 	return WritePathSet{WholeWorkspace: true, WorkspaceRoot: root}, nil
 }
 
+// rebaseWriteClaims maps an explicit claim from the parent workspace into an
+// isolated child workspace while preserving the same workspace-relative
+// paths. Scheduling continues to use the parent claim; only the child tool
+// registry receives this rebased execution boundary.
+func rebaseWriteClaims(claims WritePathSet, sourceRoot, targetRoot string) (WritePathSet, error) {
+	if claims.Empty() {
+		return WritePathSet{}, nil
+	}
+	if cleanPathEqual(sourceRoot, targetRoot) {
+		return claims, nil
+	}
+	if claims.WholeWorkspace {
+		return WholeWorkspaceWriteClaim(targetRoot)
+	}
+
+	source, err := normalizeExistingRoot(sourceRoot)
+	if err != nil {
+		return WritePathSet{}, err
+	}
+	relative := make([]string, 0, len(claims.Paths))
+	for _, claimedPath := range claims.Paths {
+		rel, err := filepath.Rel(source, claimedPath)
+		if err != nil {
+			return WritePathSet{}, fmt.Errorf("rebase write path %q: %w", claimedPath, err)
+		}
+		if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+			return WritePathSet{}, fmt.Errorf("write path %q is outside source workspace %q", claimedPath, source)
+		}
+		relative = append(relative, rel)
+	}
+	return NormalizeWritePaths(targetRoot, relative)
+}
+
 // Overlaps reports whether two write claims conflict (identical, parent/child,
 // or case-equivalent on case-insensitive filesystems).
 func (s WritePathSet) Overlaps(other WritePathSet) bool {

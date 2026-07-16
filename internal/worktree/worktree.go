@@ -200,8 +200,7 @@ func runGitInput(parent context.Context, dir string, input []byte, args ...strin
 	}
 	ctx, cancel := context.WithTimeout(parent, gitTimeout(args))
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", gitCommandArgs(runtime.GOOS, dir, args...)...)
-	proc.HideWindow(cmd)
+	cmd := gitcmd.Command(ctx, dir, args...)
 	cmd.Stdin = bytes.NewReader(input)
 	var outBuf, errBuf bytes.Buffer
 	cmd.Stdout = &outBuf

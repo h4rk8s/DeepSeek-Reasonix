@@ -18,6 +18,7 @@ type ProfileDefinition struct {
 	Model        string
 	Effort       string
 	ReadOnly     bool
+	Isolation    string
 	// Invocation is "auto" or "manual". Explicit profile= on task/fleet may
 	// call manual profiles; automatic discovery still respects the index.
 	Invocation string
@@ -57,6 +58,8 @@ type ProfileExecSpec struct {
 	// that can answer directly without host tools. Explicit task/profile calls
 	// keep failing closed on an empty registry.
 	AllowNoTools bool
+	// Isolation is "none" or "worktree". It defaults to none.
+	Isolation string
 	// CallTools is the optional per-call tools whitelist.
 	CallTools []string
 	// ProfileTools is the profile frontmatter allowed-tools list.

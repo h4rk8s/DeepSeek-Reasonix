@@ -54,6 +54,7 @@ func (*FleetTool) Schema() json.RawMessage {
         "prompt":{"type":"string","description":"Task prompt for the sub-agent."},
         "description":{"type":"string","description":"Optional short label shown in the job list."},
         "profile":{"type":"string","description":"Optional runAs=subagent profile name."},
+        "isolation":{"type":"string","enum":["none","worktree"],"description":"Optional workspace isolation policy. worktree is valid only for writer tasks."},
         "write_paths":{"type":"array","items":{"type":"string"},"description":"Write targets for this item. Parallel writers must declare non-overlapping paths. Omitting write_paths claims the whole workspace; multiple whole-workspace claims (or any path overlap) fail preflight and start nothing."},
         "read_only":{"type":"boolean","description":"Force the read-only registry even if the profile is writable."},
         "tools":{"type":"array","items":{"type":"string"},"description":"Optional tool whitelist (intersected with profile allowed-tools)."},
@@ -82,6 +83,7 @@ type fleetTaskItem struct {
 	MaxSteps    int      `json:"max_steps"`
 	Model       string   `json:"model"`
 	Effort      string   `json:"effort"`
+	Isolation   string   `json:"isolation"`
 }
 
 type fleetItemStatus string
@@ -179,7 +181,7 @@ func (f *FleetTool) Execute(ctx context.Context, args json.RawMessage) (result s
 		// Fleet writers without write_paths claim the whole workspace so the
 		// preflight can detect multi-writer collisions before anything starts.
 		forceBackgroundClaim := !item.ReadOnly
-		spec, err := f.taskTool.buildTaskSpec(ctx, item.Prompt, item.Description, item.Profile, item.WritePaths, item.Tools, item.MaxSteps, item.Model, item.Effort, "", "", false, item.ReadOnly)
+		spec, err := f.taskTool.buildTaskSpec(ctx, item.Prompt, item.Description, item.Profile, item.WritePaths, item.Tools, item.MaxSteps, item.Model, item.Effort, "", "", item.Isolation, false, item.ReadOnly)
 		if err != nil {
 			return "", fmt.Errorf("task %d: %w", i+1, err)
 		}
