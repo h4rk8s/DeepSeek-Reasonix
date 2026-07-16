@@ -117,6 +117,31 @@ func TestRunOutputSessionIDPreservesExistingFormats(t *testing.T) {
 	}
 }
 
+func TestRunOutputJSONUnknownPricingLooksLikeZeroCostToday(t *testing.T) {
+	var out bytes.Buffer
+	sink := newRunOutputSink(&out, runOutputJSON)
+	sink.Emit(event.Event{Kind: event.Message, Text: "done"})
+	sink.Emit(event.Event{Kind: event.Usage, Usage: &provider.Usage{
+		PromptTokens: 100, CompletionTokens: 20, CacheHitTokens: 80, CacheMissTokens: 20,
+	}})
+	sink.Emit(event.Event{Kind: event.TurnDone})
+	if err := sink.Finalize("abc", time.Now(), nil); err != nil {
+		t.Fatal(err)
+	}
+	var result map[string]any
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode result: %v\n%s", err, out.String())
+	}
+	if got, ok := result["total_cost_usd"].(float64); !ok || got != 0 {
+		t.Fatalf("unknown pricing should currently serialize as total_cost_usd=0, got %#v", result["total_cost_usd"])
+	}
+	for _, key := range []string{"schema_version", "usage_is_incomplete", "cost_is_partial", "total_cost_usd_ticks", "modelUsage"} {
+		if _, ok := result[key]; ok {
+			t.Fatalf("run output unexpectedly has v2 field %q before usage contract is implemented: %s", key, out.String())
+		}
+	}
+}
+
 func TestRunOutputStreamJSONEndsWithErrorResult(t *testing.T) {
 	var out bytes.Buffer
 	sink := newRunOutputSink(&out, runOutputStreamJSON)
