@@ -328,6 +328,7 @@ func TestTranscriptViewportSizing(t *testing.T) {
 func TestStatusLineWrapAccounting(t *testing.T) {
 	ctrl := control.New(control.Options{})
 	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 30)
+	m.balance = "¥123.45"
 
 	m0, _ := m.Update(tea.WindowSizeMsg{Width: 30, Height: 12})
 	m = m0.(chatTUI)

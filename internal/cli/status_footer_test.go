@@ -293,8 +293,8 @@ func TestStatusFooterUsesReadableLocalizedHintAndWrapsCleanly(t *testing.T) {
 			primary := m.primaryStatusLine(" Auto ", false, false)
 			block := ansi.Strip(m.renderStatusBlock(primary, 100))
 			lines := strings.Split(block, "\n")
-			if len(lines) != 3 {
-				t.Fatalf("localized footer rows = %d, want primary/session, divider, and environment rows:\n%s", len(lines), block)
+			if len(lines) != 1 {
+				t.Fatalf("localized footer rows = %d, want one compact row without empty data bands:\n%s", len(lines), block)
 			}
 			if !strings.Contains(lines[0], tt.session) || strings.Contains(block, "Shift+Tab") || strings.Contains(block, "Ctrl+Y") {
 				t.Fatalf("localized footer did not keep the compact session group:\n%s", block)
@@ -456,17 +456,10 @@ func TestStatusFooterMediumLayoutLeftAlignsModelWork(t *testing.T) {
 
 	primary := m.primaryStatusLine(" Auto ", false, false)
 	lines := strings.Split(ansi.Strip(m.renderStatusBlock(primary, 82)), "\n")
-	divider := -1
-	for i, line := range lines {
-		if strings.Trim(line, "─ ") == "" && strings.Contains(line, "─") {
-			divider = i
-			break
-		}
+	if len(lines) != 1 {
+		t.Fatalf("medium footer without data should stay on one row:\n%s", strings.Join(lines, "\n"))
 	}
-	if divider < 1 {
-		t.Fatalf("medium footer should place model/work before the divider:\n%s", strings.Join(lines, "\n"))
-	}
-	modelRow := lines[divider-1]
+	modelRow := lines[0]
 	if !strings.Contains(modelRow, "DS v4 flash · effort auto · work balanced") {
 		t.Fatalf("medium model/effort/work row should remain grouped, got %q:\n%s", modelRow, strings.Join(lines, "\n"))
 	}

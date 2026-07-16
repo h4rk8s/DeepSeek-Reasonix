@@ -3,11 +3,10 @@ package skill
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
-func TestSubagentSkillUnknownIsolationFrontmatterIsPreservedButNotLoadedToday(t *testing.T) {
+func TestSubagentSkillIsolationFrontmatterLoadsWithoutRewriting(t *testing.T) {
 	home := t.TempDir()
 	path := filepath.Join(home, ".reasonix", SkillsDirname, "worker.md")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -33,6 +32,9 @@ func TestSubagentSkillUnknownIsolationFrontmatterIsPreservedButNotLoadedToday(t 
 	if len(sk.AllowedTools) != 2 || sk.AllowedTools[0] != "read_file" || sk.AllowedTools[1] != "grep" {
 		t.Fatalf("allowed tools parsed incorrectly: %#v", sk.AllowedTools)
 	}
+	if sk.Isolation != "worktree" {
+		t.Fatalf("isolation = %q, want worktree", sk.Isolation)
+	}
 	after, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -42,7 +44,7 @@ func TestSubagentSkillUnknownIsolationFrontmatterIsPreservedButNotLoadedToday(t 
 	}
 }
 
-func TestEditableSubagentProfileRejectsIsolationFrontmatterToday(t *testing.T) {
+func TestEditableSubagentProfileAcceptsManagedIsolationFrontmatter(t *testing.T) {
 	home := t.TempDir()
 	store := New(Options{HomeDir: home, DisableBuiltins: true})
 	if _, err := store.CreateWithContent("worker", ScopeGlobal, "---\ndescription: worker\nrunAs: subagent\ninvocation: manual\nisolation: worktree\n---\nbody\n"); err != nil {
@@ -52,8 +54,7 @@ func TestEditableSubagentProfileRejectsIsolationFrontmatterToday(t *testing.T) {
 	if !ok {
 		t.Fatal("skill not loaded")
 	}
-	err := ValidateEditableSubagentProfile(sk)
-	if err == nil || !strings.Contains(err.Error(), "isolation") {
-		t.Fatalf("editable profile should reject unmanaged isolation frontmatter today, got %v", err)
+	if err := ValidateEditableSubagentProfile(sk); err != nil {
+		t.Fatalf("editable profile should accept managed isolation frontmatter: %v", err)
 	}
 }
