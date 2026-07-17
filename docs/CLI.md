@@ -175,6 +175,7 @@ The final structured object has this shape:
 
 ```json
 {
+  "schema_version": 2,
   "type": "result",
   "subtype": "success",
   "is_error": false,
@@ -182,9 +183,13 @@ The final structured object has this shape:
   "num_turns": 1,
   "result": "...",
   "session_id": "...",
-  "total_cost": 0,
+  "usage_is_incomplete": false,
+  "cost_is_partial": false,
+  "total_cost": 0.00000123,
   "currency": "USD",
-  "total_cost_usd": 0,
+  "total_cost_usd": 0.00000123,
+  "total_cost_usd_ticks": 12300,
+  "modelUsage": {},
   "usage": {
     "input_tokens": 0,
     "output_tokens": 0,
@@ -194,12 +199,19 @@ The final structured object has this shape:
 }
 ```
 
-`total_cost` is denominated in the ISO currency code from `currency`, currently
-`CNY` or `USD` for official DeepSeek pricing. `total_cost_usd` remains as a
-numeric compatibility alias and mirrors `total_cost`; despite its legacy name,
-it is not converted to USD when `currency` is `CNY`. New consumers must use
-`total_cost` together with `currency`. A structured run fails instead of
-reporting a misleading total if usage contains mixed currencies.
+`usage_is_incomplete` is true while background subagents are still open or when
+usage attribution could not be completed. `open_background_subagents` and
+`incomplete_reasons` explain that state. `cost_is_partial` is true when any
+pricing is missing or is not denominated in USD; in that case
+`total_cost_usd` and `total_cost_usd_ticks` are omitted rather than reported as
+zero. `modelUsage` attributes tokens and exact cost ticks by role and model.
+
+When every usage row has pricing in one currency, `total_cost` is emitted with
+its ISO `currency` code (currently `CNY` or `USD` for official DeepSeek
+pricing). The normalized `total_cost_usd` and exact
+`total_cost_usd_ticks` fields are emitted only when every priced row is in USD.
+A structured run fails instead of reporting a misleading total if usage
+contains mixed currencies.
 
 Execution failures use `subtype: "error_during_execution"` and
 `is_error: true`. Structured modes keep runtime errors in JSON instead of also

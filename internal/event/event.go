@@ -107,6 +107,10 @@ const (
 	// host-local only — never persisted or sent to the model. Appended last to
 	// keep earlier Kind values wire-stable; older clients ignore unknown kinds.
 	StreamAttempt
+	// BackgroundJobLifecycle reports a background job's machine-readable state.
+	// Usage projections use task transitions to fail closed while nested usage
+	// is still pending.
+	BackgroundJobLifecycle
 	// KindCount is a sentinel one past the last real Kind. New event kinds must
 	// be inserted above it so completeness tests cover them automatically.
 	KindCount
@@ -501,6 +505,7 @@ type Event struct {
 	Tool             Tool                      // ToolDispatch / ToolResult
 	Usage            *provider.Usage           // Usage
 	Pricing          *provider.Pricing         // Usage: for cost display (nil = omit cost)
+	UsageModel       string                    // Usage: provider/model identity for ledger attribution
 	Source           string                    // optional display/event source (executor, planner, subagent, ...)
 	UsageSource      string                    // Usage: billable call source; empty means executor for compatibility
 	CacheDiagnostics *CacheDiagnostics         // Usage: cache-churn attribution (nil = N/A)
@@ -526,6 +531,15 @@ type Event struct {
 	RetryMax        int                       // Retrying: total attempts before giving up
 	RetryScope      RetryScope                // Retrying: optional "headers" | "stream"; empty for older emitters
 	StreamAttempt   StreamAttemptInfo         // StreamAttempt lifecycle
+	BackgroundJob   BackgroundJob             // BackgroundJobLifecycle transition
+}
+
+// BackgroundJob carries one background job lifecycle transition.
+type BackgroundJob struct {
+	ID        string
+	Kind      string
+	Status    string
+	SessionID string
 }
 
 // ReadinessAuditSink is an optional sink capability. Sinks that do not care

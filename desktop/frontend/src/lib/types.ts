@@ -25,7 +25,8 @@ export type EventKind =
   | "guardian_assessment"
   | "extension_surface"
   | "extension_status"
-  | "stream_attempt";
+  | "stream_attempt"
+  | "background_job_lifecycle";
 
 export type StreamAttemptAction = "begin" | "discard" | "commit";
 
@@ -110,6 +111,7 @@ export interface WireUsage {
   reasoningTokens?: number;
   estimated?: boolean;
   source?: string;
+  model?: string;
   cacheDiagnostics?: WireCacheDiagnostics;
   // Session-cumulative cache tokens — the status bar shows the aggregate
   // hit-rate (Σhit/Σ(hit+miss)), steadier than the single-turn cacheHitTokens.
@@ -125,6 +127,13 @@ export interface WireUsage {
   currency?: string;
   // Deprecated compatibility alias. Prefer cost + currency.
   costUsd?: number;
+}
+
+export interface WireBackgroundJob {
+  id: string;
+  kind: string;
+  status: string;
+  sessionId?: string;
 }
 
 export interface WireRecoveryApproval {
@@ -303,6 +312,7 @@ export interface WireEvent {
   /** Optional: "headers" | "stream". Older clients ignore unknown fields. */
   retryScope?: "headers" | "stream";
   streamAttempt?: WireStreamAttempt;
+  backgroundJob?: WireBackgroundJob;
   // Tab routing: set by the Go-side tabEventSink so multi-tab frontends
   // route each event to the correct per-tab reducer.
   tabId?: string;

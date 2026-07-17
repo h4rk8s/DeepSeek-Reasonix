@@ -3,6 +3,7 @@ package eventwire
 
 import (
 	"encoding/json"
+	"strings"
 
 	"reasonix/internal/event"
 	"reasonix/internal/provider"
@@ -34,6 +35,7 @@ type Event struct {
 	RetryMax        int               `json:"retryMax,omitempty"`
 	RetryScope      string            `json:"retryScope,omitempty"` // "headers" | "stream"; omit for older clients
 	StreamAttempt   *StreamAttempt    `json:"streamAttempt,omitempty"`
+	BackgroundJob   *BackgroundJob    `json:"backgroundJob,omitempty"`
 }
 
 // StreamAttempt is the JSON form of event.StreamAttemptInfo.
@@ -43,6 +45,13 @@ type StreamAttempt struct {
 	Attempt int    `json:"attempt,omitempty"`
 	Max     int    `json:"max,omitempty"`
 	Reason  string `json:"reason,omitempty"` // connection_reset | premature_eof | idle_timeout
+}
+
+type BackgroundJob struct {
+	ID        string `json:"id"`
+	Kind      string `json:"kind"`
+	Status    string `json:"status"`
+	SessionID string `json:"sessionId,omitempty"`
 }
 
 // ToWire converts a typed runtime event into the shared frontend JSON contract.
@@ -88,6 +97,7 @@ func ToWire(e event.Event) Event {
 				CacheMissTokens: u.CacheMissTokens, ReasoningTokens: u.ReasoningTokens,
 				Estimated:               u.Estimated,
 				Source:                  e.UsageSource,
+				Model:                   e.UsageModel,
 				ContextPromptTokens:     u.ContextPromptTokens,
 				ContextCompletionTokens: u.ContextCompletionTokens,
 				ContextReasoningTokens:  u.ContextReasoningTokens,
@@ -102,7 +112,9 @@ func ToWire(e event.Event) Event {
 				cost := e.Pricing.Cost(u)
 				w.Usage.Cost = cost
 				w.Usage.Currency = e.Pricing.Symbol()
-				w.Usage.CostUSD = cost
+				if isUSD(e.Pricing.Currency) {
+					w.Usage.CostUSD = cost
+				}
 			}
 		}
 	case event.ApprovalRequest:
@@ -160,6 +172,11 @@ func ToWire(e event.Event) Event {
 			Attempt: e.StreamAttempt.Attempt,
 			Max:     e.StreamAttempt.Max,
 			Reason:  e.StreamAttempt.Reason,
+		}
+	case event.BackgroundJobLifecycle:
+		w.BackgroundJob = &BackgroundJob{
+			ID: e.BackgroundJob.ID, Kind: e.BackgroundJob.Kind,
+			Status: e.BackgroundJob.Status, SessionID: e.BackgroundJob.SessionID,
 		}
 	}
 	return w
@@ -318,6 +335,7 @@ type Usage struct {
 	ReasoningTokens  int               `json:"reasoningTokens,omitempty"`
 	Estimated        bool              `json:"estimated,omitempty"`
 	Source           string            `json:"source,omitempty"`
+	Model            string            `json:"model,omitempty"`
 	CacheDiagnostics *CacheDiagnostics `json:"cacheDiagnostics,omitempty"`
 	// Session-cumulative cache tokens keep status displays steadier than one-turn values.
 	SessionCacheHitTokens  int `json:"sessionCacheHitTokens"`
@@ -331,8 +349,18 @@ type Usage struct {
 	ContextCacheMissTokens  int     `json:"contextCacheMissTokens,omitempty"`
 	Cost                    float64 `json:"cost,omitempty"`
 	Currency                string  `json:"currency,omitempty"`
-	// CostUSD is a compatibility alias for older consumers; it mirrors Cost.
+	// CostUSD is a compatibility alias for older consumers. It is omitted when
+	// the configured pricing currency is not explicitly USD.
 	CostUSD float64 `json:"costUsd,omitempty"`
+}
+
+func isUSD(currency string) bool {
+	switch strings.ToUpper(strings.TrimSpace(currency)) {
+	case "$", "USD", "US$":
+		return true
+	default:
+		return false
+	}
 }
 
 // CacheDiagnostics is the JSON form of cache prefix diagnostics.
@@ -412,7 +440,9 @@ func ToWireGuardian(g event.GuardianResult) *Guardian {
 			cost := g.Pricing.Cost(u)
 			out.Usage.Cost = cost
 			out.Usage.Currency = g.Pricing.Symbol()
-			out.Usage.CostUSD = cost
+			if isUSD(g.Pricing.Currency) {
+				out.Usage.CostUSD = cost
+			}
 		}
 	}
 	return out
@@ -467,28 +497,29 @@ func KindName(kind event.Kind) (string, bool) {
 }
 
 var kindNames = map[event.Kind]string{
-	event.TurnStarted:        "turn_started",
-	event.Reasoning:          "reasoning",
-	event.Text:               "text",
-	event.Message:            "message",
-	event.ToolDispatch:       "tool_dispatch",
-	event.ToolResult:         "tool_result",
-	event.Usage:              "usage",
-	event.Notice:             "notice",
-	event.Phase:              "phase",
-	event.ApprovalRequest:    "approval_request",
-	event.AskRequest:         "ask_request",
-	event.TurnDone:           "turn_done",
-	event.CompactionStarted:  "compaction_started",
-	event.CompactionDone:     "compaction_done",
-	event.ToolProgress:       "tool_progress",
-	event.MCPSurfaceReady:    "mcp_surface_ready",
-	event.Retrying:           "retrying",
-	event.Steer:              "steer",
-	event.GuardianAssessment: "guardian_assessment",
-	event.ExtensionSurface:   "extension_surface",
-	event.ExtensionStatus:    "extension_status",
-	event.StreamAttempt:      "stream_attempt",
+	event.TurnStarted:            "turn_started",
+	event.Reasoning:              "reasoning",
+	event.Text:                   "text",
+	event.Message:                "message",
+	event.ToolDispatch:           "tool_dispatch",
+	event.ToolResult:             "tool_result",
+	event.Usage:                  "usage",
+	event.Notice:                 "notice",
+	event.Phase:                  "phase",
+	event.ApprovalRequest:        "approval_request",
+	event.AskRequest:             "ask_request",
+	event.TurnDone:               "turn_done",
+	event.CompactionStarted:      "compaction_started",
+	event.CompactionDone:         "compaction_done",
+	event.ToolProgress:           "tool_progress",
+	event.MCPSurfaceReady:        "mcp_surface_ready",
+	event.Retrying:               "retrying",
+	event.Steer:                  "steer",
+	event.GuardianAssessment:     "guardian_assessment",
+	event.ExtensionSurface:       "extension_surface",
+	event.ExtensionStatus:        "extension_status",
+	event.StreamAttempt:          "stream_attempt",
+	event.BackgroundJobLifecycle: "background_job_lifecycle",
 }
 
 // ExtensionSurface is the JSON form of an event.ExtensionSurfacePayload.

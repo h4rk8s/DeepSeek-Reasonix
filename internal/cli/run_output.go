@@ -10,6 +10,7 @@ import (
 
 	"reasonix/internal/event"
 	"reasonix/internal/eventwire"
+	"reasonix/internal/usageledger"
 )
 
 type runOutputFormat string
@@ -43,28 +44,27 @@ func runOutputSessionID(format runOutputFormat, rawSessionID string, identityKey
 	return rawSessionID
 }
 
-type runResultUsage struct {
-	InputTokens              int  `json:"input_tokens"`
-	OutputTokens             int  `json:"output_tokens"`
-	CacheReadInputTokens     int  `json:"cache_read_input_tokens"`
-	CacheCreationInputTokens int  `json:"cache_creation_input_tokens"`
-	Estimated                bool `json:"estimated,omitempty"`
-}
+type runResultUsage = usageledger.Tokens
 
 type runResult struct {
-	Type       string  `json:"type"`
-	Subtype    string  `json:"subtype"`
-	IsError    bool    `json:"is_error"`
-	DurationMS int64   `json:"duration_ms"`
-	NumTurns   int     `json:"num_turns"`
-	Result     string  `json:"result"`
-	SessionID  string  `json:"session_id,omitempty"`
-	TotalCost  float64 `json:"total_cost"`
-	Currency   string  `json:"currency,omitempty"`
-	// TotalCostUSD is the released compatibility alias. It mirrors TotalCost;
-	// new consumers must pair TotalCost with Currency instead of assuming USD.
-	TotalCostUSD float64        `json:"total_cost_usd"`
-	Usage        runResultUsage `json:"usage"`
+	SchemaVersion           int                               `json:"schema_version"`
+	Type                    string                            `json:"type"`
+	Subtype                 string                            `json:"subtype"`
+	IsError                 bool                              `json:"is_error"`
+	DurationMS              int64                             `json:"duration_ms"`
+	NumTurns                int                               `json:"num_turns"`
+	Result                  string                            `json:"result"`
+	SessionID               string                            `json:"session_id,omitempty"`
+	UsageIsIncomplete       bool                              `json:"usage_is_incomplete"`
+	CostIsPartial           bool                              `json:"cost_is_partial"`
+	TotalCost               *float64                          `json:"total_cost,omitempty"`
+	Currency                string                            `json:"currency,omitempty"`
+	TotalCostUSD            *float64                          `json:"total_cost_usd,omitempty"`
+	TotalCostUSDTicks       *int64                            `json:"total_cost_usd_ticks,omitempty"`
+	ModelUsage              map[string]usageledger.ModelUsage `json:"modelUsage"`
+	IncompleteReasons       []string                          `json:"incomplete_reasons,omitempty"`
+	OpenBackgroundSubagents int                               `json:"open_background_subagents,omitempty"`
+	Usage                   runResultUsage                    `json:"usage"`
 }
 
 type machineEventUsage struct {
@@ -122,10 +122,12 @@ type runOutputSink struct {
 	out                 io.Writer
 	encoder             *json.Encoder
 	final               string
-	usage               runResultUsage
+	ledger              *usageledger.Ledger
 	cost                float64
 	currency            string
 	mixedCurrencies     bool
+	hasPricedUsage      bool
+	hasUnpricedUsage    bool
 	turns               int
 	sequence            uint64
 	machineToolIDs      map[string]string
@@ -140,6 +142,7 @@ func newRunOutputSink(out io.Writer, format runOutputFormat) *runOutputSink {
 		format:           format,
 		out:              out,
 		encoder:          json.NewEncoder(out),
+		ledger:           usageledger.New(),
 		machineToolIDs:   make(map[string]string),
 		machineToolNames: make(map[string]string),
 	}
@@ -151,13 +154,10 @@ func (s *runOutputSink) Emit(e event.Event) {
 	if e.Kind == event.Message {
 		s.final = e.Text
 	}
+	s.ledger.Add(e)
 	if e.Kind == event.Usage && e.Usage != nil {
-		s.usage.InputTokens += e.Usage.PromptTokens
-		s.usage.OutputTokens += e.Usage.CompletionTokens
-		s.usage.CacheReadInputTokens += e.Usage.CacheHitTokens
-		s.usage.CacheCreationInputTokens += e.Usage.CacheMissTokens
-		s.usage.Estimated = s.usage.Estimated || e.Usage.Estimated
 		if e.Pricing != nil {
+			s.hasPricedUsage = true
 			s.cost += e.Pricing.Cost(e.Usage)
 			currency := pricingCurrencyCode(e.Pricing.Currency)
 			if s.currency == "" {
@@ -165,6 +165,8 @@ func (s *runOutputSink) Emit(e event.Event) {
 			} else if currency != s.currency {
 				s.mixedCurrencies = true
 			}
+		} else {
+			s.hasUnpricedUsage = true
 		}
 	}
 	if e.Kind == event.TurnDone {
@@ -194,6 +196,7 @@ func (s *runOutputSink) Finalize(sessionID string, started time.Time, runErr err
 		return s.err
 	}
 	completion := classifyRunCompletion(runErr)
+	projection := s.ledger.Projection()
 	if s.format == runOutputEventsJSONL {
 		s.sequence++
 		turns := s.turns
@@ -208,7 +211,7 @@ func (s *runOutputSink) Finalize(sessionID string, started time.Time, runErr err
 			OK:            !completion.isError,
 			DurationMS:    time.Since(started).Milliseconds(),
 			NumTurns:      turns,
-			Usage:         machineEventUsage{InputTokens: s.usage.InputTokens, OutputTokens: s.usage.OutputTokens, CacheHitTokens: s.usage.CacheReadInputTokens, CacheMissTokens: s.usage.CacheCreationInputTokens},
+			Usage:         machineEventUsage{InputTokens: projection.Usage.InputTokens, OutputTokens: projection.Usage.OutputTokens, CacheHitTokens: projection.Usage.CacheReadInputTokens, CacheMissTokens: projection.Usage.CacheCreationInputTokens},
 		})
 	}
 	resultText := s.final
@@ -221,19 +224,29 @@ func (s *runOutputSink) Finalize(sessionID string, started time.Time, runErr err
 	if turns == 0 && !completion.isError {
 		turns = 1
 	}
-	return s.encoder.Encode(runResult{
-		Type:         "result",
-		Subtype:      completion.subtype,
-		IsError:      completion.isError,
-		DurationMS:   time.Since(started).Milliseconds(),
-		NumTurns:     turns,
-		Result:       resultText,
-		SessionID:    sessionID,
-		TotalCost:    s.cost,
-		Currency:     s.currency,
-		TotalCostUSD: s.cost,
-		Usage:        s.usage,
-	})
+	result := runResult{
+		SchemaVersion:           2,
+		Type:                    "result",
+		Subtype:                 completion.subtype,
+		IsError:                 completion.isError,
+		DurationMS:              time.Since(started).Milliseconds(),
+		NumTurns:                turns,
+		Result:                  resultText,
+		SessionID:               sessionID,
+		UsageIsIncomplete:       projection.UsageIsIncomplete,
+		CostIsPartial:           projection.CostIsPartial,
+		TotalCostUSD:            projection.TotalCostUSD,
+		TotalCostUSDTicks:       projection.TotalCostUSDTicks,
+		ModelUsage:              projection.ModelUsage,
+		IncompleteReasons:       projection.IncompleteReasons,
+		OpenBackgroundSubagents: projection.OpenBackgroundSubagents,
+		Usage:                   projection.Usage,
+	}
+	if s.hasPricedUsage && !s.hasUnpricedUsage {
+		result.TotalCost = &s.cost
+		result.Currency = s.currency
+	}
+	return s.encoder.Encode(result)
 }
 
 func pricingCurrencyCode(value string) string {

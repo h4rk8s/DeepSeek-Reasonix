@@ -960,7 +960,10 @@ func ClearPluginAuthenticationInSourceForRoot(root, name string) (PluginEntry, b
 	if !found {
 		return PluginEntry{}, false, "", fmt.Errorf("clear plugin authentication: no plugin %q", name)
 	}
-	path := MCPConfigPathForEntry(root, entry)
+	path, err := mcpConfigPathForEntryStrict(root, entry)
+	if err != nil {
+		return PluginEntry{}, false, "", err
+	}
 	if entry.Source != MCPSourceProjectMCPJSON {
 		cfg, err := LoadForEditReadOnlyStrict(path)
 		if err != nil {
@@ -984,7 +987,7 @@ func ClearPluginAuthenticationInSourceForRoot(root, name string) (PluginEntry, b
 	return updated, changed, path, nil
 }
 
-func pluginTOMLSourcePathForRoot(root, name string) string {
+func pluginTOMLSourcePathForRoot(root, name string) (string, error) {
 	projectTOML := "reasonix.toml"
 	if resolved := resolveRoot(root); resolved != "." {
 		projectTOML = filepath.Join(resolved, "reasonix.toml")
@@ -994,14 +997,17 @@ func pluginTOMLSourcePathForRoot(root, name string) string {
 		if strings.TrimSpace(path) == "" {
 			continue
 		}
-		cfg := LoadForEdit(path)
+		cfg, err := LoadForEditReadOnlyStrict(path)
+		if err != nil {
+			return "", err
+		}
 		for _, p := range cfg.Plugins {
 			if p.Name == name {
-				return path
+				return path, nil
 			}
 		}
 	}
-	return ""
+	return "", nil
 }
 
 // MCPConfigPathForEntry returns the writable config file that owns entry.
@@ -1009,6 +1015,11 @@ func pluginTOMLSourcePathForRoot(root, name string) string {
 // instead of saving the merged Config back to whichever file happens to have
 // the highest priority.
 func MCPConfigPathForEntry(root string, entry PluginEntry) string {
+	path, _ := mcpConfigPathForEntryStrict(root, entry)
+	return path
+}
+
+func mcpConfigPathForEntryStrict(root string, entry PluginEntry) (string, error) {
 	resolvedRoot := resolveRoot(root)
 	projectTOML := "reasonix.toml"
 	projectMCPJSON := mcpJSONFile
@@ -1018,36 +1029,44 @@ func MCPConfigPathForEntry(root string, entry PluginEntry) string {
 	}
 	switch entry.Source {
 	case MCPSourceProjectConfig:
-		return projectTOML
+		return projectTOML, nil
 	case MCPSourceProjectMCPJSON:
-		return projectMCPJSON
+		return projectMCPJSON, nil
 	case MCPSourceUserConfig:
 		for _, path := range userConfigCandidatePaths() {
-			cfg := LoadForEditWithoutCredentials(path)
+			cfg, err := LoadForEditWithoutCredentialsReadOnlyStrict(path)
+			if err != nil {
+				return "", err
+			}
 			if _, ok := pluginEntryByName(cfg.Plugins, entry.Name); ok {
-				return path
+				return path, nil
 			}
 		}
-		return UserConfigPath()
+		return UserConfigPath(), nil
 	case MCPSourceLegacyUser:
-		return legacyConfigPath()
+		return legacyConfigPath(), nil
 	case MCPSourcePluginPackage:
-		return ""
+		return "", nil
 	}
-	if path := pluginTOMLSourcePathForRoot(root, entry.Name); path != "" {
-		return path
+	if path, err := pluginTOMLSourcePathForRoot(root, entry.Name); err != nil {
+		return "", err
+	} else if path != "" {
+		return path, nil
 	}
 	if _, found, err := LoadMCPJSONPlugin(projectMCPJSON, entry.Name); err == nil && found {
-		return projectMCPJSON
+		return projectMCPJSON, nil
 	}
-	return UserConfigPath()
+	return UserConfigPath(), nil
 }
 
 // UpsertPluginInSourceForRoot writes entry back to its owning scope. New and
 // legacy user entries are normalized into the current user-global config;
 // project entries remain in their original project file.
 func UpsertPluginInSourceForRoot(root string, entry PluginEntry) (string, error) {
-	path := MCPConfigPathForEntry(root, entry)
+	path, err := mcpConfigPathForEntryStrict(root, entry)
+	if err != nil {
+		return "", err
+	}
 	switch entry.Source {
 	case MCPSourceProjectMCPJSON:
 		unlock, err := LockConfigFileEdits(path)
@@ -1163,7 +1182,10 @@ func InstallUserPluginForRoot(root string, entry PluginEntry, forceEnable bool) 
 // entry. Lower-priority same-name declarations are intentionally preserved so
 // they can become effective after a project override is removed.
 func RemovePluginFromSourceForRoot(root string, entry PluginEntry) (bool, string, error) {
-	path := MCPConfigPathForEntry(root, entry)
+	path, err := mcpConfigPathForEntryStrict(root, entry)
+	if err != nil {
+		return false, "", err
+	}
 	if entry.Source == MCPSourcePluginPackage {
 		return false, "", fmt.Errorf("MCP server %q is managed by an installed plugin package", entry.Name)
 	}
@@ -1227,7 +1249,10 @@ func RemovePluginFromEffectiveSourceForRoot(root, name string) (PluginEntry, boo
 	if !found {
 		return PluginEntry{}, false, "", nil
 	}
-	path := MCPConfigPathForEntry(root, entry)
+	path, err := mcpConfigPathForEntryStrict(root, entry)
+	if err != nil {
+		return PluginEntry{}, false, "", err
+	}
 	removed, path, err := removePluginFromSourceForRootLocked(entry, path)
 	return entry, removed, path, err
 }
