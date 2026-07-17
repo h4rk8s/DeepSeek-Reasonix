@@ -599,7 +599,7 @@ func (c *Coordinator) planFromStream(ctx context.Context, input string) (string,
 	defer func() {
 		accounted := provider.UsageWithRequestAttemptCount(ctx, usage)
 		if accounted != nil || streamCompleted {
-			c.sink.Emit(event.Event{Kind: event.Usage, ModelRef: c.plannerModelRef, Usage: accounted, Pricing: c.plannerPricing, Source: event.UsageSourcePlanner, UsageSource: event.UsageSourcePlanner})
+			c.sink.Emit(event.Event{Kind: event.Usage, ModelRef: c.plannerModelRef, UsageModel: c.planner.Name(), Usage: accounted, Pricing: c.plannerPricing, Source: event.UsageSourcePlanner, UsageSource: event.UsageSourcePlanner})
 		}
 	}()
 

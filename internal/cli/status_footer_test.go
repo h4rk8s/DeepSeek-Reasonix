@@ -414,34 +414,30 @@ func TestStatusFooterSwapsModelAndGitGroups(t *testing.T) {
 	}
 }
 
-func TestStatusFooterWithoutGitKeepsWorkspaceAndTelemetry(t *testing.T) {
+func TestStatusFooterWithoutGitLeftAlignsTelemetry(t *testing.T) {
 	defer i18n.DetectLanguage("en")
 	i18n.DetectLanguage("en")
 
 	m := newTestChatTUI()
 	m.balance = "¥12.34"
 	line := ansi.Strip(m.layoutGitTelemetry(120))
-	if !strings.HasPrefix(line, statusFooterIndent) || !strings.Contains(line, "/internal/cli") {
-		t.Fatalf("non-Git data row should retain the workspace identity, got %q", line)
+	if !strings.HasPrefix(line, statusFooterIndent+"BAL ¥12.34") {
+		t.Fatalf("non-Git telemetry should be left aligned, got %q", line)
 	}
-	if !strings.HasSuffix(line, "¥12.34") {
-		t.Fatalf("non-Git data row should right-anchor telemetry, got %q", line)
-	}
-	if visibleWidth(line) != 120 {
-		t.Fatalf("non-Git data row width = %d, want 120: %q", visibleWidth(line), line)
+	if visibleWidth(line) >= 120 {
+		t.Fatalf("non-Git telemetry unexpectedly retained right-alignment padding: %q", line)
 	}
 }
 
-func TestStatusFooterIncludesWorkspaceDataBand(t *testing.T) {
+func TestStatusFooterOmitsEmptyDataBand(t *testing.T) {
 	m := newTestChatTUI()
 	primary := "  Auto · ready"
 	block := ansi.Strip(m.renderStatusBlock(primary, 120))
-	lines := strings.Split(block, "\n")
-	if len(lines) != 3 {
-		t.Fatalf("workspace status block has %d rows, want primary, divider, and data: %q", len(lines), block)
+	if block != primary {
+		t.Fatalf("empty Git/telemetry status block = %q, want only %q", block, primary)
 	}
-	if lines[0] != primary || strings.Trim(lines[1], "─ ") != "" || !strings.Contains(lines[2], "/internal/cli") {
-		t.Fatalf("workspace status block lost its semantic rows: %q", block)
+	if strings.Contains(block, "─") {
+		t.Fatalf("empty Git/telemetry status block retained a divider: %q", block)
 	}
 }
 

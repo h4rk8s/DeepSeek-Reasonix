@@ -3,6 +3,7 @@ package eventwire
 
 import (
 	"encoding/json"
+	"strings"
 
 	"reasonix/internal/billing"
 	"reasonix/internal/event"
@@ -45,7 +46,8 @@ type Event struct {
 	// Phase is set on turn_phase events: working | checking | verifying | reviewing.
 	Phase string `json:"phase,omitempty"`
 	// Completion is set on completion_summary events (content-free quality summary).
-	Completion *CompletionSummary `json:"completion,omitempty"`
+	Completion    *CompletionSummary `json:"completion,omitempty"`
+	BackgroundJob *BackgroundJob     `json:"backgroundJob,omitempty"`
 }
 
 // CompletionSummary is the JSON form of event.CompletionSummaryInfo.
@@ -90,6 +92,13 @@ type StreamAttempt struct {
 	Attempt int    `json:"attempt,omitempty"`
 	Max     int    `json:"max,omitempty"`
 	Reason  string `json:"reason,omitempty"` // connection_reset | premature_eof | idle_timeout
+}
+
+type BackgroundJob struct {
+	ID        string `json:"id"`
+	Kind      string `json:"kind"`
+	Status    string `json:"status"`
+	SessionID string `json:"sessionId,omitempty"`
 }
 
 // ToWire converts a typed runtime event into the shared frontend JSON contract.
@@ -231,6 +240,11 @@ func ToWire(e event.Event) Event {
 				ConstraintDegraded: c.ConstraintDegraded,
 			}
 		}
+	case event.BackgroundJobLifecycle:
+		w.BackgroundJob = &BackgroundJob{
+			ID: e.BackgroundJob.ID, Kind: e.BackgroundJob.Kind,
+			Status: e.BackgroundJob.Status, SessionID: e.BackgroundJob.SessionID,
+		}
 	}
 	return w
 }
@@ -246,6 +260,7 @@ func toWireUsage(e event.Event) *Usage {
 		CacheMissTokens: u.CacheMissTokens, ReasoningTokens: u.ReasoningTokens,
 		Estimated:               u.Estimated,
 		Source:                  e.UsageSource,
+		Model:                   e.UsageModel,
 		ContextPromptTokens:     u.ContextPromptTokens,
 		ContextCompletionTokens: u.ContextCompletionTokens,
 		ContextReasoningTokens:  u.ContextReasoningTokens,
@@ -270,8 +285,10 @@ func toWireUsage(e event.Event) *Usage {
 		if quote.Selected != nil {
 			wire.Cost = quote.Selected.Float64()
 			wire.Currency = quote.LegacyCurrencySymbol()
-			wire.CostUSD = wire.Cost
 			wire.CurrencyCode = quote.LegacyCurrencyCode()
+			if isUSD(wire.CurrencyCode) {
+				wire.CostUSD = wire.Cost
+			}
 		}
 	}
 	return wire
@@ -432,6 +449,7 @@ type Usage struct {
 	ReasoningTokens  int               `json:"reasoningTokens,omitempty"`
 	Estimated        bool              `json:"estimated,omitempty"`
 	Source           string            `json:"source,omitempty"`
+	Model            string            `json:"model,omitempty"`
 	CacheDiagnostics *CacheDiagnostics `json:"cacheDiagnostics,omitempty"`
 	// Session-cumulative cache tokens keep status displays steadier than one-turn values.
 	SessionCacheHitTokens  int `json:"sessionCacheHitTokens"`
@@ -458,6 +476,15 @@ type Usage struct {
 	DisplayStatus   string             `json:"displayStatus,omitempty"`
 	AggregateMode   string             `json:"aggregateMode,omitempty"`
 	OriginalTotals  []billing.Money    `json:"originalTotals,omitempty"`
+}
+
+func isUSD(currency string) bool {
+	switch strings.ToUpper(strings.TrimSpace(currency)) {
+	case "$", "USD", "US$":
+		return true
+	default:
+		return false
+	}
 }
 
 // CacheDiagnostics is the JSON form of cache prefix diagnostics.
@@ -539,8 +566,10 @@ func ToWireGuardian(g event.GuardianResult) *Guardian {
 				out.Usage.CostQuote = q
 				out.Usage.Cost = q.LegacyCostFloat()
 				out.Usage.Currency = q.LegacyCurrencySymbol()
-				out.Usage.CostUSD = out.Usage.Cost
 				out.Usage.CurrencyCode = q.LegacyCurrencyCode()
+				if isUSD(out.Usage.CurrencyCode) {
+					out.Usage.CostUSD = out.Usage.Cost
+				}
 			}
 		}
 	}
@@ -622,6 +651,7 @@ var kindNames = map[event.Kind]string{
 	event.WorkspaceChanged:        "workspace_changed",
 	event.TurnPhase:               "turn_phase",
 	event.CompletionSummary:       "completion_summary",
+	event.BackgroundJobLifecycle:  "background_job_lifecycle",
 }
 
 // ContextMaintenance is the JSON form of event.ContextMaintenance.
