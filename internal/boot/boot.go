@@ -1203,7 +1203,14 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 			reg.Add(memory.NewForgetTool(mem.Store))
 			return "enabled remember, forget."
 		}
-		reg.Add(memory.NewRecallTool(mem.Store))
+		recallPolicy := cfg.MemoryRecallPolicy()
+		reg.Add(memory.NewRecallToolWithOptions(mem.Store, memory.RecallRankingOptions{
+			Diversity:          recallPolicy.Diversity,
+			DiversityWeight:    recallPolicy.DiversityWeight,
+			DuplicateThreshold: recallPolicy.DuplicateThreshold,
+			Staleness:          recallPolicy.Staleness,
+			StalenessHalfLife:  time.Duration(recallPolicy.StalenessHalfLifeDays * float64(24*time.Hour)),
+		}))
 		reg.Add(memory.NewRememberTool(mem.Store))
 		reg.Add(memory.NewForgetTool(mem.Store))
 		return "enabled memory, remember, forget."
