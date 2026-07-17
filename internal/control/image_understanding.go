@@ -94,7 +94,7 @@ func (u *ProviderImageUnderstanding) DescribeImages(ctx context.Context, userInp
 		}
 	}
 	if usage != nil && usage.TotalTokens > 0 && !nilutil.IsNil(u.sink) {
-		u.sink.Emit(event.Event{Kind: event.Usage, Usage: usage, Pricing: u.pricing, UsageSource: event.UsageSourceVision})
+		u.sink.Emit(event.Event{Kind: event.Usage, Usage: usage, Pricing: u.pricing, UsageSource: event.UsageSourceVision, UsageModel: u.prov.Name()})
 	}
 	desc := strings.TrimSpace(text.String())
 	if desc == "" {
