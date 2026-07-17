@@ -88,6 +88,7 @@ func (t rememberTool) Execute(ctx context.Context, args json.RawMessage) (string
 		Type:        NormalizeType(in.Type),
 		Scope:       factScope,
 		Body:        in.Body,
+		SourceKind:  "remember_tool",
 	}, SaveOptions{
 		ExpectedRevision:        in.ExpectedRevision,
 		RequireExpectedRevision: in.ExpectedRevision > 0,

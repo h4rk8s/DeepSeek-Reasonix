@@ -242,6 +242,11 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	} else {
 		b.WriteString("# recovery_model = \"deepseek-pro\"   # optional; falls back to guardian then main model\n")
 	}
+	if scope != RenderScopeProject {
+		recall := c.MemoryRecallPolicy()
+		fmt.Fprintf(&b, "memory_recall = { diversity = %v, diversity_weight = %s, duplicate_threshold = %s, staleness = %v, staleness_half_life_days = %s }   # user-level only: post-BM25 ranking\n",
+			*recall.Diversity, formatFloat(recall.DiversityWeight), formatFloat(recall.DuplicateThreshold), *recall.Staleness, formatFloat(recall.StalenessHalfLifeDays))
+	}
 	if lang := c.ReasoningLanguage(); lang != "auto" {
 		fmt.Fprintf(&b, "reasoning_language = %q   # visible reasoning language: auto|zh|en\n", lang)
 	} else {

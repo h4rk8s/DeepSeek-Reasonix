@@ -88,6 +88,10 @@ func (s Store) MigrateV2() (MigrationReport, error) {
 }
 
 func (s Store) SaveWithOptions(m Memory, opts SaveOptions) (SaveResult, error) {
+	return s.saveWithOptionsAt(m, opts, time.Now())
+}
+
+func (s Store) saveWithOptionsAt(m Memory, opts SaveOptions, now time.Time) (SaveResult, error) {
 	memoryStoreMutationMu.Lock()
 	defer memoryStoreMutationMu.Unlock()
 
@@ -138,13 +142,22 @@ func (s Store) SaveWithOptions(m Memory, opts SaveOptions) (SaveResult, error) {
 	if m.Name == "" {
 		return SaveResult{}, fmt.Errorf("memory name needs at least one letter or digit")
 	}
-	now := time.Now().UTC()
+	now = now.UTC()
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
 	if exists {
 		m.ID = existing.ID
 		m.Revision = existing.Revision + 1
 		m.CreatedAt = existing.CreatedAt
 		if strings.TrimSpace(string(m.Scope)) == "" {
 			m.Scope = existing.Scope
+		}
+		if strings.TrimSpace(m.SourceScope) == "" {
+			m.SourceScope = existing.SourceScope
+		}
+		if strings.TrimSpace(m.SourceKind) == "" {
+			m.SourceKind = existing.SourceKind
 		}
 	} else {
 		m.ID = newMemoryID(m.Name, now)
@@ -164,6 +177,12 @@ func (s Store) SaveWithOptions(m Memory, opts SaveOptions) (SaveResult, error) {
 		}
 	} else {
 		m.Scope = NormalizeFactScope(string(m.Scope))
+	}
+	if m.LastConfirmedAt.IsZero() {
+		m.LastConfirmedAt = now
+	}
+	if strings.TrimSpace(m.SourceScope) == "" {
+		m.SourceScope = string(m.Scope)
 	}
 
 	dir := s.DirFor(m.Scope)
