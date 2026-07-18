@@ -1,22 +1,11 @@
 # Jawa 本地 Reasonix Patch Work Log
 
-更新时间：2026-07-14
+更新时间：2026-07-18
 维护分支：`jawa/reasonix-composer-state-visibility`
 当前同步入口：`scripts/jawa-upstream-sync.sh`（默认生成临时 worktree / 临时分支）
-最新已 fetch 上游：`origin/main-v2 @ 3449bb32`
-当前功能 patch 提交（不含本 work log 文档提交，完整列表以 `git log origin/main-v2..HEAD` 为准）：
-
-- `c13072c0 fix(cli): stabilize local patch stack after upstream sync`
-- `3d42863d feat(cli): preserve local tui and image workflows`
-- `1c06f9fb fix(cli): harden image paste source detection`
-- `2d85b843 fix(cli): stabilize composer and paste handling`
-- `e7cb7c60 docs: refresh local patch work log`
-- `036f86f6 fix(cli): accept unescaped image paste paths`
-- `a569d001 fix(cli): improve status bar density`
-- `48fd123d feat(cli): polish local tui workflow`
-- `8fb365e7 docs: record local patch work log`
-- `9eac621b feat(cli): enrich version build metadata`
-- `0470971d feat(cli): keep local reasonix workflow polish`
+当前长期线 HEAD（写本文档前）：`8ce9192dd5b20825a4442f0375752cdb28beaf59`
+当前 patch stack：固定上游基线之上的 21 个线性提交，其中 14 个既有本地补丁、7 个 Core Optimization 补丁。
+完整列表始终以 `git log --reverse origin/main-v2..HEAD` 和同步时实际 merge-base 为准，不再维护容易过期的手抄 SHA 列表。
 
 这份文档不是上游产品文档，而是本地分支维护台账。它记录的是：上游 `main-v2`
 目前没有、但本地使用已经依赖的功能修复。每个 patch 都应该有明确的删除条件：
@@ -33,6 +22,28 @@
 6. 能用上游机制承载的地方优先复用上游机制，例如 transcript、config render、slash command、TUI mouse event。
 7. 新增 patch 必须写清楚删除条件。上游一旦实现等价能力，优先删除本地 patch，而不是再叠一层兼容。
 8. 不允许因为配置解析失败就用默认配置继续保存。配置坏了应该明确报错，不能静默覆盖用户本地文件。
+
+## 唯一长期维护线
+
+Reasonix 本地只维护一条长期集成线：
+
+```text
+origin/main-v2 + 全部仍有必要的本地 patch
+                    |
+                    `- jawa/reasonix-composer-state-visibility
+```
+
+- 主 checkout 固定为 `/Users/jawa/Lab/2026-07-06-reasonix-dev`。
+- `jawa/reasonix-composer-state-visibility` 是唯一会持续追上游、构建候选和安装生产版本的分支。
+- 过去用于隔离开发的 `jawa/reasonix-core-optimization` 和用于重放验证的
+  `jawa/reasonix-core-integration` 已完成使命并删除，不再是第二、第三条维护线。
+- 为上游 PR 保留的短期分支只是 review/CI 载体，不承担本地生产维护，也不能作为下一轮 upstream sync 的起点。
+- 临时 sync worktree/branch 只用于验证；成功后结果回到唯一长期线，失败则删除或保留为故障现场，绝不形成长期分叉。
+- 本地安全 tag 可以保留旧指针用于紧急回退，但 tag 不是维护分支。
+
+未来运行 `scripts/jawa-upstream-sync.sh` 时，脚本从当前长期分支计算
+`merge-base..HEAD`，因此会重放长期线上的**完整补丁栈**，包括下面的 Core 7 个补丁，
+而不是只重放早期的 14 个补丁。每次同步仍需用 `range-diff` 核对补丁映射，不能只看 rebase 成功。
 
 ## 跟进上游的低成本流程
 
@@ -743,6 +754,186 @@ Reasonix 的双模型结构是本地重度使用路径：`deepseek-v4-flash` 做
 
 当某个 runtime patch 删除时，必须同步删除对应文档、示例配置和 i18n。不要留下孤儿配置项。
 
+## Core Patch 9：冻结内核契约基线
+
+提交：`498207bb test(core): freeze optimization baseline contracts`
+
+### 为什么保留
+
+这不是用户可见功能，而是后续 Core patch 的防回归底座。它把改造前容易被误解的行为固定成测试证据：
+
+- writer-capable background subagent 默认共享 parent workspace，尚无隔离；
+- Headless 未知 pricing 会看起来像零成本，且缺少完整性字段；
+- 旧 memory 文件没有 provenance/staleness metadata，BM25 结果可能被近重复项占满；
+- subagent Profile 对未知 frontmatter 的保留与拒绝边界。
+
+这些测试随后被新协议更新为正向验收，确保变化是有意识的 contract migration，而不是只凭 TUI 观感。
+
+### 删除条件
+
+只有当上游已有覆盖相同协议边界的稳定 contract tests，而且字段、默认值和兼容语义一致时，才能合并或删除。
+
+## Core Patch 10：可复用 Worktree Lifecycle Manager
+
+提交：`da59d576 feat(worktree): add reusable lifecycle manager`
+
+### 本地补的能力
+
+把原来只服务 Desktop Delivery 的 `internal/worktree` 基础能力提升为内核 lifecycle service，统一管理：
+
+- `Inspect` / `Create` / `Show` / `List`；
+- `Status` / `Diff`；
+- `Apply`；
+- `Remove` / `Discard`；
+- orphan resource `GC`。
+
+每份隔离资源有结构化身份：isolation ID、source/worktree root、branch、base/head commit、source dirty、
+lifecycle/cleanup state 和 created time。Desktop Delivery 仍保持 durable、never-auto-delete；subagent 使用不同的显式 policy，
+没有偷改原有 Delivery 语义。
+
+### 安全边界
+
+- worktree 不是 sandbox，不能代替 permission、folder trust 或 hook trust。
+- source dirty 默认拒绝；显式 committed-head policy 才允许忽略未提交改动，且必须暴露警告。
+- 不擅自复制 dirty/untracked 文件，不把“不完整 parent 状态”伪装成完整继承。
+- 含用户修改或额外 commit 的 worktree 不会被普通 cleanup 盲删。
+
+### 删除条件
+
+上游必须提供同等的可恢复 lifecycle、结构化冲突结果、dirty-source fail-closed 和 Delivery 兼容保证，才能替代。
+
+## Core Patch 11：Subagent Worktree Isolation 协议与真实接线
+
+提交：`6c194bd3 feat(subagent): thread worktree isolation through profiles`
+
+### 对外协议
+
+新增最小枚举：
+
+```text
+isolation: none | worktree
+```
+
+它贯穿 task tool schema、`runAs: subagent` Profile、CLI create/edit/run/try、persisted `SubagentRun` metadata
+以及 Headless/ACP 投影。兼容默认始终是 `none`：只读 subagent 继续共享 workspace，writer 只有显式选择
+`worktree` 才创建隔离资源，没有静默改变用户现有行为。
+
+### 不是“只换一个 cwd”
+
+隔离 child 的真实 runtime 会以 worktree root 重新装配：
+
+- 文件、Bash 和其他 workspace tools 的根目录；
+- permission/sandbox workspace boundary；
+- project config 与 REASONIX/AGENTS/CLAUDE；
+- skills、commands、hooks 和 MCP discovery；
+- transcript、event、evidence、usage attribution；
+- `resume` / `continue_from` 对同一 isolation resource 的定位。
+
+动态 worktree path 只进入 runtime tail 和 metadata，不进入 cache-stable system prompt prefix。
+
+### 删除条件
+
+上游需同时具备显式 isolation 协议、child-root 全链路装配、persist/resume 身份和 prefix stability 测试。
+只实现“临时目录执行”不算等价替代。
+
+## Core Patch 12：Worktree Apply、冲突、恢复与 GC
+
+提交：`31fca3f8 feat(worktree): complete safe isolation lifecycle`
+
+### 具体行为
+
+- subagent 完成只返回 exact path、branch、diff/stat，不自动 apply。
+- `Apply` 是显式、受 permission/approval 约束的操作。
+- clean apply 成功；冲突返回 `conflicted` 和 exact paths，parent workspace 不留下半应用状态。
+- 两个 background writer 可同时修改同名文件，各自在独立 worktree，parent 保持不变。
+- cancel、panic、进程退出后资源仍能 list/show；GC 只回收可以证明安全的 orphan。
+- `continue_from` 复用原 isolation ID/root，不悄悄创建第二份资源。
+- `Remove` 遇到未提交修改或 base 后的新 commit 会 fail-closed；`Discard` 才是明确的强制删除动作。
+
+### 删除条件
+
+上游实现同等 agent-level E2E，并证明双 writer、apply conflict、crash recovery、resume 和 GC 都不污染 parent 后方可删除。
+
+## Core Patch 13：Headless / ACP Fail-Closed Usage Ledger
+
+提交：`b8b55c95 feat(usage): add fail-closed shared usage ledger`
+
+### 上游缺口
+
+旧 Headless result 把 usage 累加进零值 struct；没有 pricing 或 nested background usage 尚未结算时，缺失值可能看起来像
+`total_cost_usd: 0`。这会让自动化对账把“未知”误认为“免费”。
+
+### 本地补的协议
+
+CLI 与 ACP 共用一个内核 ledger/projection，不各算一遍。Headless result v2 在保留旧字段的同时增加：
+
+```json
+{
+  "schema_version": 2,
+  "usage_is_incomplete": true,
+  "cost_is_partial": true,
+  "total_cost_usd_ticks": 123,
+  "modelUsage": {}
+}
+```
+
+- usage 按 main/planner/executor/subagent 和 provider/model 归因；
+- open background subagent、drain timeout、missing/partial pricing 都有结构化原因；
+- 成本用 `1 USD = 10^10 ticks` 的整数精确求和，避免 float 累积误差；
+- 只有 usage 完整且 USD pricing 齐全时才输出可信 float USD 和 ticks；
+- 未知成本省略，绝不输出 0 冒充免费；
+- stream-json 最后一行仍是 result，stdout 只含 JSON/NDJSON，诊断走 stderr；
+- ACP 暂通过兼容 `_meta.usage` 复用相同 projection。
+
+### 删除条件
+
+上游必须能区分 zero、unknown、partial 和 uncollected，并共享 CLI/ACP 计算真源；只有新增几个输出字段不算等价。
+
+## Core Patch 14：Memory Provenance、Staleness 与 Diversity
+
+提交：`010c6c80 feat(memory): add provenance-aware diverse recall`
+
+### 保留的 Reasonix 原则
+
+继续使用纯 Go、Markdown/typed memory 真源、BM25、人工批准和 archive-on-forget；不引入 SQLite、CGO、embedding
+或 vector DB。
+
+### 本地补的能力
+
+Memory 增加可选 metadata：`created_at`、`last_confirmed_at`、`source_scope`、`source_kind`。
+
+- 旧文件无需 migration 即可读取，read 不写盘、不改 mtime；
+- 新写/确认路径显式落 metadata，forget/archive 保留原 metadata；
+- staleness 只降低 influence，不把旧事实自动判错或删除，truth-locked 事实仍可召回；
+- BM25 + relative floor 后、limit 前加入纯 Go token/Jaccard 多样性重排；
+- strongest lexical top hit 始终保留，近重复 memory 不再占满 topK；
+- doctor/debug 可解释 BM25、rank、diversity、staleness 和 source；
+- 多样性可配置关闭，项目配置不能覆盖用户级 recall policy。
+
+固定中英 corpus 覆盖函数名、文件名、错误短语、命令参数、CJK、近重复 memory、旧事实和 archived memory，
+用于验证 Recall@K、重复率、注入 token 和 top-1 稳定性。
+
+### 删除条件
+
+上游提供同等 old-format/no-write 兼容、可解释 provenance/staleness 和不损伤 top-1 的 diversity ranking 后方可替代。
+
+## Core Patch 15：Canonical Tool Contract Benchmark
+
+提交：`8ce9192d test(tool): benchmark canonical contract`
+
+### 结论
+
+Reasonix 继续只有一份 canonical ToolKind、registry、schema 和 executor。当前没有可靠 A/B 证据证明为 DeepSeek、Codex、
+OpenCode 各复制一套工具方言能稳定提高首次调用成功率，因此**没有实现第二套 dialect executor**。
+
+本 patch 固定 builtin tool 数量、contract bytes、schema order、allocations 等回归基线。未来只有固定任务、模型和 effort 的
+A/B benchmark 证明收益后，才允许增加只负责 name/description/schema/envelope 的薄 projection；permission、sandbox、
+路径约束、执行、event 和 evidence 仍必须共用 canonical executor。
+
+### 删除条件
+
+这个 patch 可以在上游已有等价 canonical contract benchmark 时合并；不能因为想试工具方言就先删除单一执行真源的约束。
+
 ## 升级上游时的检查清单
 
 每次 `git fetch origin main-v2` 后：
@@ -761,6 +952,10 @@ git diff --stat origin/main-v2...HEAD
 4. 上游是否改了 statusline、usage、cache metrics。
 5. 上游是否改了 config schema/render。
 6. 上游是否改了 `cmd/reasonix/main.go` 或 release ldflags。
+7. 上游是否新增 subagent worktree isolation 与完整 lifecycle，而不只是 Desktop Delivery worktree。
+8. 上游是否提供 Headless/ACP shared usage ledger，并明确 unknown/partial cost。
+9. 上游是否给 memory 增加 provenance/staleness/diversity，同时保持旧格式 no-write-on-read。
+10. 上游是否改变 canonical tool schema/order，或新增重复 executor/projection。
 
 如果上游已经覆盖某项能力：
 
