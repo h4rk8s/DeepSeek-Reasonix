@@ -968,6 +968,30 @@ A/B benchmark 证明收益后，才允许增加只负责 name/description/schema
 
 这个 patch 可以在上游已有等价 canonical contract benchmark 时合并；不能因为想试工具方言就先删除单一执行真源的约束。
 
+## Core Patch 16：普通运行时配置只读
+
+提交：本 patch，`fix(config): make ordinary runtime loading read-only`
+
+### 修复的问题
+
+此前普通 CLI、Desktop、ACP、Serve 和 Boot 启动路径会顺带执行 legacy/import/schema/MCP
+迁移，并把重新渲染后的默认配置覆盖回 `~/.reasonix/config.toml`。这会把用户刻意维护的注释、未被当前
+renderer 覆盖的本地选择和配置布局替换掉；表现为光标、模型组合、状态栏等习惯“偶尔恢复默认”。
+
+### 新的稳定契约
+
+- `config.LoadForRoot` 与所有普通运行时入口严格只读；
+- 配置无效时返回带文件路径和 TOML 位置的明确错误，不允许退回默认值继续运行；
+- deprecated 配置只产生警告，不在 read/startup 时改盘；
+- legacy import、schema upgrade、MCP tier migration 只能由显式 migration/repair 操作执行；
+- CLI、Desktop、ACP、Serve 和 Boot 遵守同一契约，不允许某个前端私自回写；
+- 配置读取测试同时校验文件 bytes/mtime 不变，项目级 MCP discovery 不创建用户配置。
+
+### 删除条件
+
+只有上游所有普通启动与读取路径都满足 no-write-on-read、invalid-config fail-loud，并将 migration
+限定为显式用户操作时，才可删除本 patch。仅修复某一个 CLI 入口不算等价。
+
 ## 升级上游时的检查清单
 
 每次 `git fetch origin main-v2` 后：
