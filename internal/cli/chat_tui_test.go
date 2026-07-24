@@ -773,6 +773,39 @@ func TestComposerPromptReservesWidthAndOffsetsCJKCursor(t *testing.T) {
 	}
 }
 
+func TestFinalComposerCursorAlignsWithVisibleInput(t *testing.T) {
+	const input = "现在有一个问题就是"
+	wantX := ansi.StringWidth("❯ " + input)
+
+	for _, nativeScrollback := range []bool{false, true} {
+		t.Run(fmt.Sprintf("native_scrollback=%t", nativeScrollback), func(t *testing.T) {
+			ctrl := control.New(control.Options{})
+			m := newChatTUI(ctrl, "", make(chan event.Event, 1), 60)
+			m.nativeScrollback = nativeScrollback
+
+			m0, _ := m.Update(tea.WindowSizeMsg{Width: 60, Height: 12})
+			m = m0.(chatTUI)
+			m.input.SetValue(input)
+
+			view := m.View()
+			if view.Cursor == nil {
+				t.Fatal("visible composer should expose the final terminal cursor")
+			}
+			if got := view.Cursor.X; got != wantX {
+				t.Fatalf("final cursor X = %d, want %d immediately after visible input", got, wantX)
+			}
+
+			lines := strings.Split(ansi.Strip(view.Content), "\n")
+			if view.Cursor.Y < 0 || view.Cursor.Y >= len(lines) {
+				t.Fatalf("final cursor Y = %d outside rendered content with %d lines", view.Cursor.Y, len(lines))
+			}
+			if got := ansi.StringWidth(strings.TrimRight(lines[view.Cursor.Y], " ")); got != wantX {
+				t.Fatalf("composer row visible width = %d, want %d: %q", got, wantX, lines[view.Cursor.Y])
+			}
+		})
+	}
+}
+
 func TestComposerPromptDoesNotRepeatOnWrappedRows(t *testing.T) {
 	ctrl := control.New(control.Options{})
 	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 16)
