@@ -29,16 +29,15 @@ func Load() (*Config, error) {
 // each project's reasonix.toml + .mcp.json are resolved independently without
 // changing the process cwd, while provider keys stay rooted in Reasonix home.
 //
-// Note: LoadForRoot may rewrite legacy MCP `tier` lines on disk (see
-// mergeRuntimeTOMLFileSnapshot). Callers that must not mutate config files should use
-// LoadForRootReadOnly instead.
+// Loading configuration is always read-only. Legacy values are normalized in
+// memory; on-disk migration is reserved for explicit migration/repair commands.
 func LoadForRoot(root string) (*Config, error) {
-	return loadForRoot(root, true)
+	return loadForRoot(root, false)
 }
 
-// LoadForRootReadOnly is like LoadForRoot but never writes config files: it skips
-// on-disk legacy MCP tier migration. Prefer this for diagnostics, doctor, and
-// other read-only inspection paths.
+// LoadForRootReadOnly is retained as an explicit call-site marker for
+// diagnostics and other inspection paths. It has the same no-write semantics
+// as LoadForRoot.
 func LoadForRootReadOnly(root string) (*Config, error) {
 	return loadForRoot(root, false)
 }
@@ -223,6 +222,7 @@ func loadForRoot(root string, migrateOnDisk bool) (*Config, error) {
 	normalizePluginCommandLines(cfg)
 	normalizeLegacyEffort(cfg)
 	cfg.ignoredLegacyStepLimits = normalizeLegacyAgentStepLimits(cfg)
+	cfg.ignoredLegacyRedactOutput = tomlSourcesDefineKey(tomlSources, "secrets", "redact_tool_output")
 	normalizeRetiredAutoPlan(cfg)
 	normalizeLegacyMCPTiers(cfg)
 	normalizeLegacyStepFunBaseURLs(cfg)
@@ -342,6 +342,15 @@ func tomlFileDefinesKey(path string, key ...string) bool {
 // current project.
 func ConfigFileDefinesCompactRatio(path string) bool {
 	return tomlFileDefinesKey(path, "agent", "compact_ratio")
+}
+
+func tomlSourcesDefineKey(paths []string, key ...string) bool {
+	for _, path := range paths {
+		if tomlFileDefinesKey(path, key...) {
+			return true
+		}
+	}
+	return false
 }
 
 // backfillDeepSeekPro restores deepseek-pro for configs the pre-fix setup wizard

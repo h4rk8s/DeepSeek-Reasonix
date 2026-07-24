@@ -1848,7 +1848,7 @@ func TestStripTOMLKeyLinesPreservesMultilineStrings(t *testing.T) {
 	}
 }
 
-func TestLoadForRootReadOnlyIgnoresDeprecatedAgentStepLimitsWithoutRewriting(t *testing.T) {
+func TestLoadForRootIgnoresDeprecatedAgentStepLimitsWithoutRewriting(t *testing.T) {
 	isolateUserConfigHome(t)
 	root := t.TempDir()
 	path := filepath.Join(root, "reasonix.toml")
@@ -1861,9 +1861,9 @@ planner_max_steps = 4
 		t.Fatal(err)
 	}
 
-	cfg, err := LoadForRootReadOnly(root)
+	cfg, err := LoadForRoot(root)
 	if err != nil {
-		t.Fatalf("LoadForRootReadOnly: %v", err)
+		t.Fatalf("LoadForRoot: %v", err)
 	}
 	if cfg.Agent.MaxSteps != 0 || cfg.Agent.PlannerMaxSteps != 0 {
 		t.Fatalf("deprecated steps = max:%d planner:%d, want automatic 0/0", cfg.Agent.MaxSteps, cfg.Agent.PlannerMaxSteps)

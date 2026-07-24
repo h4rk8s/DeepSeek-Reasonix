@@ -94,13 +94,7 @@ func RunWithBuildInfo(args []string, info BuildInfo) int {
 		cmd = ""
 	}
 	doctorRepair := isDoctorRepairCommand(args)
-	if shouldMigrateLegacyConfigForCLI(cmd) && !doctorRepair {
-		if err := migrateLegacyConfigForCLI(); err != nil {
-			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
-			return 1
-		}
-	}
-	if shouldMigrateLegacyConfigForCLI(cmd) && !doctorRepair {
+	if shouldLoadConfigForCLI(cmd) && !doctorRepair {
 		cfg, err := config.Load()
 		if err != nil {
 			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
@@ -252,30 +246,12 @@ func isDefaultInteractiveFlag(arg string) bool {
 	return false
 }
 
-func shouldMigrateLegacyConfigForCLI(cmd string) bool {
+func shouldLoadConfigForCLI(cmd string) bool {
 	switch cmd {
 	case "", "run", "chat", "code", "serve", "setup", "config", "init", "acp", "mcp", "remote", "plugin", "subagent", "doctor", "bot", "upgrade", "update":
 		return true
 	default:
 		return false
-	}
-}
-
-func migrateLegacyConfigForCLI() error {
-	if _, err := config.MigrateLegacyIfNeeded(); err != nil {
-		return fmt.Errorf("refusing to run with invalid config: config migration failed: %w", err)
-	}
-	if _, err := config.ApplyUserConfigUpgradesOnStartup(config.UserConfigPath()); err != nil {
-		return fmt.Errorf("refusing to run with invalid config: config upgrade failed: %w", err)
-	}
-	return nil
-}
-
-func migrateMCPConfigForCLIWorkspace() {
-	if wd, err := os.Getwd(); err == nil {
-		if _, err := config.MigrateMCPToUserConfigOnUpgrade([]string{wd}); err != nil {
-			fmt.Fprintln(os.Stderr, "warning: MCP config migration failed:", err)
-		}
 	}
 }
 
@@ -344,7 +320,6 @@ func sessionTempFromCLIController(ctrl control.SessionAPI) *sessiontemp.Manager 
 }
 
 func setupProfileWithOverrides(ctx context.Context, modelName string, maxStepsOverride int, requireKey bool, sink event.Sink, profile string, overrides cliBuildOverrides) (*control.Controller, error) {
-	migrateMCPConfigForCLIWorkspace()
 	return boot.Build(ctx, cliProfileBuildOptions(modelName, maxStepsOverride, requireKey, sink, profile, overrides))
 }
 

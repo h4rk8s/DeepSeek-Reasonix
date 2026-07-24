@@ -3727,7 +3727,6 @@ func (a *App) buildTabControllerWithContextAdmissionHeld(tab *WorkspaceTab, load
 	}
 
 	// Load config for this tab's workspace root.
-	_ = config.MigrateLegacyCredentialsForRoot(root)
 	cfg, err := config.LoadForRoot(root)
 	if err != nil {
 		a.recordTabStartupFailure(tab, buildGeneration, wailsCtx, err)
