@@ -1,10 +1,11 @@
 # Jawa 本地 Reasonix Patch Work Log
 
-更新时间：2026-07-18
+更新时间：2026-07-24
 维护分支：`jawa/reasonix-composer-state-visibility`
 当前同步入口：`scripts/jawa-upstream-sync.sh`（默认生成临时 worktree / 临时分支）
-当前长期线 HEAD（写本文档前）：`8ce9192dd5b20825a4442f0375752cdb28beaf59`
-当前 patch stack：固定上游基线之上的 21 个线性提交，其中 14 个既有本地补丁、7 个 Core Optimization 补丁。
+本轮固定上游：`a6e145962184de445de5bdb7e16339a14547c2e0`
+本轮审计候选（重建前）：`d77f03a0c09a1c6379a907693b59f13149abac6f`
+当前 patch stack：以固定上游为基线重建；不再把已经被上游覆盖的基础 TUI/图片能力作为独立 patch 维护。
 完整列表始终以 `git log --reverse origin/main-v2..HEAD` 和同步时实际 merge-base 为准，不再维护容易过期的手抄 SHA 列表。
 
 这份文档不是上游产品文档，而是本地分支维护台账。它记录的是：上游 `main-v2`
@@ -164,6 +165,39 @@ git format-patch --no-stat --output-directory .local-patches origin/main-v2..HEA
 开始冲突，再逐个拆解。
 
 ## 当前差异概览
+
+### 2026-07-24 补丁去重审计
+
+本轮不是按旧提交名机械保留，而是逐项比较固定上游 `a6e145962` 与本地候选
+`d77f03a0c` 的真实协议、代码和测试。判定如下：
+
+| 能力 | 判定 | 上游现状 | 本地处理 |
+|---|---|---|---|
+| 完成后把 thinking 折叠为 `Thought for Ns` | RETIRE | 上游已有完成态折叠、verbose reasoning 切换和 transcript hierarchy | 删除“基础折叠”独立 patch；只保留逐块点击、hover、锚点和 resume 状态一致性 |
+| 基础剪贴板图片粘贴与 `[image #N]` | RETIRE | 上游已有跨平台 clipboard image、模型 vision gating、text-only 可读图片引用 | 删除“基础图片粘贴”独立 patch |
+| CleanShot/Raycast/path/HTML/Markdown/硬换行图片来源 | KEEP-DELTA | 上游路径解析仍未覆盖本地真实剪贴板来源组合 | 作为上游 paste pipeline 的兼容输入层，不另造附件系统 |
+| OCR + UI state 的 image-understanding sidecar | KEEP | 上游没有 cache-friendly 的结构化理解、缓存、日志和 disclosure | 保留独立内核 sidecar 与可折叠 transcript disclosure |
+| 基础 composer 鼠标、caret、selection | RETIRE | 上游已修复 mouse selection、caret stability 和 paste/image input 分层 | 删除基础交互 patch，只保留本地 prompt 首行和 transcript disclosure 的增量测试 |
+| 基础响应式 status UI | RETIRE | 上游已有 responsive status UI | 删除基础布局 patch；只保留本地两行信息架构、字段优先级和半屏密度 |
+| CLI jump-to-bottom/new-message pill | KEEP | 上游只有 Desktop 对应交互，CLI 尚无等价实现 | 保留 CLI 原生 transcript/composer 接线 |
+| terminal title 与 `/title` | KEEP | 上游没有 CLI terminal title 字段组合和 picker | 保留 |
+| build metadata | KEEP | 上游 `--version` 仍不满足本地 build time/commit/dirty/target 规范 | 保留 |
+| dual-model transcript/resume hygiene | TRIM | 上游已有部分 turn hierarchy，但没有本地 handoff 隐藏、重复回答和 resume parity 契约 | 只保留缺口，不覆盖上游通用 renderer |
+| config 编辑失败后回落默认值 | KEEP-TRIM | 上游已有 private strict loader，但 public edit loader 仍可 fallback；迁移语义已更完整 | 复用上游 strict loader；读/编辑不自动写盘，显式迁移才持久化，解析失败直接终止 |
+| config render/docs/i18n | CONSOLIDATE | 部分字段由仍保留能力需要，不能独立存在 | 并入对应 runtime patch，不再单列为功能 patch |
+| upstream sync helper | KEEP | 上游不会提供用户私有 patch-stack workflow | 保留为仓库内维护工具 |
+| Core Optimization 7 patches | KEEP | 上游仍无等价 worktree isolation lifecycle、fail-closed usage ledger、memory provenance/diversity 和 canonical contract benchmark | 保持顺序和协议边界，继续独立维护 |
+
+上游替代证据包括：
+
+- `40ef98de`：CLI terminal interactions 与 transcript hierarchy。
+- `1bd5f04d`、`a99256d5`、`fc5d8122`、`8eb9707a`：composer、responsive status、mouse selection、caret stability。
+- `e17f31b7`：paste/image input 分层。
+- `7da9b0ac`、`1b2a4659`：text model 可读图片与 vision capability gating。
+- `21938cd9`、`fbaaaea0`、`485c16d8`、`224bbfa6`：图片路径和附件处理修复。
+
+这意味着旧的 22 个提交不会原样继续滚动。重建后的维护线只表达“上游固定基线 + 尚未被覆盖的本地增量”，
+已退休能力如果以后再次出现在 diff 中，应视为回归，而不是重新恢复旧实现。
 
 相对 `origin/main-v2`，本地 runtime/code patch 当前改动（不含本文档本身）：
 
