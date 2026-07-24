@@ -821,17 +821,11 @@ func (a *App) restoreOrBuildTabs() {
 	ctx := a.ctx
 	ensureWorkspace()
 
-	// Run legacy config migration before the first config load so the
-	// freshly written config (including the user's default_model) is
-	// picked up by Load instead of falling back to built-in defaults.
-	_, _ = config.MigrateLegacyIfNeeded()
 	if err := reconcileTopicArchiveMetadataPending(a.deleteTopic); err != nil {
 		slog.Warn("desktop: topic archive metadata reconciliation remains pending")
 	}
 	f := loadTabsFile()
 	_, _ = recoverLegacyProjectSidebarRoots(f)
-	_, _ = config.ApplyUserConfigUpgradesOnStartup(config.UserConfigPath())
-	_, _ = config.MigrateMCPToUserConfigOnUpgrade(desktopMCPMigrationRoots(f))
 
 	// Load i18n from the first available config.
 	// Prefer DesktopLanguage (desktop UI setting) over Language (CLI setting),
@@ -4290,7 +4284,6 @@ func (a *App) buildSessionRebindCandidate(
 			root = wd
 		}
 	}
-	_ = config.MigrateLegacyCredentialsForRoot(root)
 	cfg, err := config.LoadForRoot(root)
 	if err != nil {
 		return nil, err
