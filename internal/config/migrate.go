@@ -231,7 +231,9 @@ func migrateMCPToUserConfig(projectRoots []string) (*MCPGlobalMigrationResult, e
 	if dest == "" {
 		return nil, nil
 	}
-	userCfg, err := loadForEditStrict(dest, true, true)
+	// The upgrade entrypoint already holds dest's edit lock. Keep this load
+	// strict, but do not run file migrations that would acquire the same lock.
+	userCfg, err := loadForEditStrict(dest, true, false)
 	if err != nil {
 		return nil, err
 	}

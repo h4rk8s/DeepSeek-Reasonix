@@ -537,11 +537,14 @@ func TestLoadForEditMalformedConfigCannotBeSaved(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfg := LoadForEdit(path)
-	cfg.Agent.Temperature = 0.7
-	if err := cfg.SaveTo(path); err == nil {
-		t.Fatal("SaveTo accepted defaults returned after a malformed edit load")
-	}
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("LoadForEdit accepted malformed config")
+			}
+		}()
+		_ = LoadForEdit(path)
+	}()
 	got, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)

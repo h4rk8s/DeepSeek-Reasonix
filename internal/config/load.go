@@ -673,7 +673,27 @@ func DesktopProviderAccessDeclared(path string) (bool, error) {
 // of resetting to defaults. Reasonix's global .env is loaded so api_key_env
 // resolution works while the wizard decides which keys are still missing.
 func LoadForEdit(path string) *Config {
-	return loadForEdit(path, true, false)
+	cfg, err := LoadForEditStrict(path)
+	if err != nil {
+		panic(err)
+	}
+	return cfg
+}
+
+func LoadForEditWithoutCredentials(path string) *Config {
+	cfg, err := LoadForEditWithoutCredentialsStrict(path)
+	if err != nil {
+		panic(err)
+	}
+	return cfg
+}
+
+func LoadForEditStrict(path string) (*Config, error) {
+	cfg, err := loadForEditStrict(path, true, false)
+	if err != nil {
+		return nil, fmt.Errorf("refusing to edit config: %w", err)
+	}
+	return cfg, nil
 }
 
 // LoadForEditReadOnlyStrict is the error-returning commit-time variant. It must
@@ -721,23 +741,12 @@ func ValidateBytes(data []byte) error {
 	return nil
 }
 
-func loadForEdit(path string, loadCredentials, persistMigrations bool) *Config {
-	cfg, err := loadForEditStrict(path, loadCredentials, persistMigrations)
-	if err == nil {
-		return cfg
+func LoadForEditWithoutCredentialsStrict(path string) (*Config, error) {
+	cfg, err := loadForEditStrict(path, false, false)
+	if err != nil {
+		return nil, fmt.Errorf("refusing to edit config: %w", err)
 	}
-	slog.Warn("config: load for edit failed, using defaults", "path", path, "err", err)
-	if loadCredentials {
-		loadDotEnvForEditPath(path)
-	}
-	cfg = Default()
-	normalizeConfigForEdit(cfg)
-	cfg.editLoadErr = err
-	return cfg
-}
-
-func LoadForEditWithoutCredentials(path string) *Config {
-	return loadForEdit(path, false, false)
+	return cfg, nil
 }
 
 func loadForEditStrict(path string, loadCredentials, persistMigrations bool) (*Config, error) {
@@ -745,6 +754,13 @@ func loadForEditStrict(path string, loadCredentials, persistMigrations bool) (*C
 		loadDotEnvForEditPath(path)
 	}
 	cfg := Default()
+	if persistMigrations {
+		if _, err := os.Stat(path); err == nil {
+			if err := migrateLegacyMCPTiersFile(path); err != nil {
+				return nil, fmt.Errorf("config %s: %w", path, err)
+			}
+		}
+	}
 	if err := mergeFile(cfg, path); err != nil {
 		return nil, err
 	}
