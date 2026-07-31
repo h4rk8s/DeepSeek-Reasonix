@@ -671,8 +671,8 @@ func TestTranscriptResizeRerendersCommittedMarkdownAtNewWidth(t *testing.T) {
 			break
 		}
 	}
-	if got, want := ruleWidth, transcriptContentWidth(80, false)-visibleWidth(assistantTranscriptIndent); got != want {
-		t.Fatalf("resized thematic rule width = %d, want indented assistant body width %d", got, want)
+	if got, want := ruleWidth, transcriptContentWidth(80, false); got != want {
+		t.Fatalf("resized thematic rule width = %d, want assistant body width %d", got, want)
 	}
 	if newLines >= oldLines {
 		t.Fatalf("wider transcript kept old hard wrapping: old lines=%d new lines=%d\n%s", oldLines, newLines, newRendered)

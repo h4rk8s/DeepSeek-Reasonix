@@ -193,8 +193,8 @@ func TestIngestSeparatesReasoningFromAnswer(t *testing.T) {
 	if len(m.transcript) != 3 || !strings.Contains(m.transcript[2], "Hello") {
 		t.Fatalf("answer should commit as a separate entry, transcript=%v", m.transcript)
 	}
-	if plain := ansi.Strip(m.transcript[2]); !strings.HasPrefix(plain, "  ◆ Reasonix\n\n  Hello answer") {
-		t.Fatalf("answer should have an explicit assistant identity and indented body, got %q", plain)
+	if plain := ansi.Strip(m.transcript[2]); !strings.HasPrefix(plain, "◆ Reasonix\n\nHello answer") {
+		t.Fatalf("answer should have an explicit assistant identity aligned with the transcript, got %q", plain)
 	}
 }
 
@@ -206,7 +206,7 @@ func TestAssistantAnswerWithoutReasoningHasNoLeadingSpacer(t *testing.T) {
 	if len(m.transcript) != 1 {
 		t.Fatalf("direct answer should remain one compact block, got %d: %v", len(m.transcript), m.transcript)
 	}
-	if plain := ansi.Strip(m.transcript[0]); !strings.HasPrefix(plain, "  ◆ Reasonix\n\n  Direct answer") {
+	if plain := ansi.Strip(m.transcript[0]); !strings.HasPrefix(plain, "◆ Reasonix\n\nDirect answer") {
 		t.Fatalf("direct answer block = %q", plain)
 	}
 }

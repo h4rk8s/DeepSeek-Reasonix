@@ -12,7 +12,7 @@ import (
 	"reasonix/internal/provider"
 )
 
-func TestAssistantMarkdownHasIdentityAndIndentedBody(t *testing.T) {
+func TestAssistantMarkdownHasIdentityAndAlignedBody(t *testing.T) {
 	defer restoreThemeForTest(activeColorProfile, activeCLITheme)
 	activeColorProfile = colorprofile.NoTTY
 	configureCLITheme("dark")
@@ -22,15 +22,15 @@ func TestAssistantMarkdownHasIdentityAndIndentedBody(t *testing.T) {
 	if len(lines) < 4 {
 		t.Fatalf("assistant block should contain a header, gap, and wrapped body:\n%s", rendered)
 	}
-	if lines[0] != "  ◆ Reasonix" {
-		t.Fatalf("assistant header = %q, want %q", lines[0], "  ◆ Reasonix")
+	if lines[0] != "◆ Reasonix" {
+		t.Fatalf("assistant header = %q, want %q", lines[0], "◆ Reasonix")
 	}
 	if lines[1] != "" {
 		t.Fatalf("assistant header/body separator = %q, want blank row", lines[1])
 	}
 	for i, line := range lines[2:] {
-		if line != "" && !strings.HasPrefix(line, assistantTranscriptIndent) {
-			t.Fatalf("assistant body row %d lacks the two-cell gutter: %q", i+2, line)
+		if strings.HasPrefix(line, "  ") {
+			t.Fatalf("assistant body row %d has an unexpected global gutter: %q", i+2, line)
 		}
 		if width := visibleWidth(line); width > 32 {
 			t.Fatalf("assistant row %d width = %d, want <= 32: %q", i+2, width, line)
@@ -50,7 +50,7 @@ func TestReplaySectionsKeepAssistantIdentity(t *testing.T) {
 	if len(sections) != 2 {
 		t.Fatalf("replay sections = %d, want user and assistant", len(sections))
 	}
-	if plain := ansi.Strip(sections[1]); !strings.HasPrefix(plain, "  ◆ Reasonix\n\n  Version 1.2.3") {
+	if plain := ansi.Strip(sections[1]); !strings.HasPrefix(plain, "◆ Reasonix\n\nVersion 1.2.3") {
 		t.Fatalf("replayed assistant answer lost its identity: %q", plain)
 	}
 }
