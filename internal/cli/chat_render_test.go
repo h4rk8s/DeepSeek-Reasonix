@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi"
 
+	"reasonix/internal/config"
 	"reasonix/internal/control"
 	"reasonix/internal/event"
 	"reasonix/internal/provider"
@@ -85,7 +86,10 @@ func subagentPreview(id, channel, text string, truncated bool) event.Event {
 
 func TestNativeReasoningCommitRegistersLazyDisclosure(t *testing.T) {
 	m := newTestChatTUI()
-	m.lazyReasoning = true
+	m.lazyReasoning = config.Default().UI.LazyReasoning
+	if !m.lazyReasoning {
+		t.Fatal("completed reasoning disclosures must be interactive by default")
+	}
 	m.reasoningNative = true
 	m.thinkStart = time.Now().Add(-time.Second)
 	m.reasoning.WriteString("native provider reasoning body")
