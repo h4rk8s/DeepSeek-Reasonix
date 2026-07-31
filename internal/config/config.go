@@ -2049,10 +2049,14 @@ func Default() *Config {
 		ConfigVersion:    6,
 		DefaultModel:     "deepseek-flash",
 		CredentialsStore: CredentialsStoreAuto,
-		UI:               UIConfig{Theme: "auto", ShowTurnUsage: true},
-		Desktop:          DesktopConfig{DefaultToolApprovalMode: "auto", ConversationWidth: "standard"},
-		Billing:          BillingConfig{},
-		TerminalTitle:    TerminalTitleConfig{Items: DefaultTerminalTitleItems()},
+		UI: UIConfig{
+			Theme:         "auto",
+			ShowTurnUsage: true,
+			LazyReasoning: true,
+		},
+		Desktop:       DesktopConfig{DefaultToolApprovalMode: "auto", ConversationWidth: "standard"},
+		Billing:       BillingConfig{},
+		TerminalTitle: TerminalTitleConfig{Items: DefaultTerminalTitleItems()},
 		Notifications: NotificationsConfig{
 			Enabled:         false,
 			TurnDone:        true,

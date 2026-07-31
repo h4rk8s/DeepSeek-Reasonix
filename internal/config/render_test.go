@@ -1003,10 +1003,10 @@ func TestProjectDeltaRendersUIShowUsage(t *testing.T) {
 
 func TestProjectDeltaRendersUILazyReasoning(t *testing.T) {
 	c := Default()
-	c.UI.LazyReasoning = true
+	c.UI.LazyReasoning = false
 
 	delta := RenderTOMLProjectDelta(c)
-	for _, want := range []string{"[ui]", "lazy_reasoning = true"} {
+	for _, want := range []string{"[ui]", "lazy_reasoning = false"} {
 		if !strings.Contains(delta, want) {
 			t.Fatalf("project delta missing %q:\n%s", want, delta)
 		}
@@ -1016,8 +1016,38 @@ func TestProjectDeltaRendersUILazyReasoning(t *testing.T) {
 	if _, err := toml.Decode(delta, got); err != nil {
 		t.Fatalf("decode project delta: %v\n%s", err, delta)
 	}
-	if !got.UI.LazyReasoning {
-		t.Fatalf("ui.lazy_reasoning = false, want true")
+	if got.UI.LazyReasoning {
+		t.Fatalf("ui.lazy_reasoning = true, want false")
+	}
+}
+
+func TestMergeFilePreservesLazyReasoningDefaultWhenUnset(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[ui]\ncursor_shape = \"block\"\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg := Default()
+	if err := mergeFile(cfg, path); err != nil {
+		t.Fatalf("merge config: %v", err)
+	}
+	if !cfg.UI.LazyReasoning {
+		t.Fatal("missing ui.lazy_reasoning should preserve the interactive default")
+	}
+}
+
+func TestMergeFileAllowsExplicitLazyReasoningOff(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[ui]\nlazy_reasoning = false\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg := Default()
+	if err := mergeFile(cfg, path); err != nil {
+		t.Fatalf("merge config: %v", err)
+	}
+	if cfg.UI.LazyReasoning {
+		t.Fatal("explicit ui.lazy_reasoning = false should disable completed reasoning disclosures")
 	}
 }
 
