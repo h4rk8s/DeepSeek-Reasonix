@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -13,6 +14,24 @@ import (
 
 // errCancelled is returned by selectOne when the user aborts (q or Ctrl-C).
 var errCancelled = errors.New("selection cancelled")
+
+const (
+	menuScreenEnter = "\033[?1049h\033[?25l\033[2J\033[H"
+	menuScreenHome  = "\033[H"
+	menuScreenExit  = "\033[?25h\033[?1049l"
+)
+
+// enterMenuScreen gives interactive selectors a fixed coordinate system.
+// Relative cursor movement drifts when a terminal wraps a row differently
+// from our width estimate, causing each redraw to be appended to scrollback.
+func enterMenuScreen(w io.Writer) func() {
+	fmt.Fprint(w, menuScreenEnter)
+	return func() { fmt.Fprint(w, menuScreenExit) }
+}
+
+func resetMenuFrame(w io.Writer) {
+	fmt.Fprint(w, menuScreenHome)
+}
 
 type menuItem struct {
 	name string
@@ -53,7 +72,7 @@ func maxViewport(totalItems, termRows int, searching bool) int {
 }
 
 // renderSearchBar draws the search input line when searching is active.
-func renderSearchBar(w *os.File, query string) {
+func renderSearchBar(w io.Writer, query string) {
 	fmt.Fprintf(w, "\r\033[K%s %s\n", accent("🔍"), query+"_")
 }
 
@@ -87,6 +106,8 @@ func selectOne(label string, items []menuItem) (int, error) {
 	defer term.Restore(fd, old)
 
 	w := os.Stdout
+	restoreScreen := enterMenuScreen(w)
+	defer restoreScreen()
 	th := termHeight(fd)
 
 	// search state
@@ -100,7 +121,6 @@ func selectOne(label string, items []menuItem) (int, error) {
 
 	sel := 0
 	scroll := 0
-	prevLines := 0 // lines printed in the previous frame; 0 = first frame
 
 	render := func() {
 		n := len(filtered)
@@ -161,15 +181,12 @@ func selectOne(label string, items []menuItem) (int, error) {
 	}
 
 	redraw := func() {
-		if prevLines > 0 {
-			fmt.Fprintf(w, "\033[%dA", prevLines)
-		}
+		resetMenuFrame(w)
 		drawHeader()
 		render()
 		// Clear everything below the current frame so stale rows from a taller
 		// previous frame don't linger.
 		fmt.Fprint(w, "\033[J")
-		prevLines = fixedLines(searching) + maxViewport(len(filtered), th, searching)
 	}
 
 	redraw() // initial draw
@@ -273,6 +290,8 @@ func selectMany(label string, items []menuItem) ([]int, error) {
 	defer term.Restore(fd, old)
 
 	w := os.Stdout
+	restoreScreen := enterMenuScreen(w)
+	defer restoreScreen()
 	th := termHeight(fd)
 
 	// search state
@@ -287,7 +306,6 @@ func selectMany(label string, items []menuItem) ([]int, error) {
 	cur := 0
 	checked := make([]bool, len(items))
 	scroll := 0
-	prevLines := 0
 
 	render := func() {
 		n := len(filtered)
@@ -347,13 +365,10 @@ func selectMany(label string, items []menuItem) ([]int, error) {
 	}
 
 	redraw := func() {
-		if prevLines > 0 {
-			fmt.Fprintf(w, "\033[%dA", prevLines)
-		}
+		resetMenuFrame(w)
 		drawHeader()
 		render()
 		fmt.Fprint(w, "\033[J")
-		prevLines = fixedLines(searching) + maxViewport(len(filtered), th, searching)
 	}
 
 	redraw()
