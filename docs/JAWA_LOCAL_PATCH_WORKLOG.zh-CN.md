@@ -992,6 +992,40 @@ renderer 覆盖的本地选择和配置布局替换掉；表现为光标、模�
 只有上游所有普通启动与读取路径都满足 no-write-on-read、invalid-config fail-loud，并将 migration
 限定为显式用户操作时，才可删除本 patch。仅修复某一个 CLI 入口不算等价。
 
+## Core Patch 17：可配置 Hybrid TUI 信息架构
+
+提交：本 patch，`feat(cli): add configurable hybrid TUI architecture`
+
+### 修复的问题
+
+此前 `docs/reasonix-tui-ia-selector.html` 只能生成设计 JSON；实际 CLI 只有零散的
+`input_prompt`、`show_usage`、`lazy_reasoning` 配置。用户输入带、assistant 身份、activity、
+composer 边框和 status 两层结构主要是固定渲染，无法作为一个可验证、可追更的信息架构契约。
+
+### 新的配置契约
+
+- `[ui.transcript]`：`profile`、`density`、`turn_separator`、`user_prompt`、`assistant_marker`；
+- `[ui.transcript.show]`：role、activity、image understanding、recap、turn metrics；
+- `[ui.composer]`：prefix、frame；
+- `[ui.status]`：one/two layout，以及 cache、path、cost 可见性；
+- `hybrid` preset 对应已确认的 selector JSON，显式子字段可以逐项覆盖 preset；
+- 旧 `ui.input_prompt`、`ui.show_usage` 继续兼容，缺少新表时保持旧 Reasonix 行为；
+- 非法枚举值在配置加载阶段明确报错，不静默降级；
+- 所有字段只影响 TUI presentation，不进入 provider message、tool schema 或 cache-stable prefix。
+
+### Hybrid 真实渲染
+
+- 用户输入使用全宽 band；assistant 使用 `● Reasonix` 身份锚点；
+- tool activity 使用左侧树线、按类别着色的菱形、动作/参数层级，并在原行补结束耗时；
+- completed thinking 和 Image understood 继续复用 disclosure 交互；
+- composer prefix 只在首行显示，frame 开关同步影响高度预算、光标位置和鼠标命中；
+- 两层 footer 在 status 顶部使用 quiet rule，cache/path/cost 可分别隐藏；窄屏仍按语义组换行。
+
+### 删除条件
+
+上游提供等价的 transcript/composer/status typed config、preset + override 语义、严格校验、
+responsive footer 和 live/replay 一致渲染后方可删除。只有颜色或 statusline 自定义命令不算等价。
+
 ## 升级上游时的检查清单
 
 每次 `git fetch origin main-v2` 后：
@@ -1014,6 +1048,7 @@ git diff --stat origin/main-v2...HEAD
 8. 上游是否提供 Headless/ACP shared usage ledger，并明确 unknown/partial cost。
 9. 上游是否给 memory 增加 provenance/staleness/diversity，同时保持旧格式 no-write-on-read。
 10. 上游是否改变 canonical tool schema/order，或新增重复 executor/projection。
+11. 上游是否提供 typed TUI information architecture，而不只是新增固定样式。
 
 如果上游已经覆盖某项能力：
 
