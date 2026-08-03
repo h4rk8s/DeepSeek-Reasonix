@@ -79,6 +79,7 @@ func TestSkillPickerEnterClosesWithoutChanges(t *testing.T) {
 
 func TestSkillsBareOpensPicker(t *testing.T) {
 	m := newTestChatTUI()
+	m.ctrl = nil
 	m.width = 80
 	m.skills = makeTestSkills()
 
@@ -90,6 +91,7 @@ func TestSkillsBareOpensPicker(t *testing.T) {
 
 func TestSkillsManageOpensPicker(t *testing.T) {
 	m := newTestChatTUI()
+	m.ctrl = nil
 	m.width = 80
 	m.skills = makeTestSkills()
 
@@ -126,6 +128,7 @@ func TestSkillsQuestionOpensSubcommandCompletion(t *testing.T) {
 
 func TestSkillsEnterSubmitsExactSlashCommand(t *testing.T) {
 	m := newTestChatTUI()
+	m.ctrl = nil
 	m.width = 80
 	m.skills = makeTestSkills()
 	m.input.SetValue("/skills")
@@ -149,6 +152,7 @@ func TestSkillsEnterSubmitsExactSlashCommand(t *testing.T) {
 
 func TestSkillsListRendersScrollback(t *testing.T) {
 	m := newTestChatTUI()
+	m.ctrl = nil
 	m.width = 80
 	m.skills = makeTestSkills()
 

@@ -48,7 +48,7 @@ func newTestChatTUI() chatTUI {
 	shellIdx := map[string]int{}
 	shellOut := map[string]string{}
 	shellExp := map[string]bool{}
-	return chatTUI{
+	m := chatTUI{
 		ctrl:                 control.New(control.Options{}),
 		input:                ti,
 		width:                80,
@@ -72,6 +72,10 @@ func newTestChatTUI() chatTUI {
 		subagentProgress:     map[string]*cliSubagentProgress{},
 		showTurnUsage:        true,
 	}
+	m.buildController = func(controllerBuildSpec, []provider.Message, string, control.SessionAPI) (*control.Controller, error) {
+		return control.New(control.Options{}), nil
+	}
+	return m
 }
 
 // subagentStatus / subagentPreview build reserved ToolProgress events the same
