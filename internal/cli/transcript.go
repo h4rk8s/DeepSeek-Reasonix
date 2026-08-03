@@ -252,6 +252,14 @@ func (m chatTUI) buildCopyTranscript(contentWidth int) (string, int, bool) {
 		}
 		switch source.kind {
 		case transcriptSourceMarkdown:
+			renderer := newMarkdownRenderer(contentWidth)
+			rendered := strings.TrimRight(renderer.RenderCopy(source.raw, strconv.Itoa(i)), "\n")
+			if rendered == "" {
+				rendered = source.raw
+			}
+			markers += strings.Count(rendered, copyMathStartPrefix)
+			b.WriteString(rendered)
+		case transcriptSourceAssistant:
 			rendered := renderAssistantMarkdownCopy(source.raw, contentWidth, strconv.Itoa(i))
 			markers += strings.Count(rendered, copyMathStartPrefix)
 			b.WriteString(rendered)

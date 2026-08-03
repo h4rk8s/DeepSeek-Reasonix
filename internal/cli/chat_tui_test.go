@@ -3320,6 +3320,7 @@ func TestLanguageCommandAutoClearsPinnedLanguage(t *testing.T) {
 	t.Cleanup(func() { i18n.DetectLanguage("en") })
 
 	m := newTestChatTUI()
+	m.ctrl = nil
 	m.runLanguageSubcommand("/language zh")
 	m.runLanguageSubcommand("/language auto")
 
