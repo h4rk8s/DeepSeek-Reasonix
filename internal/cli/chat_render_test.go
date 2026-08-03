@@ -68,9 +68,11 @@ func newTestChatTUI() chatTUI {
 		shellExpanded:        shellExp,
 		shellTranscriptIdx:   shellIdx,
 		toolLineCountByID:    map[string]int{},
+		toolCardIdx:          map[string]int{},
 		subagentProgressIdx:  map[string]int{},
 		subagentProgress:     map[string]*cliSubagentProgress{},
 		showTurnUsage:        true,
+		presentation:         config.Default().UIPresentation(),
 	}
 	m.buildController = func(controllerBuildSpec, []provider.Message, string, control.SessionAPI) (*control.Controller, error) {
 		return control.New(control.Options{}), nil

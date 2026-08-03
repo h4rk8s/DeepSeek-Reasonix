@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"reasonix/internal/config"
 	"reasonix/internal/event"
 	"reasonix/internal/shellrun"
 	"reasonix/internal/tool"
@@ -203,6 +204,44 @@ func argList(v any) string {
 // toolCard renders the dispatch line: "  ⏺ Verb(arg)", arg clamped to width.
 func toolCard(name, args string, width int) string {
 	return "  " + toolDot(name) + " " + toolHead(name, toolArg(name, args), width)
+}
+
+func toolCardWithPresentation(name, args string, width int, durationMs int64, p config.UIPresentation) string {
+	if p.Profile != "hybrid" {
+		return toolCard(name, args, width)
+	}
+	color := activeCLITheme.accent
+	switch toolCategory[name] {
+	case "read":
+		color = activeCLITheme.toolRead
+	case "write":
+		color = activeCLITheme.success
+	case "exec":
+		color = activeCLITheme.warn
+	case "proc":
+		color = activeCLITheme.toolProc
+	}
+	line := "  │  " + themeFg(color, "◆") + " " + bold(toolDisplayName(name))
+	if arg := toolArg(name, args); arg != "" {
+		line += " " + dim(arg)
+	}
+	if durationMs > 0 {
+		duration := formatToolDuration(durationMs)
+		if gap := width - visibleWidth(line) - visibleWidth(duration); gap > 0 {
+			line += strings.Repeat(" ", gap)
+		} else {
+			line += " "
+		}
+		line += dim(duration)
+	}
+	return line
+}
+
+func formatToolDuration(durationMs int64) string {
+	if durationMs < 1000 {
+		return fmt.Sprintf("%dms", durationMs)
+	}
+	return fmt.Sprintf("%.1fs", float64(durationMs)/1000)
 }
 
 // toolHead builds "Verb(arg)" with the verb bold and the arg clamped to fit the

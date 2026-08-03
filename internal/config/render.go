@@ -109,6 +109,7 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 			b.WriteString("# lazy_reasoning = true   # CLI: keep completed thinking collapsed but clickable; REASONIX_LAZY_REASONING can override per run\n")
 		}
 		b.WriteString("\n")
+		renderUIPresentationSections(&b, c.UI, false)
 	}
 
 	if scope != RenderScopeProject {
@@ -825,6 +826,67 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	return b.String()
 }
 
+func renderUIPresentationSections(b *strings.Builder, ui UIConfig, compact bool) {
+	if !reflect.ValueOf(ui.Transcript).IsZero() {
+		b.WriteString("[ui.transcript]\n")
+		writeString := func(key, value, comment string) {
+			if strings.TrimSpace(value) == "" {
+				return
+			}
+			fmt.Fprintf(b, "%s = %q", key, value)
+			if !compact && comment != "" {
+				fmt.Fprintf(b, "   # %s", comment)
+			}
+			b.WriteByte('\n')
+		}
+		writeString("profile", ui.Transcript.Profile, "current|hybrid|claude|codex|grok")
+		writeString("density", ui.Transcript.Density, "compact|balanced|comfortable")
+		writeString("turn_separator", ui.Transcript.TurnSeparator, "none|space|rule")
+		writeString("user_prompt", ui.Transcript.UserPrompt, "plain|band|boxed")
+		writeString("assistant_marker", ui.Transcript.AssistantMarker, "none|dot|diamond|name")
+		b.WriteByte('\n')
+	}
+	if !reflect.ValueOf(ui.Transcript.Show).IsZero() {
+		b.WriteString("[ui.transcript.show]\n")
+		renderOptionalBools(b, map[string]*bool{
+			"role": ui.Transcript.Show.Role, "activity": ui.Transcript.Show.Activity,
+			"image_understanding": ui.Transcript.Show.ImageUnderstanding,
+			"recap":               ui.Transcript.Show.Recap, "turn_metrics": ui.Transcript.Show.TurnMetrics,
+		})
+		b.WriteByte('\n')
+	}
+	if !reflect.ValueOf(ui.Composer).IsZero() {
+		b.WriteString("[ui.composer]\n")
+		if ui.Composer.Prefix != "" {
+			fmt.Fprintf(b, "prefix = %q\n", ui.Composer.Prefix)
+		}
+		if ui.Composer.Frame != nil {
+			fmt.Fprintf(b, "frame = %v\n", *ui.Composer.Frame)
+		}
+		b.WriteByte('\n')
+	}
+	if !reflect.ValueOf(ui.Status).IsZero() {
+		b.WriteString("[ui.status]\n")
+		if ui.Status.Layout != "" {
+			fmt.Fprintf(b, "layout = %q", ui.Status.Layout)
+			if !compact {
+				b.WriteString("   # one|two")
+			}
+			b.WriteByte('\n')
+		}
+		renderOptionalBools(b, map[string]*bool{"cache": ui.Status.Cache, "path": ui.Status.Path, "cost": ui.Status.Cost})
+		b.WriteByte('\n')
+	}
+}
+
+func renderOptionalBools(b *strings.Builder, values map[string]*bool) {
+	for _, key := range []string{"role", "activity", "image_understanding", "recap", "turn_metrics", "cache", "path", "cost"} {
+		if value, ok := values[key]; ok && value != nil {
+			fmt.Fprintf(b, "%s = %v\n", key, *value)
+		}
+	}
+}
+
 // tomlPluginsForScope keeps merged runtime entries in their owning config
 // source. Unknown provenance is retained for callers that construct a Config
 // directly before saving it to a specific target.
@@ -910,6 +972,8 @@ func RenderTOMLProjectDelta(c *Config) string {
 		}
 		b.WriteString("\n")
 	}
+
+	renderUIPresentationSections(&b, c.UI, true)
 
 	// [network] section
 	if !reflect.DeepEqual(c.Network, d.Network) {

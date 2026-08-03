@@ -99,6 +99,9 @@ type chatTUI struct {
 	// showTurnUsage controls whether completed per-request token/cost receipts are
 	// retained in transcript scrollback. Usage accounting remains active either way.
 	showTurnUsage bool
+	// presentation is the resolved, display-only transcript/composer/footer
+	// contract. It never enters provider messages or the stable prompt prefix.
+	presentation config.UIPresentation
 
 	// balance is the last-fetched wallet-balance readout (e.g. "¥110.00"), "" when
 	// the provider declares no balance_url or a fetch failed. Refreshed async on
@@ -205,6 +208,7 @@ type chatTUI struct {
 	// toolLineCountByID keeps a switched-away tool's last line count so a late
 	// ToolResult can still render "⎿ N lines" (shellOutputs only tracks "shell-" ids).
 	toolLineCountByID map[string]int
+	toolCardIdx       map[string]int
 	// toolStreamStart / toolStreamFrame drive the "⎿ working · Ns" line shown
 	// under a dispatched tool that hasn't produced output yet, so a slow tool
 	// reads as making progress rather than frozen.
@@ -735,6 +739,7 @@ func newChatTUI(ctrl control.SessionAPI, missing string, eventCh chan event.Even
 		toolLineCountByID:          make(map[string]int),
 		subagentProgressIdx:        make(map[string]int),
 		subagentProgress:           make(map[string]*cliSubagentProgress),
+		toolCardIdx:                make(map[string]int),
 		eventCh:                    eventCh,
 		history:                    history,
 		host:                       ctrl.Host(),
@@ -742,6 +747,7 @@ func newChatTUI(ctrl control.SessionAPI, missing string, eventCh chan event.Even
 		skills:                     ctrl.SlashSkills(),
 		viewport:                   viewport.New(viewport.WithWidth(termW)),
 		statusLineCount:            3,
+		presentation:               config.Default().UIPresentation(),
 	}
 	m.syncWindowTitle()
 	return m
@@ -2260,6 +2266,7 @@ func (m *chatTUI) clearTranscriptDisplay() {
 	m.toolLineCountByID = make(map[string]int)
 	m.subagentProgressIdx = make(map[string]int)
 	m.subagentProgress = make(map[string]*cliSubagentProgress)
+	m.toolCardIdx = make(map[string]int)
 	m.toolStreamID = ""
 	m.toolStreamIdx = -1
 	m.toolTail = nil
@@ -2333,6 +2340,20 @@ func (m *chatTUI) commitSpacer() {
 	}
 }
 
+func (m *chatTUI) commitTurnSeparator() {
+	if len(m.transcript) == 0 {
+		return
+	}
+	switch m.presentation.TurnSeparator {
+	case "none":
+		return
+	case "rule":
+		m.commitLine(statusFooterDivider(transcriptEntryWidth(m.width)))
+	default:
+		m.commitSpacer()
+	}
+}
+
 // bottomRows is the terminal-row height of the pinned bottom region: any open
 // bottom panels (todo / approval / chooser / rewind / completion), the composer
 // when visible, and the two fixed status rows. Full-screen managers such as MCP
@@ -2374,7 +2395,7 @@ func (m chatTUI) bottomRows() int {
 		if qi := m.renderQueueIndicator(); qi != "" {
 			rows += strings.Count(qi, "\n") + 1
 		}
-		rows += m.input.Height() + 2
+		rows += m.input.Height() + m.composerBorderRows()
 	}
 	if m.statusLineCount > 0 {
 		return rows + m.statusLineCount
@@ -2869,6 +2890,11 @@ func (m *chatTUI) shiftLiveTranscriptRefsAfterInsert(at int) {
 			m.shellTranscriptIdx[id] = idx + 1
 		}
 	}
+	for id, idx := range m.toolCardIdx {
+		if idx >= at {
+			m.toolCardIdx[id] = idx + 1
+		}
+	}
 }
 
 func (m *chatTUI) shiftLiveTranscriptRefsAfterDelete(at int) {
@@ -2886,6 +2912,14 @@ func (m *chatTUI) shiftLiveTranscriptRefsAfterDelete(at int) {
 			delete(m.shellTranscriptIdx, id)
 		case idx > at:
 			m.shellTranscriptIdx[id] = idx - 1
+		}
+	}
+	for id, idx := range m.toolCardIdx {
+		switch {
+		case idx == at:
+			delete(m.toolCardIdx, id)
+		case idx > at:
+			m.toolCardIdx[id] = idx - 1
 		}
 	}
 }
@@ -3756,6 +3790,22 @@ func (m *chatTUI) beginToolRunning(id string) {
 	m.shellTranscriptIdx[id] = m.toolStreamIdx
 }
 
+func (m *chatTUI) finishToolCard(tool event.Tool) {
+	idx, ok := m.toolCardIdx[tool.ID]
+	if !ok || idx < 0 || idx >= len(m.transcript) {
+		return
+	}
+	m.ensureTranscriptSources()
+	source := m.transcriptSources[idx]
+	if source.kind != transcriptSourceToolCard {
+		return
+	}
+	source.durationMs = tool.DurationMs
+	m.setTranscriptBlock(idx, m.renderTranscriptSource(source, m.width), source)
+	delete(m.toolCardIdx, tool.ID)
+	m.transcriptDirty = true
+}
+
 // tickToolRunning re-renders the working line of a tool that's dispatched but
 // hasn't produced output yet. A no-op once output streams in or no tool runs.
 func (m *chatTUI) tickToolRunning() {
@@ -4290,6 +4340,9 @@ func (m chatTUI) View() tea.View {
 	var box string
 	if !hideComposer {
 		style := inputBoxStyle.Width(boxW)
+		if !m.presentation.ComposerFrame {
+			style = lipgloss.NewStyle().Width(boxW)
+		}
 		if shellMode {
 			style = withThemeBorderFG(style, statusShellColor)
 		}
@@ -4398,7 +4451,7 @@ func (m chatTUI) View() tea.View {
 		v.WindowTitle = m.windowTitle
 		if !hideComposer {
 			if cur := m.composerCursor(); cur != nil {
-				cur.Y += rowsAboveBox + 1
+				cur.Y += rowsAboveBox + m.composerTopBorderRows()
 				v.Cursor = clampCursorToTerminal(cur, m.width, m.height)
 			}
 		}
@@ -4435,7 +4488,7 @@ func (m chatTUI) View() tea.View {
 	// storms cannot leave the caret off-grid (#6282, #7236).
 	if !hideComposer {
 		if cur := m.composerCursor(); cur != nil {
-			cur.Y += m.viewport.Height() + rowsAboveBox + 1
+			cur.Y += m.viewport.Height() + rowsAboveBox + m.composerTopBorderRows()
 			v.Cursor = clampCursorToTerminal(cur, m.width, m.height)
 		}
 	}
@@ -5112,10 +5165,7 @@ func (m chatTUI) computeStatusLineCount(width int) int {
 // textarea scrolls internally and keeps the caret visible.
 const maxInputRows = 8
 
-const (
-	composerBorderRows = 2
-	minTranscriptRows  = 3
-)
+const minTranscriptRows = 3
 const foldedPasteMinChars = 1000
 const foldedPasteMinLines = 5
 
@@ -5142,7 +5192,8 @@ func (m chatTUI) inputHeightLimit() int {
 	limit := maxInputRows
 	// Match the bounded-composer convention used by other coding TUIs: borders
 	// are part of the half-screen budget, not extra rows added afterward.
-	halfScreen := max(1, m.height/2-composerBorderRows)
+	borderRows := m.composerBorderRows()
+	halfScreen := max(1, m.height/2-borderRows)
 	limit = min(limit, halfScreen)
 
 	// bottomRows includes the current composer. Remove it to get the fixed
@@ -5150,10 +5201,24 @@ func (m chatTUI) inputHeightLimit() int {
 	// of transcript. On extremely short terminals one editable row still wins.
 	fixedBottomRows := m.bottomRows()
 	if !m.hideComposer() {
-		fixedBottomRows -= m.input.Height() + composerBorderRows
+		fixedBottomRows -= m.input.Height() + borderRows
 	}
-	available := max(1, m.height-fixedBottomRows-composerBorderRows-minTranscriptRows)
+	available := max(1, m.height-fixedBottomRows-borderRows-minTranscriptRows)
 	return max(1, min(limit, available))
+}
+
+func (m chatTUI) composerBorderRows() int {
+	if m.presentation.ComposerFrame {
+		return 2
+	}
+	return 0
+}
+
+func (m chatTUI) composerTopBorderRows() int {
+	if m.presentation.ComposerFrame {
+		return 1
+	}
+	return 0
 }
 
 func (m *chatTUI) syncInputHeightLimit() {
@@ -5377,7 +5442,7 @@ func (m *chatTUI) startControllerTurn(displayed, restore string, start func()) t
 	m.pendingRestore = restore
 	m.pendingPastes = m.pasteLabelsIn(restore)
 	m.bubbleStartIdx = len(m.transcript)
-	m.commitLine("") // blank line separating turns
+	m.commitTurnSeparator()
 	m.commitTranscriptSource(transcriptSource{
 		kind: transcriptSourceUser, raw: displayed, planMode: m.planMode,
 	})
@@ -5512,6 +5577,9 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 		m.commitPending()
 
 	case event.ToolDispatch:
+		if !m.presentation.ShowActivity {
+			break
+		}
 		// The early (partial) dispatch only carries the name — the full dispatch
 		// with args prints the line. Same-ID preview refreshes are ignored because
 		// native scrollback cannot replace an already-printed diff card.
@@ -5533,13 +5601,20 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 				}
 				break
 			}
+			cardIdx := len(m.transcript)
 			m.commitTranscriptSource(transcriptSource{
 				kind: transcriptSourceToolCard, raw: e.Tool.Name, aux: e.Tool.Args,
 			})
+			if e.Tool.ID != "" {
+				m.toolCardIdx[e.Tool.ID] = cardIdx
+			}
 			m.beginToolRunning(e.Tool.ID)
 		}
 
 	case event.ToolProgress:
+		if !m.presentation.ShowActivity {
+			break
+		}
 		if event.IsSubagentProgressName(e.Tool.Name) {
 			m.streamSubagentProgress(e.Tool)
 			break
@@ -5558,11 +5633,14 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 		// collapses to a one-line "⎿ N lines" summary first. Pass the final
 		// output so collapseToolOutput has a last-resort source for the line
 		// count when the live state was already reset by a back-to-back tool.
-		m.collapseToolOutput(e.Tool.ID, e.Tool.Output)
+		if m.presentation.ShowActivity {
+			m.collapseToolOutput(e.Tool.ID, e.Tool.Output)
+			m.finishToolCard(e.Tool)
+		}
 		if e.Tool.Name == "todo_write" && e.Tool.Err == "" {
 			m.todoArgs = e.Tool.Args
 		}
-		if e.Tool.Err != "" {
+		if e.Tool.Err != "" && m.presentation.ShowActivity {
 			m.finalizeStreamed()
 			label := shellToolDisplayName(e.Tool.Name, e.Tool.Execution)
 			detail := shellFailureDetail(e.Tool.Execution)
@@ -5587,6 +5665,9 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 
 	case event.Notice:
 		if isImageUnderstandingNotice(e) {
+			if !m.presentation.ShowImageUnderstanding {
+				break
+			}
 			m.finalizeStreamed()
 			summary := imageUnderstandingSummaryFromNotice(e.Text)
 			idx := len(m.transcript)
@@ -6267,7 +6348,7 @@ func (m *chatTUI) echoLocalCommand(input string) {
 	if input == "" {
 		return
 	}
-	m.commitLine(renderUserBubble(input, m.width, m.planMode))
+	m.commitLine(renderUserBubbleWithPresentation(input, m.width, m.planMode, m.presentation))
 }
 
 // commandNames renders the custom command list for /help, "" when there are none.
@@ -6397,6 +6478,10 @@ func (m *chatTUI) runMCPSubcommand(input string) {
 
 func (m *chatTUI) runRecapCommand(input string) {
 	m.echoLocalCommand(input)
+	if !m.presentation.ShowRecap {
+		m.notice("recap is hidden by ui.transcript.show.recap")
+		return
+	}
 	if m.ctrl == nil {
 		m.notice("recap: controller not ready")
 		return
@@ -6408,7 +6493,7 @@ func (m *chatTUI) runRecapCommand(input string) {
 		return
 	}
 	m.commitSpacer()
-	if block := renderAssistantBlock(recap); block != "" {
+	if block := renderAssistantMarkdownWithPresentation(recap, transcriptContentWidth(m.width, m.nativeScrollback), m.presentation); block != "" {
 		m.commitLine(block)
 	}
 	m.transcriptDirty = true
@@ -6617,7 +6702,7 @@ func (m *chatTUI) replayHistory(history []provider.Message, width int) {
 			if content != "" {
 				m.commitTranscriptSource(transcriptSource{kind: transcriptSourceUser, raw: content})
 			}
-			if imageUnderstanding != "" {
+			if imageUnderstanding != "" && m.presentation.ShowImageUnderstanding {
 				summary := imageUnderstandingSummaryFromRaw(imageUnderstanding)
 				idx := len(m.transcript)
 				m.commitLine(renderImageUnderstandingSummary(summary, width, false))
@@ -6627,7 +6712,7 @@ func (m *chatTUI) replayHistory(history []provider.Message, width int) {
 			body := visibleAssistantHistoryBody(msg.Content)
 			hasVisibleTool := false
 			for _, tc := range msg.ToolCalls {
-				if visibleReplayToolCall(tc.Name) {
+				if m.presentation.ShowActivity && visibleReplayToolCall(tc.Name) {
 					hasVisibleTool = true
 					break
 				}
@@ -6658,14 +6743,14 @@ func (m *chatTUI) replayHistory(history []provider.Message, width int) {
 			}
 			for _, tc := range msg.ToolCalls {
 				call := enqueueTool(tc)
-				if !call.visible {
+				if !m.presentation.ShowActivity || !call.visible {
 					continue
 				}
 				m.commitTranscriptSource(transcriptSource{kind: transcriptSourceToolCard, raw: call.name, aux: call.args})
 			}
 		case provider.RoleTool:
 			call := dequeueTool(msg.ToolCallID, msg.Name)
-			if !call.visible {
+			if !m.presentation.ShowActivity || !call.visible {
 				continue
 			}
 			if block := replayToolResultBlock(msg.Content, width); block != "" {
@@ -6866,15 +6951,23 @@ func wrapForViewport(text string, width int, fg cliColor) string {
 // it visually lighter than the real bottom composer so a fresh session does not
 // look like it has a second input box in the transcript.
 func renderUserBubble(line string, width int, planMode bool) string {
+	return renderUserBubbleWithPresentation(line, width, planMode, config.Default().UIPresentation())
+}
+
+func renderUserBubbleWithPresentation(line string, width int, planMode bool, p config.UIPresentation) string {
 	line = displayLineForImageRefs(line)
 	prefix := "› "
 	if planMode {
 		prefix = "› [plan] "
 	}
-	if !colorOn() {
+	text := prefix + line
+	if p.UserPrompt == "plain" || !colorOn() {
 		return "│ " + prefix + line
 	}
-	return renderTranscriptRows([]string{prefix + line}, transcriptEntryWidth(width), activeCLITheme.accent, false)
+	if p.UserPrompt == "boxed" {
+		return renderConnectorBlock(strings.Split(text, "\n"), transcriptEntryWidth(width), activeCLITheme.accent, false)
+	}
+	return renderTranscriptRows(strings.Split(text, "\n"), transcriptEntryWidth(width), activeCLITheme.accent, false)
 }
 
 var cliImageRefRe = regexp.MustCompile(`@\.reasonix/attachments/clipboard-\d{8}-\d{6}\.\d+(?:-(?:\d{6}|[a-f0-9]{8}))?\.(?:png|jpg|jpeg|gif|webp)`)
