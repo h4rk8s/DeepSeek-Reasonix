@@ -28,7 +28,7 @@ Environment overrides:
   UPSTREAM_BRANCH=main-v2
   PUSH_REMOTE=h4rk8s
   INSTALL_PATH=$HOME/.local/bin/reasonix
-  WORKTREE_ROOT=<parent directory for temporary sync worktrees>
+  WORKTREE_ROOT=<optional override; must remain inside <repo>/.worktree>
 EOF
 }
 
@@ -115,7 +115,21 @@ if [[ "$behind" == "0" ]]; then
 fi
 
 stamp=$(date -u +%Y%m%d%H%M%S)
-worktree_root=${WORKTREE_ROOT:-"$(dirname "$repo")"}
+worktree_root=${WORKTREE_ROOT:-"$repo/.worktree"}
+case "$worktree_root/" in
+  "$repo/.worktree/"*) ;;
+  *) die "WORKTREE_ROOT must be inside $repo/.worktree" ;;
+esac
+case "/$worktree_root/" in
+  *"/../"*) die "WORKTREE_ROOT must not contain parent-directory traversal" ;;
+esac
+mkdir -p "$repo/.worktree" "$worktree_root"
+repo_worktree_root=$(cd "$repo/.worktree" && pwd -P)
+worktree_root=$(cd "$worktree_root" && pwd -P)
+case "$worktree_root/" in
+  "$repo_worktree_root/"*) ;;
+  *) die "WORKTREE_ROOT must be inside $repo/.worktree" ;;
+esac
 sync_branch="jawa/reasonix-upstream-sync-${stamp}-$$"
 sync_dir="$worktree_root/2026-07-14-reasonix-upstream-sync-${stamp}-$$"
 sync_ok=0

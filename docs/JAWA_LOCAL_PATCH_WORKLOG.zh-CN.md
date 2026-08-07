@@ -1,10 +1,10 @@
 # Jawa 本地 Reasonix Patch Work Log
 
-更新时间：2026-07-24
+更新时间：2026-08-07
 维护分支：`jawa/reasonix-composer-state-visibility`
-当前同步入口：`scripts/jawa-upstream-sync.sh`（默认生成临时 worktree / 临时分支）
-本轮固定上游：`a6e145962184de445de5bdb7e16339a14547c2e0`
-本轮审计候选（重建前）：`d77f03a0c09a1c6379a907693b59f13149abac6f`
+当前同步入口：`scripts/jawa-upstream-sync.sh`（临时 worktree 只允许放在仓库内 `.worktree/`）
+本轮固定上游：`1be7027e9c773f65af136ac20e8a77f5ed5d0736`（`desktop-v1.21.0-6-g1be7027e9`）
+本轮功能候选（维护文档收口前）：`8e6631b4f9a3c6e421971607b0f3be3029b433ce`
 当前 patch stack：以固定上游为基线重建；不再把已经被上游覆盖的基础 TUI/图片能力作为独立 patch 维护。
 完整列表始终以 `git log --reverse origin/main-v2..HEAD` 和同步时实际 merge-base 为准，不再维护容易过期的手抄 SHA 列表。
 
@@ -62,7 +62,7 @@ scripts/jawa-upstream-sync.sh
 默认行为：
 
 - `fetch origin/main-v2`
-- 从当前本地分支创建临时 worktree
+- 从当前本地分支在 `<repo>/.worktree/<task-name>` 创建临时 worktree
 - 在临时 worktree 里 rebase 到上游最新
 - 跑快速本地验收：TUI 回归、定向 Go 测试、`make build`、`reasonix --version`
 - 成功后删除临时 worktree
@@ -106,8 +106,9 @@ git config rerere.autoupdate true
 
 ```sh
 git fetch origin
-git worktree add ../2026-07-10-reasonix-upstream-sync jawa/reasonix-composer-state-visibility
-cd ../2026-07-10-reasonix-upstream-sync
+mkdir -p .worktree
+git worktree add .worktree/reasonix-upstream-sync jawa/reasonix-composer-state-visibility
+cd .worktree/reasonix-upstream-sync
 git switch -c jawa/reasonix-upstream-sync-$(date +%Y%m%d)
 git rebase origin/main-v2
 ```
@@ -165,6 +166,16 @@ git format-patch --no-stat --output-directory .local-patches origin/main-v2..HEA
 开始冲突，再逐个拆解。
 
 ## 当前差异概览
+
+### 2026-08-07 v1.21.0 跟进
+
+- 固定上游从旧基线推进到 `1be7027e9c773f65af136ac20e8a77f5ed5d0736`，同步开始后的阶段末漂移为 `0`。
+- 旧维护线是 20 个本地提交；重放后保留全部仍有效的行为契约，并退休 1 个已被上游删除/替代的生成型 Remote artifact 提交。
+- 新增 2 个同步契约提交：一项对齐上游 planner/TUI 测试语义，一项记录 worktree isolation 对 provider-visible tool schema 的有意 cache-prefix 变化。
+- `SystemHash` 保持不变；工具 schema 仅新增 `isolation = none|worktree`，`ToolsHash`、`PrefixHash` 和 schema token 数按预期更新。
+- 验证通过：`go vet ./...`、除修复前 golden 外的全仓 Go tests、修复后的 `internal/boot`、Desktop 全量 tests、TUI interaction regression、release build、`doctor --json` 和 capabilities doctor。
+- 用户配置 SHA256 始终为 `b519df3fd39700f0b9eff0d184872ef5e71ac76e13d8ca44cb0818499eb36904`；未跟踪的 UI demo 与 `research/` 未进入补丁栈。
+- 同步脚本的默认 worktree 位置已收紧为仓库内 `.worktree/`，并拒绝指向仓库外的 `WORKTREE_ROOT`。
 
 ### 2026-07-24 补丁去重审计
 
