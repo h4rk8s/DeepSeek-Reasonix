@@ -4754,10 +4754,15 @@ func TestCtrlCCopySelection(t *testing.T) {
 	// Execute the command (copyToClipboard → OSC 52).
 	cmd()
 
-	// Second Ctrl+C should now arm quit (selection is gone). Rendering the
-	// changed model does not require a command.
+	// Second Ctrl+C should now arm quit (selection is gone). In alt-screen mode
+	// the hint is already part of the returned model, so no asynchronous command
+	// is required solely to repaint it.
 	out2, _ := m2.Update(ctrlC)
-	if out2.(chatTUI).lastCtrlCAt.IsZero() {
+	m3, ok := out2.(chatTUI)
+	if !ok {
+		t.Fatalf("Update returned %T, want chatTUI", out2)
+	}
+	if m3.lastCtrlCAt.IsZero() {
 		t.Error("Ctrl+C after copy should arm quit")
 	}
 }

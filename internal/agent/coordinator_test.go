@@ -1039,8 +1039,10 @@ func TestCoordinatorNoOpPlannerConclusionIsVisible(t *testing.T) {
 	if got := len(exec.requests); got != 0 {
 		t.Fatalf("executor requests = %d, want skip after no-op planner conclusion", got)
 	}
-	if joined := strings.Join(visible, ""); !strings.Contains(joined, "No changes are needed") || strings.Contains(joined, "[no_changes]") {
+	if joined := strings.Join(visible, ""); !strings.Contains(joined, "No changes are needed") {
 		t.Fatalf("no-op planner conclusion should be visible as final answer: %q", joined)
+	} else if strings.Contains(joined, "[no_changes]") {
+		t.Fatalf("internal no-op control marker leaked into final answer: %q", joined)
 	}
 }
 
@@ -1723,6 +1725,9 @@ func TestCoordinatorNoOpConclusionAttributedToPlanner(t *testing.T) {
 	}
 	if conclusion.Source != event.UsageSourcePlanner {
 		t.Fatalf("no-op conclusion Source = %q, want planner attribution", conclusion.Source)
+	}
+	if strings.Contains(conclusion.Text, "[no_changes]") {
+		t.Fatalf("internal no-op control marker leaked into planner conclusion: %q", conclusion.Text)
 	}
 }
 
