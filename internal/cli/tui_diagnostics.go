@@ -20,7 +20,19 @@ const (
 	tuiDiagnosticLogRetention = 7 * 24 * time.Hour
 	tuiWatchdogInterval       = time.Second
 	tuiWatchdogStall          = 10 * time.Second
+	tuiWatchdogProbeGrace     = 5 * time.Second
 )
+
+// tuiWatchdogProbeMsg distinguishes an idle event loop from a blocked one. The
+// acknowledgement is closed only after chatTUI.Update has completed.
+type tuiWatchdogProbeMsg struct {
+	ack chan struct{}
+}
+
+type tuiWatchdogProgram interface {
+	Send(tea.Msg)
+	Kill()
+}
 
 // tuiDiagnostics owns process-level diagnostics while an interactive terminal
 // UI is alive. Bubble Tea owns the terminal screen, so background logs and
@@ -107,9 +119,9 @@ func (d *tuiDiagnostics) Writer() io.Writer {
 	return d.writer
 }
 
-// StartWatchdog arms a 1s heartbeat. If the TUI event loop makes no progress for
-// 10s, it dumps all goroutines, syncs the log, and kills the Bubble Tea program
-// so the terminal is restored instead of remaining frozen (#7435).
+// StartWatchdog arms a 1s heartbeat. After 10s without progress it probes the
+// TUI event loop; only an unacknowledged probe is treated as a stall and killed
+// so an idle terminal is never mistaken for a frozen one (#7435).
 func (d *tuiDiagnostics) StartWatchdog(p *tea.Program) {
 	if d == nil || p == nil {
 		return
@@ -124,7 +136,7 @@ func (d *tuiDiagnostics) StartWatchdog(p *tea.Program) {
 	})
 }
 
-func (d *tuiDiagnostics) watch(p *tea.Program) {
+func (d *tuiDiagnostics) watch(p tuiWatchdogProgram) {
 	ticker := time.NewTicker(tuiWatchdogInterval)
 	defer ticker.Stop()
 	for {
@@ -140,6 +152,9 @@ func (d *tuiDiagnostics) watch(p *tea.Program) {
 			if age < tuiWatchdogStall || d.killed.Load() {
 				continue
 			}
+			if d.eventLoopResponsive(p, tuiWatchdogProbeGrace) {
+				continue
+			}
 			d.killed.Store(true)
 			d.dumpGoroutines("watchdog_stall")
 			d.Sync()
@@ -147,6 +162,27 @@ func (d *tuiDiagnostics) watch(p *tea.Program) {
 			p.Kill()
 			return
 		}
+	}
+}
+
+// eventLoopResponsive sends a private message through Bubble Tea and waits for
+// chatTUI.Update to finish handling it. A quiet terminal is healthy and acks
+// immediately; a genuinely blocked Update cannot close the acknowledgement.
+func (d *tuiDiagnostics) eventLoopResponsive(p tuiWatchdogProgram, grace time.Duration) bool {
+	if d == nil || p == nil {
+		return true
+	}
+	ack := make(chan struct{})
+	go p.Send(tuiWatchdogProbeMsg{ack: ack})
+	timer := time.NewTimer(grace)
+	defer timer.Stop()
+	select {
+	case <-ack:
+		return true
+	case <-d.stopWatch:
+		return true
+	case <-timer.C:
+		return false
 	}
 }
 

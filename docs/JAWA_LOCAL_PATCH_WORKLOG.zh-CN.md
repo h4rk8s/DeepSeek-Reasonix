@@ -176,6 +176,7 @@ git format-patch --no-stat --output-directory .local-patches origin/main-v2..HEA
 - 验证通过：`go vet ./...`、除修复前 golden 外的全仓 Go tests、修复后的 `internal/boot`、Desktop 全量 tests、TUI interaction regression、release build、`doctor --json` 和 capabilities doctor。
 - 用户配置 SHA256 始终为 `b519df3fd39700f0b9eff0d184872ef5e71ac76e13d8ca44cb0818499eb36904`；未跟踪的 UI demo 与 `research/` 未进入补丁栈。
 - 同步脚本的默认 worktree 位置已收紧为仓库内 `.worktree/`，并拒绝指向仓库外的 `WORKTREE_ROOT`。
+- 上游 TUI watchdog 曾把“10 秒没有 Update/View 消息”直接当作卡死并调用 `Program.Kill()`，正常空闲也会显示 `error: program was killed`。本地改为先发送 event-loop 探针，只有探针在宽限期内也无法完成一次 `Update` 才恢复终端；真实 PTY 空闲超过旧阈值后仍存活。
 
 ### 2026-07-24 补丁去重审计
 

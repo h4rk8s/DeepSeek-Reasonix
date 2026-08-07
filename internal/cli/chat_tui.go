@@ -979,6 +979,9 @@ func suspendWithMouseReset() tea.Cmd {
 }
 
 func (m chatTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if probe, ok := msg.(tuiWatchdogProbeMsg); ok && probe.ack != nil {
+		defer close(probe.ack)
+	}
 	// Feed the startup/stall watchdog so freezes leave a goroutine dump and
 	// recover the terminal instead of a zero-byte log (#7435).
 	if m.diagnostics != nil {

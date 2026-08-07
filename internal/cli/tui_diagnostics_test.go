@@ -8,12 +8,28 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"reasonix/internal/control"
 	"reasonix/internal/event"
 	"reasonix/internal/i18n"
 )
+
+type fakeTUIWatchdogProgram struct {
+	onSend func(tea.Msg)
+	killed atomic.Bool
+}
+
+func (p *fakeTUIWatchdogProgram) Send(msg tea.Msg) {
+	if p.onSend != nil {
+		p.onSend(msg)
+	}
+}
+
+func (p *fakeTUIWatchdogProgram) Kill() { p.killed.Store(true) }
 
 func TestTUIDiagnosticsKeepProcessAndPluginLogsOffTerminal(t *testing.T) {
 	var terminal bytes.Buffer
@@ -165,5 +181,76 @@ func TestTUIDiagnosticsMilestoneFlushesNonEmptyLog(t *testing.T) {
 		if !strings.Contains(string(body), want) {
 			t.Fatalf("log missing %q:\n%s", want, body)
 		}
+	}
+}
+
+func TestTUIWatchdogProbeAcceptsIdleResponsiveEventLoop(t *testing.T) {
+	d := &tuiDiagnostics{stopWatch: make(chan struct{})}
+	p := &fakeTUIWatchdogProgram{onSend: func(msg tea.Msg) {
+		probe, ok := msg.(tuiWatchdogProbeMsg)
+		if !ok {
+			t.Errorf("probe message type = %T", msg)
+			return
+		}
+		close(probe.ack)
+	}}
+	if !d.eventLoopResponsive(p, 50*time.Millisecond) {
+		t.Fatal("idle but responsive event loop was classified as stalled")
+	}
+	if p.killed.Load() {
+		t.Fatal("responsive event loop was killed")
+	}
+}
+
+func TestTUIWatchdogProbeRejectsBlockedEventLoop(t *testing.T) {
+	d := &tuiDiagnostics{stopWatch: make(chan struct{})}
+	p := &fakeTUIWatchdogProgram{}
+	if d.eventLoopResponsive(p, 5*time.Millisecond) {
+		t.Fatal("unacknowledged probe was classified as responsive")
+	}
+}
+
+func TestTUIWatchdogDoesNotKillIdleResponsiveProgram(t *testing.T) {
+	d := &tuiDiagnostics{writer: io.Discard, stopWatch: make(chan struct{})}
+	d.lastProgress.Store(time.Now().Add(-2 * tuiWatchdogStall).UnixNano())
+	probed := make(chan struct{}, 1)
+	p := &fakeTUIWatchdogProgram{onSend: func(msg tea.Msg) {
+		probe, ok := msg.(tuiWatchdogProbeMsg)
+		if !ok {
+			return
+		}
+		close(probe.ack)
+		select {
+		case probed <- struct{}{}:
+		default:
+		}
+	}}
+	done := make(chan struct{})
+	go func() {
+		d.watch(p)
+		close(done)
+	}()
+	select {
+	case <-probed:
+	case <-time.After(2 * tuiWatchdogInterval):
+		close(d.stopWatch)
+		<-done
+		t.Fatal("watchdog did not probe the idle program")
+	}
+	close(d.stopWatch)
+	<-done
+	if p.killed.Load() {
+		t.Fatal("watchdog killed an idle but responsive program")
+	}
+}
+
+func TestChatTUIUpdateAcknowledgesWatchdogProbe(t *testing.T) {
+	m := newTestChatTUI()
+	ack := make(chan struct{})
+	_, _ = m.Update(tuiWatchdogProbeMsg{ack: ack})
+	select {
+	case <-ack:
+	case <-time.After(time.Second):
+		t.Fatal("chat TUI did not acknowledge watchdog probe after Update")
 	}
 }
