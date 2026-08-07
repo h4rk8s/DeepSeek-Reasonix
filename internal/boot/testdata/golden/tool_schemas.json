@@ -409,6 +409,14 @@
                 "description": "Optional reasoning effort override.",
                 "type": "string"
               },
+              "isolation": {
+                "description": "Optional workspace isolation policy. worktree is valid only for writer tasks.",
+                "enum": [
+                  "none",
+                  "worktree"
+                ],
+                "type": "string"
+              },
               "max_steps": {
                 "description": "Optional max tool-call rounds.",
                 "minimum": 1,
@@ -619,6 +627,14 @@
         },
         "effort": {
           "description": "Optional effort for runAs=subagent (e.g. high, max). Ignored otherwise.",
+          "type": "string"
+        },
+        "isolation": {
+          "description": "Optional workspace isolation for runAs=subagent. Defaults to none; worktree creates a separate Git worktree and requires an explicit apply step.",
+          "enum": [
+            "none",
+            "worktree"
+          ],
           "type": "string"
         },
         "model": {
@@ -1470,6 +1486,14 @@
         },
         "effort": {
           "description": "Optional reasoning effort for the sub-agent (e.g. high, max). Same precedence as model.",
+          "type": "string"
+        },
+        "isolation": {
+          "description": "Optional filesystem isolation for writer subagents. Defaults to none. worktree creates a Git worktree resource; applying its diff back to the parent workspace is a separate explicit operation.",
+          "enum": [
+            "none",
+            "worktree"
+          ],
           "type": "string"
         },
         "max_steps": {
