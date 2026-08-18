@@ -339,7 +339,7 @@ func TestStatuslineShowsWorkModeAndBalanceInPersistentFooter(t *testing.T) {
 	if len(lines) != 3 {
 		t.Fatalf("status block lines = %d, want 3:\n%s", len(lines), strings.Join(lines, "\n"))
 	}
-	if !strings.Contains(lines[0], "DS v4 flash · work delivery") {
+	if !strings.Contains(lines[0], "DS v4 flash · execution delivery") {
 		t.Fatalf("mode row should show model and work mode:\n%s", strings.Join(lines, "\n"))
 	}
 	if !strings.Contains(lines[2], "¥12.34") {

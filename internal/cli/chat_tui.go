@@ -971,7 +971,7 @@ func (m chatTUI) renderQueueIndicator() string {
 	limit := min(len(items), 3)
 	for i := range limit {
 		it := items[i]
-		preview := it.Preview
+		preview := displayLineForImageRefs(it.Preview)
 		if preview == "" {
 			preview = "(empty)"
 		}

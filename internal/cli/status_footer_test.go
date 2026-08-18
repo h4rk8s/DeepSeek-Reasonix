@@ -165,7 +165,7 @@ func TestStatusFooterSemanticPaletteAcrossThemes(t *testing.T) {
 				tt.modelSGR + "DS v4 flash",
 				tt.labelSGR + "effort",
 				tt.valueSGR + "auto",
-				tt.secondarySGR + "work balanced",
+				tt.secondarySGR + "execution balanced",
 			} {
 				if !strings.Contains(got, want) {
 					t.Fatalf("model/work group %q missing semantic style %q", got, want)
@@ -266,7 +266,7 @@ func TestStatusFooterNoColorKeepsSemanticLabels(t *testing.T) {
 	if strings.Contains(block, "\033[") {
 		t.Fatalf("NO_COLOR footer contains escapes: %q", block)
 	}
-	for _, want := range []string{"DS v4 flash", "effort auto", "work balanced", "¥12.34"} {
+	for _, want := range []string{"DS v4 flash", "effort auto", "execution balanced", "¥12.34"} {
 		if !strings.Contains(block, want) {
 			t.Fatalf("NO_COLOR footer missing %q:\n%s", want, block)
 		}
@@ -278,9 +278,9 @@ func TestStatusFooterUsesReadableLocalizedHintAndWrapsCleanly(t *testing.T) {
 	for _, tt := range []struct {
 		lang, session string
 	}{
-		{lang: "en", session: "DS v4 flash · effort auto · work balanced"},
-		{lang: "zh", session: "DS v4 flash · 强度 auto · 工作 均衡"},
-		{lang: "zh-TW", session: "DS v4 flash · 強度 auto · 工作 均衡"},
+		{lang: "en", session: "DS v4 flash · effort auto · execution balanced"},
+		{lang: "zh", session: "DS v4 flash · 强度 auto · 执行设定 均衡"},
+		{lang: "zh-TW", session: "DS v4 flash · 強度 auto · 執行設定 均衡"},
 	} {
 		t.Run(tt.lang, func(t *testing.T) {
 			i18n.DetectLanguage(tt.lang)
@@ -328,12 +328,12 @@ func TestStatusFooterLocalizesMetricLabelsAndKeepsNarrowRows(t *testing.T) {
 	}{
 		{
 			lang:      "zh",
-			session:   "DS v4 flash · 强度 auto · 工作 均衡",
+			session:   "DS v4 flash · 强度 auto · 执行设定 均衡",
 			telemetry: []string{"缓存", "上下文", "压缩", "任务", "余额"},
 		},
 		{
 			lang:      "zh-TW",
-			session:   "DS v4 flash · 強度 auto · 工作 均衡",
+			session:   "DS v4 flash · 強度 auto · 執行設定 均衡",
 			telemetry: []string{"快取", "上下文", "壓縮", "任務", "餘額"},
 		},
 	} {
@@ -392,7 +392,7 @@ func TestStatusFooterSwapsModelAndGitGroups(t *testing.T) {
 	if len(lines) != 3 {
 		t.Fatalf("wide status block lines = %d, want two data rows plus divider:\n%s", len(lines), strings.Join(lines, "\n"))
 	}
-	if !strings.Contains(lines[0], "DS v4 flash · effort auto · work balanced") {
+	if !strings.Contains(lines[0], "DS v4 flash · effort auto · execution balanced") {
 		t.Fatalf("first row should keep model, effort, and work in one session group:\n%s", strings.Join(lines, "\n"))
 	}
 	if strings.Contains(lines[0], "DeepSeek-Reasonix@") {
@@ -456,7 +456,7 @@ func TestStatusFooterMediumLayoutLeftAlignsModelWork(t *testing.T) {
 		t.Fatalf("medium footer without data should stay on one row:\n%s", strings.Join(lines, "\n"))
 	}
 	modelRow := lines[0]
-	if !strings.Contains(modelRow, "DS v4 flash · effort auto · work balanced") {
+	if !strings.Contains(modelRow, "DS v4 flash · effort auto · execution balanced") {
 		t.Fatalf("medium model/effort/work row should remain grouped, got %q:\n%s", modelRow, strings.Join(lines, "\n"))
 	}
 	if strings.Count(modelRow, "DS v4 flash") != 1 {
