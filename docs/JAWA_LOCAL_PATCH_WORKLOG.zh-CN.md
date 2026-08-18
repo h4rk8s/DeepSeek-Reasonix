@@ -3,8 +3,8 @@
 更新时间：2026-08-18
 维护分支：`jawa/reasonix-composer-state-visibility`
 当前同步入口：`scripts/jawa-upstream-sync.sh`（临时 worktree 只允许放在仓库内 `.worktree/`）
-本轮固定上游：`c7bc2f3e1909c783d9bd49c3d22d1ae3689f286b`（`desktop-v1.25.0-8-gc7bc2f3e1`）
-本轮验证候选（维护文档收口前）：`25556ac60d277bb63a17b697ccccc56d5ab6c808`
+本轮固定上游：`e65a823855ed025bf5a19e86819a73b70777175c`（`desktop-v1.27.0`）
+本轮验证候选（维护文档收口前）：`d98632292`（最终 SHA 以本节文档提交为准）
 当前 patch stack：以固定上游为基线重建；不再把已经被上游覆盖的基础 TUI/图片能力作为独立 patch 维护。
 完整列表始终以 `git log --reverse origin/main-v2..HEAD` 和同步时实际 merge-base 为准，不再维护容易过期的手抄 SHA 列表。
 
@@ -166,6 +166,16 @@ git format-patch --no-stat --output-directory .local-patches origin/main-v2..HEA
 开始冲突，再逐个拆解。
 
 ## 当前差异概览
+
+### 2026-08-18 v1.27.0 跟进
+
+- 固定上游从 `c7bc2f3e1` 推进到 `e65a82385`，吸收 90 个提交。主要收益包括：事实驱动的自适应标准执行、会话 writer/rewind/recovery 收敛、Codex 式按需写权限、DeepSeek V4 峰谷价格和 384K 输出适配、Harness 风格上下文压缩，以及 Desktop 滚动、导航、项目树、终端和跨平台生命周期修复。
+- v1.25 的 24 个本地补丁全部保持线性映射。`range-diff` 中 16 个完全等价，8 个因上游结构变化做语义适配；没有 silent drop、squash 或改序。
+- 上游已经删除轻量/均衡/交付三种 execution mode，统一为 adaptive standard policy。本地不恢复已过时的 `work balanced/delivery` 状态字段，只保留模型、planner、effort、路径、余额和缓存等仍有效的紧凑两行信息架构。
+- Subagent worktree isolation 与上游动态 write-root enforcement 合并：共享 workspace 使用上游 writable-root set；隔离 writer 重新绑定 child worktree 的 tools、config、instructions、skills、commands、hooks、MCP 和写根。默认 isolation 仍是 `none`，不会静默改变现有任务行为。
+- Usage 事件同时保留上游 occurrence-time `CostQuote` 与本地 `UsageModel`，Headless/ACP 的未知或部分成本继续 fail-closed；memory 同时保留上游 legacy-anchor safety gate 与本地 provenance/diversity recall；普通启动继续只读配置。
+- 新增 3 个跟进修复：rewind fork 后标题同步测试补齐真实 session path；macOS Desktop watcher 测试在主动 mutation 前等待启动事件沉降（纯 upstream `e65a82385` 可稳定复现原失败）；图片理解 sidecar 改用统一 `internal/proc` 构造器，符合 v1.27 Windows 后台进程门禁。
+- 验证门槛包括 TUI interaction regression、冲突专项、`go vet ./...`、根模块全量、Desktop 全量、release build、doctor/capabilities 和最终生产 smoke。只有全部通过后才更新唯一长期分支与 `~/.local/bin/reasonix`。
 
 ### 2026-08-18 v1.25.0 跟进
 
