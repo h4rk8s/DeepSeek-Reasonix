@@ -165,6 +165,7 @@ func TestTabEventSinkForwardsImmediateWorkspaceMutation(t *testing.T) {
 	app.workspaceHub = newWorkspaceChangeHub(app)
 	t.Cleanup(func() { app.workspaceHub.close() })
 	sink := event.Sync(&tabEventSink{tabID: "a", app: app})
+	waitForWorkspaceHubStartupToSettle(t, app, "a")
 	before := app.WorkspaceRevisionForTab("a").Revisions
 
 	event.RecordWorkspaceMutation(sink, event.WorkspaceMutation{
