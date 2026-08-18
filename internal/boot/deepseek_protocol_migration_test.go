@@ -11,16 +11,15 @@ import (
 	"reasonix/internal/event"
 )
 
-func TestBuildScopesMalformedConfigDeepSeekMigrationWarningToNonDesktopFrontends(t *testing.T) {
+func TestBuildDoesNotMislabelMalformedConfigAsDeepSeekMigrationFailure(t *testing.T) {
 	tests := []struct {
 		name           string
 		statsSource    string
 		handleWarnings bool
-		wantNotice     bool
 	}{
 		{name: "desktop accepts persistent config warning", statsSource: "desktop", handleWarnings: true},
-		{name: "desktop without warning handler keeps boot warning", statsSource: "desktop", wantNotice: true},
-		{name: "CLI keeps boot warning", statsSource: "cli", wantNotice: true},
+		{name: "desktop without warning handler remains read only", statsSource: "desktop"},
+		{name: "CLI remains read only", statsSource: "cli"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -72,15 +71,11 @@ command = "C:\Users\reasonix\mcp.exe"
 					break
 				}
 			}
-			if got := migrationNotice != nil; got != tt.wantNotice {
-				t.Fatalf("migration notice present = %v, want %v; notices=%+v", got, tt.wantNotice, notices)
+			if migrationNotice != nil {
+				t.Fatalf("read-only boot mislabeled malformed config as a migration failure: %+v", *migrationNotice)
 			}
 			if got := len(handledWarnings) > 0; got != tt.handleWarnings {
 				t.Fatalf("config warnings handled = %v, want %v; warnings=%v", got, tt.handleWarnings, handledWarnings)
-			}
-			if migrationNotice != nil &&
-				(migrationNotice.Level != event.LevelWarn || !strings.Contains(migrationNotice.Detail, "toml:")) {
-				t.Fatalf("migration notice lost parse diagnostics: %+v", *migrationNotice)
 			}
 			next, err := os.ReadFile(userPath)
 			if err != nil {
