@@ -1,10 +1,10 @@
 # Jawa 本地 Reasonix Patch Work Log
 
-更新时间：2026-08-07
+更新时间：2026-08-18
 维护分支：`jawa/reasonix-composer-state-visibility`
 当前同步入口：`scripts/jawa-upstream-sync.sh`（临时 worktree 只允许放在仓库内 `.worktree/`）
-本轮固定上游：`1be7027e9c773f65af136ac20e8a77f5ed5d0736`（`desktop-v1.21.0-6-g1be7027e9`）
-本轮功能候选（维护文档收口前）：`8e6631b4f9a3c6e421971607b0f3be3029b433ce`
+本轮固定上游：`c7bc2f3e1909c783d9bd49c3d22d1ae3689f286b`（`desktop-v1.25.0-8-gc7bc2f3e1`）
+本轮验证候选（维护文档收口前）：`25556ac60d277bb63a17b697ccccc56d5ab6c808`
 当前 patch stack：以固定上游为基线重建；不再把已经被上游覆盖的基础 TUI/图片能力作为独立 patch 维护。
 完整列表始终以 `git log --reverse origin/main-v2..HEAD` 和同步时实际 merge-base 为准，不再维护容易过期的手抄 SHA 列表。
 
@@ -166,6 +166,15 @@ git format-patch --no-stat --output-directory .local-patches origin/main-v2..HEA
 开始冲突，再逐个拆解。
 
 ## 当前差异概览
+
+### 2026-08-18 v1.25.0 跟进
+
+- 固定上游从 `1be7027e9` 推进到 `c7bc2f3e1`，一次性吸收 948 个上游提交；同步期间不滚动追更。
+- 旧维护线有 23 个补丁。`range-diff` 证明 21 个继续映射；`test(boot): record worktree isolation tool contract` 的 golden 内容已被本轮统一 golden 重生成吸收；`fix(cli): probe idle TUI before watchdog kill` 被上游更完整的 booting/idle/running/closed watchdog 状态机替代，二者正式退休。
+- 新增 2 个同步契约补丁：队列预览复用附件显示层，避免暴露 `@.reasonix/attachments`，并对齐固定 footer 高度/三条预览上限/新版执行设定术语；配置测试继续锁定普通 boot 只读，不因上游 DeepSeek 自动迁移测试恢复启动写盘。
+- Core 7 的顺序、worktree isolation 默认 `none`、usage/cost fail-closed、memory provenance/diversity、单一 canonical executor 均保留；动态 workspace/usage/memory 不进入 cache-stable prefix。
+- 验证通过：`git diff --check`、`go vet ./...`、根模块 `go test -count=1 ./...`、Desktop `go test -count=1 ./...`、完整 `internal/boot`、TUI interaction regression、release build、`doctor --json` 与 capabilities doctor（0 error / 0 warning）。
+- 候选版本为 `desktop-v1.25.0-31-g25556ac60`；用户配置 SHA256 保持 `b519df3fd39700f0b9eff0d184872ef5e71ac76e13d8ca44cb0818499eb36904`，生产二进制在最终安装前仍是 `desktop-v1.21.0-29-g828075755`。
 
 ### 2026-08-07 v1.21.0 跟进
 
