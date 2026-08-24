@@ -155,65 +155,39 @@ func (m chatTUI) renderReplayBundleCopy(
 	})
 }
 
-const assistantTranscriptIndent = "  "
-
 // renderAssistantMarkdown gives assistant prose the same explicit transcript
 // identity that user, reasoning, tool, and receipt blocks already have. The
-// body keeps a restrained two-cell gutter instead of using a heavy card, and
-// rendering at the reduced width keeps every indented row inside the viewport.
+// identity and left baseline that user and reasoning blocks already have.
 func renderAssistantMarkdown(raw string, contentWidth int) string {
 	contentWidth = max(contentWidth, 1)
-	indent := assistantTranscriptIndent
-	if contentWidth <= visibleWidth(indent) {
-		indent = ""
-	}
-	bodyWidth := max(contentWidth-visibleWidth(indent), 1)
-	renderer := newMarkdownRenderer(bodyWidth)
+	renderer := newMarkdownRenderer(contentWidth)
 	rendered := renderer.Render(raw)
 	if rendered == "" {
 		rendered = raw
 	}
 	body := strings.TrimRight(rendered, "\n")
-	header := indent + accent("◆") + " " + bold("Reasonix")
+	header := accent("◆") + " " + bold("Reasonix")
 	if body == "" {
 		return header
 	}
-	return header + "\n\n" + indentTranscriptBlock(body, indent)
+	return header + "\n\n" + body
 }
 
 // renderAssistantMarkdownCopy mirrors renderAssistantMarkdown's visible output
 // and adds zero-width math markers for on-demand clipboard reconstruction.
 func renderAssistantMarkdownCopy(raw string, contentWidth int, prefix string) string {
 	contentWidth = max(contentWidth, 1)
-	indent := assistantTranscriptIndent
-	if contentWidth <= visibleWidth(indent) {
-		indent = ""
-	}
-	bodyWidth := max(contentWidth-visibleWidth(indent), 1)
-	renderer := newMarkdownRenderer(bodyWidth)
+	renderer := newMarkdownRenderer(contentWidth)
 	rendered := renderer.RenderCopy(raw, prefix)
 	if rendered == "" {
 		rendered = raw
 	}
 	body := strings.TrimRight(rendered, "\n")
-	header := indent + accent("◆") + " " + bold("Reasonix")
+	header := accent("◆") + " " + bold("Reasonix")
 	if body == "" {
 		return header
 	}
-	return header + "\n\n" + indentTranscriptBlock(body, indent)
-}
-
-func indentTranscriptBlock(block, indent string) string {
-	if indent == "" || block == "" {
-		return block
-	}
-	lines := strings.Split(block, "\n")
-	for i, line := range lines {
-		if line != "" {
-			lines[i] = indent + line
-		}
-	}
-	return strings.Join(lines, "\n")
+	return header + "\n\n" + body
 }
 
 func renderTurnReceiptBand(receipt string, contentWidth int) string {
@@ -278,6 +252,14 @@ func (m chatTUI) buildCopyTranscript(contentWidth int) (string, int, bool) {
 		}
 		switch source.kind {
 		case transcriptSourceMarkdown:
+			renderer := newMarkdownRenderer(contentWidth)
+			rendered := strings.TrimRight(renderer.RenderCopy(source.raw, strconv.Itoa(i)), "\n")
+			if rendered == "" {
+				rendered = source.raw
+			}
+			markers += strings.Count(rendered, copyMathStartPrefix)
+			b.WriteString(rendered)
+		case transcriptSourceAssistant:
 			rendered := renderAssistantMarkdownCopy(source.raw, contentWidth, strconv.Itoa(i))
 			markers += strings.Count(rendered, copyMathStartPrefix)
 			b.WriteString(rendered)
