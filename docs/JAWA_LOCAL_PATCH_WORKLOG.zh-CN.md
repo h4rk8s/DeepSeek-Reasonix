@@ -1,10 +1,10 @@
 # Jawa 本地 Reasonix Patch Work Log
 
-更新时间：2026-07-24
+更新时间：2026-08-28
 维护分支：`jawa/reasonix-composer-state-visibility`
-当前同步入口：`scripts/jawa-upstream-sync.sh`（默认生成临时 worktree / 临时分支）
-本轮固定上游：`a6e145962184de445de5bdb7e16339a14547c2e0`
-本轮审计候选（重建前）：`d77f03a0c09a1c6379a907693b59f13149abac6f`
+当前同步入口：`scripts/jawa-upstream-sync.sh`（临时 worktree 只允许放在仓库内 `.worktree/`）
+本轮固定上游：`7775342453b24e28efbff25061dc5f59398f126b`（最新发布 tag 仍为 `desktop-v1.31.4`）
+本轮验证候选：以 `git log -1` 为准。
 当前 patch stack：以固定上游为基线重建；不再把已经被上游覆盖的基础 TUI/图片能力作为独立 patch 维护。
 完整列表始终以 `git log --reverse origin/main-v2..HEAD` 和同步时实际 merge-base 为准，不再维护容易过期的手抄 SHA 列表。
 
@@ -62,7 +62,7 @@ scripts/jawa-upstream-sync.sh
 默认行为：
 
 - `fetch origin/main-v2`
-- 从当前本地分支创建临时 worktree
+- 从当前本地分支在 `<repo>/.worktree/<task-name>` 创建临时 worktree
 - 在临时 worktree 里 rebase 到上游最新
 - 跑快速本地验收：TUI 回归、定向 Go 测试、`make build`、`reasonix --version`
 - 成功后删除临时 worktree
@@ -106,8 +106,9 @@ git config rerere.autoupdate true
 
 ```sh
 git fetch origin
-git worktree add ../2026-07-10-reasonix-upstream-sync jawa/reasonix-composer-state-visibility
-cd ../2026-07-10-reasonix-upstream-sync
+mkdir -p .worktree
+git worktree add .worktree/reasonix-upstream-sync jawa/reasonix-composer-state-visibility
+cd .worktree/reasonix-upstream-sync
 git switch -c jawa/reasonix-upstream-sync-$(date +%Y%m%d)
 git rebase origin/main-v2
 ```
@@ -165,6 +166,77 @@ git format-patch --no-stat --output-directory .local-patches origin/main-v2..HEA
 开始冲突，再逐个拆解。
 
 ## 当前差异概览
+
+### 2026-08-28 上游小步跟进
+
+- 固定上游从 `f61ce8de2` 推进到 `777534245`，吸收 6 个提交。主要收益是远程会话创建流程拆成 `[2/3]`、`[3/3]` 两步并统一 session bootstrap，standard 任务在 todo 尚未完成时继续执行，topic store 迁移到 SQLite，以及 Windows 文本选择、transcript ownership 的边界修复。
+- 17 个本地语义 patch 全部保持线性顺序，候选相对上游为 `0 behind / 17 ahead`。`range-diff` 中 14 个内容等价，3 个按上游新结构做语义适配，没有 drop、squash 或改序。
+- CLI 适配保留上游 multi-session bootstrap 与 `SessionTagSink`，同时让 `config.Load` 错误沿新 helper 返回，继续满足“配置无效必须明确失败、不能静默回退并覆盖”的本地契约。新 helper 中遗留的普通启动 MCP migration 调用已删除，保持 project-local discovery 和 user config read-only。
+- usage/event 适配同时保留上游 `SessionChanged`、带 code 的 background-job notice 和本地 `BackgroundJobLifecycle`；vision footer 适配同时保留上游 session routing/workspace 字段和本地 `phase=vision`、`ModelRef`，没有重复新增模型字段。
+- 上游 `[3/3]` 已把 remote session resume guard 移到 `remote_tab_pending_selection.go`，但前端 source-contract test 仍只读取旧 `remote_projects.go`，导致纯上游同样稳定失败。本地只修正测试读取路径，不改变远程会话运行逻辑；上游修复后应直接删除该测试适配。
+- 已通过 TUI interaction regression、冲突相关 Go 包、`go vet ./...`、`golangci-lint`、根模块全量、Desktop Go 全量和 Node 24 前端 build/test。`repolint` 仍报告本地长期功能相对上游 ratchet 的既有结构债务，本轮不改 baseline，也不把历史债务伪装成通过。
+
+### 2026-08-26 capability/MCP 跟进
+
+- 固定上游从 `97411a34d` 推进到 `f61ce8de2`，吸收 121 个提交。`memory:remember` 不可发现问题的上游修复 PR #9376 已进入基线；本地不重复维护同义 patch。
+- 16 个既有本地语义 patch 全部线性重放。13 个内容等价；交互基础、subagent 和 usage ledger 适配上游 durable-turn/event 协议，其中 usage 合并同时保留 `turn_status`、`prompt_answered`、`provider_unreachable` 与 `background_job_lifecycle`。
+- 上游官方 MCP Go SDK 已支持 legacy SSE，并已有 `transport_sse_test.go` 正向覆盖；旧 `TestSSETransportUnsupported` 仍访问 `http://x` 并期待失败，和当前实现矛盾且受网络/代理响应影响。本地删除这条失真测试；上游删除或改写后应退休该 patch。
+- capability 路由专项、TUI 回归、冲突相关包和插件 10 轮稳定性测试通过；完整测试与生产安装结果见本轮最终验收。
+
+### 2026-08-25 v1.31.4 跟进
+
+- 固定上游从 `0bba64a9c` 推进到 `97411a34d`，吸收 16 个提交。主要收益是全零/空白 session branch metadata 自动重建、quiet background job 提示纠正、custom provider 分组原子删除、CLI LaTeX 扩展和 Desktop boxed-math 修复。
+- 原有 15 个本地语义 patch 无冲突线性重放，`range-diff` 的 15 项全部内容等价；`config render`、`jobs` 和 `reasonix.example.toml` 的双方改动由 Git 自动合并，没有覆盖配置 strict/read-only 或 queue 语义。
+- 全量测试发现纯上游 `v1.31.4` 的 `TestEffectQualityFloorDoesNotTouchProviderPrefix` 会受 rustup `cargo --version` 同步/超时抖动影响：standard 与 delivery 使用独立 probe cache，动态 `## Environment` 内容可不同并产生假失败。纯上游 detached worktree 连跑已复现。
+- 新增最小测试 patch：比较 quality-floor provider prefix 时复用已有 `stripEnvironmentBlock`，继续严格比较其余 system prompt 与完整 tool schema。该 patch 不改变运行时代码或真实 prefix；上游测试完成等价归一化后应删除。
+- `go vet` 与 `golangci-lint` 通过。`repolint` 仍报告本地长期功能相对上游 ratchet 的既有体积债务；本轮不更新 baseline，也不把历史债务伪装成通过。
+
+### 2026-08-24 语义补丁栈重整
+
+- 将 `v1.31.3` 上原有 33 个历史提交重整为 13 个语义 patch；前 12 个重整完成时与旧 HEAD 的 Git tree 完全一致，没有丢失运行能力。
+- 新栈按本地交互基础、subagent worktree、usage ledger、memory、tool contract、配置安全、reasoning disclosure、TUI 几何、hybrid transcript、vision、queue clear、同步维护和 lint cleanup 分组。
+- 旧的版本审计文档、兼容测试和同步记录不再各占一个 patch；它们被折入所属能力或统一维护 patch。
+- 第 13 个 patch 删除新 transcript/status 路径替代后遗留的无调用者 helper，采用 Go 1.27 的机械现代化，并让所有 CLI 子命令显式处理主题配置加载错误；`golangci-lint` 从 57 项降为 0。
+- 仓库 `repolint` 仍会报告长期本地功能相对上游 ratchet 的历史体积和复杂度增量；没有扩大或重写 baseline，后续应通过拆分 `chat_tui.go`、`boot.go` 和 config 文件逐步偿还。
+
+### 2026-08-24 v1.31.3 跟进
+
+- 固定上游从 `e65a82385` 推进到 `0bba64a9c`，吸收 298 个提交。主要收益包括：官方 `deepseek-v4-flash-vision-exp` 图片输入、文本模型的 `vision_model` 摘要回退与摘要缓存、OpenCode Go 路由预设、session catalog/recovery 收敛，以及 Desktop transcript/scroll/workspace 的大量稳定性修复。
+- 旧维护线的 28 个补丁已线性重放；冲突只发生在 TUI paste/clipboard 字段、图片引用路由和 subagent write-claim 分类。解决时保留上游统一 paste helper、官方 vision/file-id 路径和 write-root 类型系统，同时恢复本地 `[image #N]`、图片命令 sidecar 与 worktree directory claim 语义。
+- Vision 去重判定：上游原生 `vision_model=auto` 已替代本地 Provider 型 `image_understanding_model` 的职责，后续不再扩展旧 Provider sidecar；本地只保留 `image_understanding_command`、结构化 OCR/UI-state 输出和可折叠 `Image understood` disclosure。两者同时配置时原生 `vision_model` 优先，避免一张图分析两次。当前用户配置没有 `vision_model`，仍只运行本地 `reasonix-vision-ocr`。
+- Reasoning 去重判定：上游 `/verbose` 和全局 `reasoning_display_mode` 不等价于本地逐块点击、文字命中区 hover、向上展开锚点和 live/resume 一致性，因此本地 disclosure 增量继续保留。
+- Core 去重判定：上游仍没有 `isolation=none|worktree` 的完整 subagent lifecycle、CLI/ACP 共享的 fail-closed usage ledger、memory diversity/staleness 参数、CLI `/title`、jump-to-bottom pill 或 typed hybrid TUI information architecture；这些补丁继续保留。
+- 新增 `/queue clear`：Controller 在 admission lock 下恢复 orphan，再用一次 manifest transaction 清除 queued/blocked/uncertain 项；清空恢复队列会同时解除 pause，已经跨过 delivery boundary 的 active item 不会被取消。上游 `v1.31.3` 没有等价命令。
+- 重放专项发现并修复一项回归：上游统一 paste helper 曾在 turn 运行中跳过图片路径归一化，导致 CleanShot 路径泄漏到排队输入；现在运行中和空闲时都保持 `[image #N]` token。
+
+### 2026-08-18 v1.27.0 跟进
+
+- 固定上游从 `c7bc2f3e1` 推进到 `e65a82385`，吸收 90 个提交。主要收益包括：事实驱动的自适应标准执行、会话 writer/rewind/recovery 收敛、Codex 式按需写权限、DeepSeek V4 峰谷价格和 384K 输出适配、Harness 风格上下文压缩，以及 Desktop 滚动、导航、项目树、终端和跨平台生命周期修复。
+- v1.25 的 24 个本地补丁全部保持线性映射。`range-diff` 中 16 个完全等价，8 个因上游结构变化做语义适配；没有 silent drop、squash 或改序。
+- 上游已经删除轻量/均衡/交付三种 execution mode，统一为 adaptive standard policy。本地不恢复已过时的 `work balanced/delivery` 状态字段，只保留模型、planner、effort、路径、余额和缓存等仍有效的紧凑两行信息架构。
+- Subagent worktree isolation 与上游动态 write-root enforcement 合并：共享 workspace 使用上游 writable-root set；隔离 writer 重新绑定 child worktree 的 tools、config、instructions、skills、commands、hooks、MCP 和写根。默认 isolation 仍是 `none`，不会静默改变现有任务行为。
+- Usage 事件同时保留上游 occurrence-time `CostQuote` 与本地 `UsageModel`，Headless/ACP 的未知或部分成本继续 fail-closed；memory 同时保留上游 legacy-anchor safety gate 与本地 provenance/diversity recall；普通启动继续只读配置。
+- 新增 3 个跟进修复：rewind fork 后标题同步测试补齐真实 session path；macOS Desktop watcher 测试在主动 mutation 前等待启动事件沉降（纯 upstream `e65a82385` 可稳定复现原失败）；图片理解 sidecar 改用统一 `internal/proc` 构造器，符合 v1.27 Windows 后台进程门禁。
+- 验证门槛包括 TUI interaction regression、冲突专项、`go vet ./...`、根模块全量、Desktop 全量、release build、doctor/capabilities 和最终生产 smoke。只有全部通过后才更新唯一长期分支与 `~/.local/bin/reasonix`。
+
+### 2026-08-18 v1.25.0 跟进
+
+- 固定上游从 `1be7027e9` 推进到 `c7bc2f3e1`，一次性吸收 948 个上游提交；同步期间不滚动追更。
+- 旧维护线有 23 个补丁。`range-diff` 证明 21 个继续映射；`test(boot): record worktree isolation tool contract` 的 golden 内容已被本轮统一 golden 重生成吸收；`fix(cli): probe idle TUI before watchdog kill` 被上游更完整的 booting/idle/running/closed watchdog 状态机替代，二者正式退休。
+- 新增 2 个同步契约补丁：队列预览复用附件显示层，避免暴露 `@.reasonix/attachments`，并对齐固定 footer 高度/三条预览上限/新版执行设定术语；配置测试继续锁定普通 boot 只读，不因上游 DeepSeek 自动迁移测试恢复启动写盘。
+- Core 7 的顺序、worktree isolation 默认 `none`、usage/cost fail-closed、memory provenance/diversity、单一 canonical executor 均保留；动态 workspace/usage/memory 不进入 cache-stable prefix。
+- 验证通过：`git diff --check`、`go vet ./...`、根模块 `go test -count=1 ./...`、Desktop `go test -count=1 ./...`、完整 `internal/boot`、TUI interaction regression、release build、`doctor --json` 与 capabilities doctor（0 error / 0 warning）。
+- 候选版本为 `desktop-v1.25.0-31-g25556ac60`；用户配置 SHA256 保持 `b519df3fd39700f0b9eff0d184872ef5e71ac76e13d8ca44cb0818499eb36904`，生产二进制在最终安装前仍是 `desktop-v1.21.0-29-g828075755`。
+
+### 2026-08-07 v1.21.0 跟进
+
+- 固定上游从旧基线推进到 `1be7027e9c773f65af136ac20e8a77f5ed5d0736`，同步开始后的阶段末漂移为 `0`。
+- 旧维护线是 20 个本地提交；重放后保留全部仍有效的行为契约，并退休 1 个已被上游删除/替代的生成型 Remote artifact 提交。
+- 新增 2 个同步契约提交：一项对齐上游 planner/TUI 测试语义，一项记录 worktree isolation 对 provider-visible tool schema 的有意 cache-prefix 变化。
+- `SystemHash` 保持不变；工具 schema 仅新增 `isolation = none|worktree`，`ToolsHash`、`PrefixHash` 和 schema token 数按预期更新。
+- 验证通过：`go vet ./...`、除修复前 golden 外的全仓 Go tests、修复后的 `internal/boot`、Desktop 全量 tests、TUI interaction regression、release build、`doctor --json` 和 capabilities doctor。
+- 用户配置 SHA256 始终为 `b519df3fd39700f0b9eff0d184872ef5e71ac76e13d8ca44cb0818499eb36904`；未跟踪的 UI demo 与 `research/` 未进入补丁栈。
+- 同步脚本的默认 worktree 位置已收紧为仓库内 `.worktree/`，并拒绝指向仓库外的 `WORKTREE_ROOT`。
 
 ### 2026-07-24 补丁去重审计
 
