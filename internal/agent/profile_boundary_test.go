@@ -49,7 +49,7 @@ func assertFieldSet(t *testing.T, what string, v any, want []string) {
 // into a workflow definition language.
 func TestProfileDefinitionStaysWorkerIdentityOnly(t *testing.T) {
 	assertFieldSet(t, "ProfileDefinition", ProfileDefinition{}, []string{
-		"Name", "Body", "AllowedTools", "Model", "Effort", "ReadOnly", "Invocation", "NamedBuiltin",
+		"Name", "Body", "AllowedTools", "Model", "Effort", "ReadOnly", "Isolation", "Invocation", "NamedBuiltin",
 	})
 }
 
@@ -62,7 +62,7 @@ func TestDelegationSpecMembersStaySeparate(t *testing.T) {
 		"Kind", "Name", "Profile", "SystemPrompt", "UseProfilePrompt", "Model", "Effort",
 	})
 	assertFieldSet(t, "CapabilityGrant", CapabilityGrant{}, []string{
-		"ReadOnly", "AllowNoTools", "CallTools", "ProfileTools", "WritePaths",
+		"ReadOnly", "AllowNoTools", "CallTools", "ProfileTools", "WritePaths", "Isolation",
 	})
 	assertFieldSet(t, "ContextRequest", ContextRequest{}, []string{"ContinueFrom", "ForkFrom", "Ephemeral"})
 	assertFieldSet(t, "SchedulerPolicy", SchedulerPolicy{}, []string{
@@ -91,6 +91,7 @@ func TestProfileFromSkillPopulatesEveryIdentityField(t *testing.T) {
 		Model:        "some-model",
 		Effort:       "high",
 		ReadOnly:     true,
+		Isolation:    "worktree",
 		Invocation:   "manual",
 	})
 	rv := reflect.ValueOf(got)
