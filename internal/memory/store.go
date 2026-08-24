@@ -92,6 +92,11 @@ type Memory struct {
 	LastVerifiedAt time.Time  // last explicit confirmation; renews the freshness clock
 	Keywords       string     // search aliases (bilingual synonyms, related commands); recall-only, never rendered into the index
 	Body           string     // the fact itself (Markdown)
+	// Optional provenance metadata. Zero values preserve compatibility with
+	// hand-authored and pre-metadata memory files.
+	LastConfirmedAt time.Time
+	SourceScope     string
+	SourceKind      string
 }
 
 // ArchivedMemory is a saved fact that has been removed from active memory but
@@ -178,6 +183,14 @@ func (s Store) Path(name string) string {
 // from the files. Returns the path written.
 func (s Store) Save(m Memory) (string, error) {
 	result, err := s.SaveWithOptions(m, SaveOptions{})
+	return result.Path, err
+}
+
+// SaveAt is Save with an explicit clock for deterministic importers and tests.
+// Updating an existing fact preserves its creation time and provenance unless
+// the caller explicitly supplies replacements, while confirmation time advances.
+func (s Store) SaveAt(m Memory, now time.Time) (string, error) {
+	result, err := s.saveWithOptionsAt(m, SaveOptions{}, now)
 	return result.Path, err
 }
 
@@ -714,22 +727,25 @@ func loadMemory(path string) (Memory, bool) {
 	}
 	fm, body := splitFrontmatter(string(b))
 	m := Memory{
-		ID:             fm["id"],
-		Revision:       parsePositiveInt(fm["revision"]),
-		CreatedAt:      parseMemoryTime(fm["created_at"]),
-		UpdatedAt:      parseMemoryTime(fm["updated_at"]),
-		Name:           fm["name"],
-		Title:          fm["title"],
-		Description:    fm["description"],
-		Keywords:       fm["keywords"],
-		Activation:     NormalizeActivation(fm["activation"]),
-		Volatility:     NormalizeVolatility(fm["volatility"]),
-		SubjectKey:     NormalizeSubjectKey(fm["subject_key"]),
-		ExpiresAt:      parseMemoryTime(fm["expires_at"]),
-		LastVerifiedAt: parseMemoryTime(fm["last_verified_at"]),
-		Type:           persistedFactType(fm),
-		Scope:          factScopeFromFrontmatter(fm["scope"]),
-		Body:           strings.TrimSpace(body),
+		ID:              fm["id"],
+		Revision:        parsePositiveInt(fm["revision"]),
+		CreatedAt:       parseMemoryTime(fm["created_at"]),
+		UpdatedAt:       parseMemoryTime(fm["updated_at"]),
+		Name:            fm["name"],
+		Title:           fm["title"],
+		Description:     fm["description"],
+		Keywords:        fm["keywords"],
+		Activation:      NormalizeActivation(fm["activation"]),
+		Volatility:      NormalizeVolatility(fm["volatility"]),
+		SubjectKey:      NormalizeSubjectKey(fm["subject_key"]),
+		ExpiresAt:       parseMemoryTime(fm["expires_at"]),
+		LastVerifiedAt:  parseMemoryTime(fm["last_verified_at"]),
+		Type:            persistedFactType(fm),
+		Scope:           factScopeFromFrontmatter(fm["scope"]),
+		Body:            strings.TrimSpace(body),
+		LastConfirmedAt: parseMetadataTime(fm["last_confirmed_at"]),
+		SourceScope:     strings.TrimSpace(fm["source_scope"]),
+		SourceKind:      strings.TrimSpace(fm["source_kind"]),
 	}
 	if m.Name == "" {
 		m.Name = strings.TrimSuffix(filepath.Base(path), ".md")
@@ -801,6 +817,21 @@ func (s Store) scopeForDir(dir string) FactScope {
 
 func (s Store) scopeForPath(path string) FactScope {
 	return s.scopeForDir(filepath.Dir(path))
+}
+
+func formatMetadataTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339Nano)
+}
+
+func parseMetadataTime(value string) time.Time {
+	t, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(value))
+	if err != nil {
+		return time.Time{}
+	}
+	return t.UTC()
 }
 
 // splitFrontmatter is a thin wrapper; the real parser lives in
