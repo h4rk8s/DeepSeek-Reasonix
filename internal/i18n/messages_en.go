@@ -48,6 +48,7 @@ var English = Messages{
 	ChatThoughtForFmt:                      "thought for %ds",
 	ChatStatusThinkingFmt:                  "%s thinking… (%ds · Esc cancels)",
 	TurnPhaseWorking:                       "working",
+	TurnPhaseVision:                        "analyzing image",
 	TurnPhaseChecking:                      "checking",
 	TurnPhaseVerifying:                     "verifying",
 	TurnPhaseReviewing:                     "reviewing",

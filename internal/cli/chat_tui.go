@@ -388,6 +388,7 @@ type chatTUI struct {
 
 	// plannerModelRef is display-only metadata for the compact two-model label.
 	plannerModelRef string
+	visionModelRef  string
 
 	// slashCatalog is an immutable completion list rebuilt only on explicit
 	// invalidation (model switch, skill rescan, /reload-cmd, …). Ordinary
@@ -4622,6 +4623,9 @@ func (m chatTUI) modelComboTag() string {
 		return ""
 	}
 	parts := []string{exec}
+	if vision := m.visionTag(); vision != "" {
+		parts = append(parts, vision)
+	}
 	if planner := m.plannerTag(exec); planner != "" {
 		parts = append(parts, planner)
 	}
@@ -4630,6 +4634,21 @@ func (m chatTUI) modelComboTag() string {
 		return label
 	}
 	return themeStyle(activeCLITheme.warn).Bold(true).Render(label)
+}
+
+func (m chatTUI) visionTag() string {
+	if m.turnPhase != string(event.TurnPhaseVision) || strings.TrimSpace(m.visionModelRef) == "" {
+		return ""
+	}
+	ref := strings.ToLower(m.visionModelRef)
+	if strings.Contains(ref, "deepseek-v4-flash-vision") {
+		return "vision flash"
+	}
+	name := compactModelName(m.visionModelRef)
+	if name == "" {
+		return ""
+	}
+	return "vision " + name
 }
 
 func (m chatTUI) plannerTag(execLabel string) string {
@@ -4783,6 +4802,8 @@ func turnPhaseStatusLabel(phase string) string {
 	switch strings.ToLower(strings.TrimSpace(phase)) {
 	case "working":
 		return i18n.M.TurnPhaseWorking
+	case "vision":
+		return i18n.M.TurnPhaseVision
 	case "checking":
 		return i18n.M.TurnPhaseChecking
 	case "verifying":
@@ -5627,6 +5648,11 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 		} else if phase := strings.TrimSpace(e.Text); phase != "" {
 			m.turnPhase = phase
 		}
+		if m.turnPhase == string(event.TurnPhaseVision) {
+			m.visionModelRef = strings.TrimSpace(e.ModelRef)
+		} else {
+			m.visionModelRef = ""
+		}
 
 	case event.CompletionSummary:
 		if e.Completion != nil {
@@ -5765,6 +5791,7 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 		m.confirmBubbleSent()
 		m.state = tuiIdle
 		m.turnPhase = ""
+		m.visionModelRef = ""
 		m.noteWatchdogIdle()
 		m.jumpToBottomTurnNoted = false
 		m.queueEditCursor = -1
