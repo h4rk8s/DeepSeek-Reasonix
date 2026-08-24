@@ -278,6 +278,7 @@ func (a *Agent) emitTurnUsage(usage *provider.Usage, cacheDiagnostics *CacheDiag
 	}
 	e := event.Event{Kind: event.Usage, ModelRef: a.modelRef, Usage: usage, Pricing: a.svc.pricing,
 		UsageSource:      a.usageSource,
+		UsageModel:       a.svc.prov.Name(),
 		CacheDiagnostics: cacheDiagnostics,
 		SessionHit:       int(a.sess.cacheHit.Load()), SessionMiss: int(a.sess.cacheMiss.Load())}
 	e.CostQuote = event.EnsureCostQuote(e, a.svc.quoteContext)

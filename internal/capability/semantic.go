@@ -172,7 +172,7 @@ func (r *SemanticRouter) callModel(ctx context.Context, input string, candidates
 		if usage == nil {
 			return
 		}
-		e := event.Event{Kind: event.Usage, ModelRef: strings.TrimSpace(r.Model), Usage: usage,
+		e := event.Event{Kind: event.Usage, ModelRef: strings.TrimSpace(r.Model), UsageModel: r.Provider.Name(), Usage: usage,
 			Pricing: r.Pricing, UsageSource: event.UsageSourceCapabilityRouter}
 		e.CostQuote = event.EnsureCostQuote(e, r.QuoteContext)
 		if (usage.PromptTokens > 0 || usage.CompletionTokens > 0) && r.Audit != nil {
