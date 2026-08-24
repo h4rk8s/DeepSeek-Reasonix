@@ -100,5 +100,12 @@ func metaFromSpec(ref string, status SubagentStatus, created, updated time.Time,
 		Effort:           capsule.Effort,
 		Capsule:          capsule,
 		CapsuleHash:      capsule.Hash(),
+		Isolation:        normalizeSubagentMetaIsolation(spec.Isolation),
+		IsolationID:      strings.TrimSpace(spec.IsolationID),
+		WorktreeRoot:     strings.TrimSpace(spec.WorktreeRoot),
+		SourceRoot:       strings.TrimSpace(spec.SourceRoot),
+		WorktreeBranch:   strings.TrimSpace(spec.WorktreeBranch),
+		BaseCommit:       strings.TrimSpace(spec.BaseCommit),
+		HeadCommit:       strings.TrimSpace(spec.HeadCommit),
 	}
 }
