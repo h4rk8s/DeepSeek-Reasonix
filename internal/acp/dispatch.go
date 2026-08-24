@@ -18,6 +18,7 @@ import (
 	"reasonix/internal/provider"
 	"reasonix/internal/shellparse"
 	"reasonix/internal/tool"
+	"reasonix/internal/usageledger"
 )
 
 // notifier is the slice of Conn the dispatch sink depends on: it pushes
@@ -71,10 +72,11 @@ type updateSink struct {
 	activeAttemptID    string
 	mu                 sync.Mutex
 	turnCtx            context.Context
+	ledger             *usageledger.Ledger
 }
 
 func newUpdateSink(conn notifier, sessionID string) *updateSink {
-	return &updateSink{conn: conn, sessionID: sessionID}
+	return &updateSink{conn: conn, sessionID: sessionID, ledger: usageledger.New()}
 }
 
 // bindCwd installs the session root used to absolutize tool_call locations.
@@ -107,7 +109,15 @@ func (s *updateSink) bindExtensionSurface(supported bool) { s.extensionSurface =
 func (s *updateSink) setTurnContext(ctx context.Context) {
 	s.mu.Lock()
 	s.turnCtx = ctx
+	s.ledger = usageledger.New()
 	s.mu.Unlock()
+}
+
+func (s *updateSink) usageProjection() usageledger.Projection {
+	s.mu.Lock()
+	ledger := s.ledger
+	s.mu.Unlock()
+	return ledger.Projection()
 }
 
 func (s *updateSink) clearTurnContext() {
@@ -132,7 +142,14 @@ func (s *updateSink) Emit(e event.Event) {
 	if s.status != nil {
 		s.status(e)
 	}
+	s.mu.Lock()
+	ledger := s.ledger
+	s.mu.Unlock()
+	ledger.Add(e)
 	switch e.Kind {
+	case event.Usage:
+		return
+
 	case event.Reasoning:
 		if e.Text == "" {
 			return

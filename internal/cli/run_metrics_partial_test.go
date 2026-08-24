@@ -13,12 +13,15 @@ import (
 )
 
 func usageEvent(source string, prompt, completion int) event.Event {
-	return event.Event{
+	e := event.Event{
 		Kind:        event.Usage,
+		ModelRef:    "test/model",
 		UsageSource: source,
 		Usage:       &provider.Usage{PromptTokens: prompt, CompletionTokens: completion, CacheMissTokens: prompt},
 		Pricing:     &provider.Pricing{Input: 1, Output: 2, CacheHit: 0.1, Currency: "$"},
 	}
+	e.CostQuote = event.EnsureCostQuote(e, &event.QuoteContext{DisplayCurrency: "USD"})
+	return e
 }
 
 func usageEventWithCacheReason(reason string) event.Event {

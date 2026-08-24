@@ -73,3 +73,34 @@ func TestLegacyCostQuoteWithoutScheduleFieldsStillDecodes(t *testing.T) {
 		t.Fatalf("legacy quote changed during decode: %+v", quote)
 	}
 }
+
+func TestToWireUsagePrefersCanonicalModelAndDoesNotReprice(t *testing.T) {
+	e := event.Event{
+		Kind:       event.Usage,
+		ModelRef:   "custom/canonical-model",
+		UsageModel: "legacy-adapter-name",
+		Usage:      &provider.Usage{PromptTokens: 10, CompletionTokens: 2, TotalTokens: 12},
+		Pricing:    &provider.Pricing{Input: 1, Output: 2, Currency: "USD"},
+	}
+
+	w := ToWire(e)
+	if w.Usage == nil {
+		t.Fatal("missing wire usage")
+	}
+	if w.Usage.Model != "custom/canonical-model" {
+		t.Fatalf("wire model = %q, want canonical model ref", w.Usage.Model)
+	}
+	if w.Usage.CostQuote != nil || w.Usage.Cost != 0 || w.Usage.CurrencyCode != "" {
+		t.Fatalf("wire projection repriced an unquoted event: %+v", w.Usage)
+	}
+}
+
+func TestToWireUsageFallsBackToLegacyModelAlias(t *testing.T) {
+	w := ToWire(event.Event{
+		Kind: event.Usage, UsageModel: "legacy-adapter-name",
+		Usage: &provider.Usage{PromptTokens: 1, TotalTokens: 1},
+	})
+	if w.Usage == nil || w.Usage.Model != "legacy-adapter-name" {
+		t.Fatalf("legacy model fallback = %+v", w.Usage)
+	}
+}

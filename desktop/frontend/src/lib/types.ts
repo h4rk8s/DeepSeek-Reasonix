@@ -61,7 +61,8 @@ export type EventKind =
   | "completion_summary"
   | "read_status"
   | "session_operation"
-  | "provider_unreachable";
+  | "provider_unreachable"
+  | "background_job_lifecycle";
 export type StreamAttemptAction = "begin" | "discard" | "commit";
 export type TurnStatus = "queued" | "in_progress" | "waiting_user" | "cancelling" | "completed" | "interrupted" | "failed" | "protocol_failed" | "recovery_required";
 export interface TurnEventEnvelope {
@@ -161,6 +162,7 @@ export interface WireUsage {
   reasoningTokens?: number;
   estimated?: boolean;
   source?: string;
+  model?: string;
   cacheDiagnostics?: WireCacheDiagnostics;
   // Session-cumulative cache tokens — the status bar shows the aggregate
   // hit-rate (Σhit/Σ(hit+miss)), steadier than the single-turn cacheHitTokens.
@@ -229,6 +231,13 @@ export interface CostQuote {
   incompleteReason?: string;
   legacyEstimate?: boolean;
   catalogSource?: string;
+}
+
+export interface WireBackgroundJob {
+  id: string;
+  kind: string;
+  status: string;
+  sessionId?: string;
 }
 
 export interface WireRecoveryApproval {
@@ -461,6 +470,7 @@ export interface WireEvent extends RecoveryEventFields {
   phase?: string;
   /** completion_summary: content-free quality summary for role settings */
   completion?: WireCompletionSummary;
+  backgroundJob?: WireBackgroundJob;
   tabId?: string; // Go's tabEventSink tags events for the correct per-tab reducer.
   runtimeEpoch?: string; sessionGeneration?: number;
   /** Unix milliseconds recorded by the desktop host when this turn began. */

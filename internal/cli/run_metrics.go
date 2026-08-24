@@ -287,9 +287,6 @@ func (s *metricsSink) record(e event.Event) {
 		s.m.Estimated = s.m.Estimated || u.Estimated
 		var stepCost float64
 		q := e.CostQuote
-		if q == nil && e.Pricing != nil {
-			q = event.EnsureCostQuote(e, nil)
-		}
 		if q != nil {
 			s.m.Estimated = true
 			if !q.CostComplete {

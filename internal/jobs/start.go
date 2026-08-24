@@ -94,6 +94,7 @@ func (m *Manager) startForSession(parentSession, kind, label string, lifetime Li
 	}
 
 	m.emitIfActive(parentSession, event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: startedText(kind, id, label)})
+	m.emitIfActive(parentSession, lifecycleEvent(parentSession, id, kind, Running))
 	m.notifyRuntime(parentSession, id)
 
 	if recorder := m.boundRecorder(); !nilutil.IsNil(recorder) {
