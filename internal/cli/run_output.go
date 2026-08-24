@@ -11,6 +11,7 @@ import (
 	"reasonix/internal/billing"
 	"reasonix/internal/event"
 	"reasonix/internal/eventwire"
+	"reasonix/internal/usageledger"
 )
 
 type runOutputFormat string
@@ -44,37 +45,34 @@ func runOutputSessionID(format runOutputFormat, rawSessionID string, identityKey
 	return rawSessionID
 }
 
-type runResultUsage struct {
-	InputTokens              int  `json:"input_tokens"`
-	OutputTokens             int  `json:"output_tokens"`
-	CacheReadInputTokens     int  `json:"cache_read_input_tokens"`
-	CacheCreationInputTokens int  `json:"cache_creation_input_tokens"`
-	Estimated                bool `json:"estimated,omitempty"`
-}
+type runResultUsage = usageledger.Tokens
 
 type runResult struct {
-	Type       string  `json:"type"`
-	Subtype    string  `json:"subtype"`
-	IsError    bool    `json:"is_error"`
-	DurationMS int64   `json:"duration_ms"`
-	NumTurns   int     `json:"num_turns"`
-	Result     string  `json:"result"`
-	SessionID  string  `json:"session_id,omitempty"`
-	TotalCost  float64 `json:"total_cost,omitempty"`
-	Currency   string  `json:"currency,omitempty"`
-	// TotalCostUSD is the released compatibility alias. It mirrors TotalCost;
-	// new consumers must pair TotalCost with Currency instead of assuming USD.
-	TotalCostUSD float64 `json:"total_cost_usd,omitempty"`
-	// CostComplete is false when mixed originals lack a shared display valuation.
-	CostComplete    bool   `json:"cost_complete"`
-	DisplayComplete bool   `json:"display_complete"`
-	DisplayStatus   string `json:"display_status,omitempty"`
-	AggregateMode   string `json:"aggregate_mode,omitempty"`
-	// OriginalCosts lists per-ISO original totals (never cross-added).
-	OriginalCosts  map[string]float64 `json:"original_costs,omitempty"`
-	OriginalTotals []billing.Money    `json:"original_totals,omitempty"`
-	CostQuote      *billing.CostQuote `json:"cost_quote,omitempty"`
-	Usage          runResultUsage     `json:"usage"`
+	SchemaVersion           int                               `json:"schema_version"`
+	Type                    string                            `json:"type"`
+	Subtype                 string                            `json:"subtype"`
+	IsError                 bool                              `json:"is_error"`
+	DurationMS              int64                             `json:"duration_ms"`
+	NumTurns                int                               `json:"num_turns"`
+	Result                  string                            `json:"result"`
+	SessionID               string                            `json:"session_id,omitempty"`
+	UsageIsIncomplete       bool                              `json:"usage_is_incomplete"`
+	CostIsPartial           bool                              `json:"cost_is_partial"`
+	TotalCost               *float64                          `json:"total_cost,omitempty"`
+	Currency                string                            `json:"currency,omitempty"`
+	TotalCostUSD            *float64                          `json:"total_cost_usd,omitempty"`
+	TotalCostUSDTicks       *int64                            `json:"total_cost_usd_ticks,omitempty"`
+	ModelUsage              map[string]usageledger.ModelUsage `json:"modelUsage"`
+	IncompleteReasons       []string                          `json:"incomplete_reasons,omitempty"`
+	OpenBackgroundSubagents int                               `json:"open_background_subagents,omitempty"`
+	Usage                   runResultUsage                    `json:"usage"`
+	CostComplete            bool                              `json:"cost_complete"`
+	DisplayComplete         bool                              `json:"display_complete"`
+	DisplayStatus           string                            `json:"display_status,omitempty"`
+	AggregateMode           string                            `json:"aggregate_mode,omitempty"`
+	OriginalCosts           map[string]float64                `json:"original_costs,omitempty"`
+	OriginalTotals          []billing.Money                   `json:"original_totals,omitempty"`
+	CostQuote               *billing.CostQuote                `json:"cost_quote,omitempty"`
 }
 
 type machineEventUsage struct {
@@ -133,17 +131,7 @@ type runOutputSink struct {
 	out                 io.Writer
 	encoder             *json.Encoder
 	final               string
-	usage               runResultUsage
-	cost                float64
-	currency            string
-	costComplete        bool
-	displayComplete     bool
-	displayStatus       string
-	aggregateMode       string
-	originalTotals      []billing.Money
-	sawQuote            bool
-	originalCosts       map[string]float64
-	quoteLedger         *billing.Ledger
+	ledger              *usageledger.Ledger
 	turns               int
 	sequence            uint64
 	machineToolIDs      map[string]string
@@ -158,6 +146,7 @@ func newRunOutputSink(out io.Writer, format runOutputFormat) *runOutputSink {
 		format:           format,
 		out:              out,
 		encoder:          json.NewEncoder(out),
+		ledger:           usageledger.New(),
 		machineToolIDs:   make(map[string]string),
 		machineToolNames: make(map[string]string),
 	}
@@ -169,52 +158,7 @@ func (s *runOutputSink) Emit(e event.Event) {
 	if e.Kind == event.Message {
 		s.final = e.Text
 	}
-	if e.Kind == event.Usage && e.Usage != nil {
-		s.usage.InputTokens += e.Usage.PromptTokens
-		s.usage.OutputTokens += e.Usage.CompletionTokens
-		s.usage.CacheReadInputTokens += e.Usage.CacheHitTokens
-		s.usage.CacheCreationInputTokens += e.Usage.CacheMissTokens
-		s.usage.Estimated = s.usage.Estimated || e.Usage.Estimated
-		q := e.CostQuote
-		if q == nil && e.Pricing != nil {
-			q = event.EnsureCostQuote(e, nil)
-		}
-		if q != nil {
-			s.sawQuote = true
-			if !q.CostComplete {
-				s.costComplete = false
-			}
-			// First complete quote establishes complete=true.
-			if q.Complete && s.quoteLedger == nil {
-				s.costComplete = true
-			}
-			if s.originalCosts == nil {
-				s.originalCosts = map[string]float64{}
-			}
-			if cur := billing.NormalizeCurrency(q.Original.Currency); cur != "" {
-				s.originalCosts[cur] += q.Original.Float64()
-			}
-			if q.Selected != nil && (s.currency == "" || s.currency == q.LegacyCurrencyCode()) {
-				s.cost += q.Selected.Float64()
-				s.currency = q.LegacyCurrencyCode()
-			} else if q.Selected != nil {
-				s.currency = ""
-				s.cost = 0
-			}
-			if s.quoteLedger == nil {
-				s.quoteLedger = billing.NewLedger()
-			}
-			s.quoteLedger.Add(*q, billing.UsageTokens{
-				PromptTokens:           e.Usage.PromptTokens,
-				CompletionTokens:       e.Usage.CompletionTokens,
-				CacheHitTokens:         e.Usage.CacheHitTokens,
-				CacheMissTokens:        e.Usage.CacheMissTokens,
-				CacheWriteTokens:       e.Usage.CacheWriteTokens,
-				CacheWriteBilledTokens: e.Usage.CacheWriteBilledTokens,
-				Estimated:              e.Usage.Estimated,
-			}, time.Now().UTC())
-		}
-	}
+	s.ledger.Add(e)
 	if e.Kind == event.TurnDone {
 		s.turns++
 	}
@@ -241,6 +185,7 @@ func (s *runOutputSink) Finalize(sessionID string, started time.Time, runErr err
 		return s.err
 	}
 	completion := classifyRunCompletion(runErr)
+	projection := s.ledger.Projection()
 	if s.format == runOutputEventsJSONL {
 		s.sequence++
 		turns := s.turns
@@ -255,7 +200,7 @@ func (s *runOutputSink) Finalize(sessionID string, started time.Time, runErr err
 			OK:            !completion.isError,
 			DurationMS:    time.Since(started).Milliseconds(),
 			NumTurns:      turns,
-			Usage:         machineEventUsage{InputTokens: s.usage.InputTokens, OutputTokens: s.usage.OutputTokens, CacheHitTokens: s.usage.CacheReadInputTokens, CacheMissTokens: s.usage.CacheCreationInputTokens},
+			Usage:         machineEventUsage{InputTokens: projection.Usage.InputTokens, OutputTokens: projection.Usage.OutputTokens, CacheHitTokens: projection.Usage.CacheReadInputTokens, CacheMissTokens: projection.Usage.CacheCreationInputTokens},
 		})
 	}
 	resultText := s.final
@@ -268,46 +213,37 @@ func (s *runOutputSink) Finalize(sessionID string, started time.Time, runErr err
 	if turns == 0 && !completion.isError {
 		turns = 1
 	}
-	var aggQuote *billing.CostQuote
-	if s.quoteLedger != nil && len(s.quoteLedger.Entries) > 0 {
-		agg := s.quoteLedger.Total("")
-		aggQuote = &agg
-		if agg.Selected != nil {
-			s.cost = agg.Selected.Float64()
-			s.currency = agg.LegacyCurrencyCode()
-		}
-		if agg.Selected == nil {
-			s.cost = 0
-			s.currency = ""
-		}
-		s.costComplete = agg.CostComplete
-		s.displayComplete = agg.DisplayComplete
-		s.displayStatus = agg.DisplayStatus
-		s.aggregateMode = agg.AggregateMode
-		if agg.OriginalTotals != nil {
-			s.originalTotals = append([]billing.Money(nil), agg.OriginalTotals...)
-		}
+	cost := projection.Cost
+	result := runResult{
+		SchemaVersion:           2,
+		Type:                    "result",
+		Subtype:                 completion.subtype,
+		IsError:                 completion.isError,
+		DurationMS:              time.Since(started).Milliseconds(),
+		NumTurns:                turns,
+		Result:                  resultText,
+		SessionID:               sessionID,
+		UsageIsIncomplete:       projection.UsageIsIncomplete,
+		CostIsPartial:           projection.CostIsPartial,
+		TotalCostUSD:            projection.TotalCostUSD,
+		TotalCostUSDTicks:       projection.TotalCostUSDTicks,
+		ModelUsage:              projection.ModelUsage,
+		IncompleteReasons:       projection.IncompleteReasons,
+		OpenBackgroundSubagents: projection.OpenBackgroundSubagents,
+		Usage:                   projection.Usage,
+		CostComplete:            cost.CostComplete,
+		DisplayComplete:         cost.DisplayComplete,
+		DisplayStatus:           cost.DisplayStatus,
+		AggregateMode:           cost.AggregateMode,
+		OriginalCosts:           cost.OriginalCosts,
+		OriginalTotals:          cost.OriginalTotals,
+		CostQuote:               cost.CostQuote,
 	}
-	return s.encoder.Encode(runResult{
-		Type:            "result",
-		Subtype:         completion.subtype,
-		IsError:         completion.isError,
-		DurationMS:      time.Since(started).Milliseconds(),
-		NumTurns:        turns,
-		Result:          resultText,
-		SessionID:       sessionID,
-		TotalCost:       s.cost,
-		Currency:        s.currency,
-		TotalCostUSD:    s.cost,
-		CostComplete:    s.costComplete || (!s.sawQuote && s.currency != ""),
-		DisplayComplete: s.displayComplete,
-		DisplayStatus:   s.displayStatus,
-		AggregateMode:   s.aggregateMode,
-		OriginalCosts:   s.originalCosts,
-		OriginalTotals:  s.originalTotals,
-		CostQuote:       aggQuote,
-		Usage:           s.usage,
-	})
+	if cost.TotalCost != nil && cost.Currency != "" && (cost.CostComplete || cost.DisplayComplete) {
+		result.TotalCost = cost.TotalCost
+		result.Currency = cost.Currency
+	}
+	return s.encoder.Encode(result)
 }
 
 func (s *runOutputSink) machineEventRecordFor(e event.Event, sequence uint64) machineEventRecord {

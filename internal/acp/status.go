@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"math"
 	"runtime"
 	"slices"
 	"strings"
@@ -16,6 +15,7 @@ import (
 	"reasonix/internal/control"
 	"reasonix/internal/event"
 	"reasonix/internal/provider"
+	"reasonix/internal/usageledger"
 )
 
 const (
@@ -133,131 +133,70 @@ type ReasonixStatusUpdate struct {
 }
 
 type usageAccumulator struct {
-	promptTokens     int
-	completionTokens int
-	reasoningTokens  int
-	cacheHitTokens   int
-	cacheMissTokens  int
-	estimated        bool
-	events           int
-	pricedEvents     int
-	estimatedCost    float64
-	currency         string
-	source           string
-	costComplete     bool
-	quoteEvents      int
-	quoteLedger      *billing.Ledger
+	ledger *usageledger.Ledger
 }
 
-func (a *usageAccumulator) addQuoted(u *provider.Usage, pricing *provider.Pricing, quote *billing.CostQuote, source string) {
-	if u == nil {
-		return
+func (a *usageAccumulator) owner() *usageledger.Ledger {
+	if a.ledger == nil {
+		a.ledger = usageledger.New()
 	}
-	a.promptTokens += u.PromptTokens
-	a.completionTokens += u.CompletionTokens
-	a.reasoningTokens += u.ReasoningTokens
-	a.cacheHitTokens += u.CacheHitTokens
-	a.cacheMissTokens += u.CacheMissTokens
-	a.estimated = a.estimated || u.Estimated
-	a.events++
-	source = strings.TrimSpace(source)
-	if source == "" {
-		source = event.UsageSourceExecutor
-	}
-	if a.source == "" {
-		a.source = source
-	} else if a.source != source {
-		a.source = "mixed"
-	}
-	if quote == nil && pricing != nil {
-		quote = event.EnsureCostQuote(event.Event{Kind: event.Usage, Usage: u, Pricing: pricing, UsageSource: source}, nil)
-	}
-	if quote != nil {
-		a.pricedEvents++
-		a.quoteEvents++
-		a.estimated = true
-		if a.quoteLedger == nil {
-			a.quoteLedger = billing.NewLedger()
-		}
-		a.quoteLedger.Add(*quote, billing.UsageTokens{
-			PromptTokens:           u.PromptTokens,
-			CompletionTokens:       u.CompletionTokens,
-			CacheHitTokens:         u.CacheHitTokens,
-			CacheMissTokens:        u.CacheMissTokens,
-			CacheWriteTokens:       u.CacheWriteTokens,
-			CacheWriteBilledTokens: u.CacheWriteBilledTokens,
-			Estimated:              u.Estimated,
-		}, time.Time{})
-		if quote.Selected != nil {
-			cur := quote.LegacyCurrencyCode()
-			if a.pricedEvents == 1 {
-				a.currency = cur
-				a.costComplete = quote.Complete
-			} else if a.currency != cur {
-				// Different selected currencies — re-aggregate later via quotes.
-				a.currency = cur
-			}
-			if !quote.Complete {
-				a.costComplete = false
-			}
-			a.estimatedCost += quote.Selected.Float64()
-		} else if pricing != nil {
-			// Incomplete display valuation: keep original, mark incomplete.
-			a.costComplete = false
-			a.estimatedCost += quote.Original.Float64()
-			if a.currency == "" {
-				a.currency = billing.NormalizeCurrency(quote.Original.Currency)
-			}
-		}
-		return
-	}
+	return a.ledger
+}
+
+func (a *usageAccumulator) add(e event.Event) {
+	a.owner().Add(e)
 }
 
 func (a usageAccumulator) wire() ReasonixUsage {
+	projection := usageledger.New().Projection()
+	if a.ledger != nil {
+		projection = a.ledger.Projection()
+	}
 	usage := ReasonixUsage{
-		TotalTokens:      a.promptTokens + a.completionTokens,
-		PromptTokens:     a.promptTokens,
-		CompletionTokens: a.completionTokens,
-		ReasoningTokens:  a.reasoningTokens,
-		CacheHitTokens:   a.cacheHitTokens,
-		CacheMissTokens:  a.cacheMissTokens,
-		Estimated:        a.estimated,
-		UsageSource:      a.source,
+		TotalTokens:      projection.Usage.InputTokens + projection.Usage.OutputTokens,
+		PromptTokens:     projection.Usage.InputTokens,
+		CompletionTokens: projection.Usage.OutputTokens,
+		ReasoningTokens:  projection.Usage.ReasoningTokens,
+		CacheHitTokens:   projection.Usage.CacheReadInputTokens,
+		CacheMissTokens:  projection.Usage.CacheCreationInputTokens,
+		Estimated:        projection.Usage.Estimated,
+		UsageSource:      projectionSource(projection),
 	}
-	if usage.UsageSource == "" {
-		usage.UsageSource = event.UsageSourceExecutor
-	}
-	if total := a.cacheHitTokens + a.cacheMissTokens; total > 0 {
-		ratio := float64(a.cacheHitTokens) / float64(total)
+	if total := usage.CacheHitTokens + usage.CacheMissTokens; total > 0 {
+		ratio := float64(usage.CacheHitTokens) / float64(total)
 		usage.CacheHitRatio = &ratio
 	}
-	if a.quoteLedger != nil && a.quoteEvents == a.pricedEvents && len(a.quoteLedger.Entries) > 0 {
-		agg := a.quoteLedger.Total("")
-		usage.CostQuote = &agg
-		costComplete := agg.CostComplete
-		displayComplete := agg.DisplayComplete
+	if cost := projection.Cost; cost.CostQuote != nil {
+		usage.CostQuote = cost.CostQuote
+		costComplete := cost.CostComplete
+		displayComplete := cost.DisplayComplete
 		usage.CostComplete = &costComplete
 		usage.DisplayComplete = &displayComplete
-		usage.DisplayStatus = agg.DisplayStatus
-		usage.AggregateMode = agg.AggregateMode
-		usage.OriginalTotals = append([]billing.Money(nil), agg.OriginalTotals...)
-		if agg.Selected != nil && !math.IsNaN(agg.Selected.Float64()) && !math.IsInf(agg.Selected.Float64(), 0) {
-			cost := agg.Selected.Float64()
-			currency := agg.LegacyCurrencyCode()
-			usage.EstimatedCost = &cost
+		usage.DisplayStatus = cost.DisplayStatus
+		usage.AggregateMode = cost.AggregateMode
+		usage.OriginalTotals = append([]billing.Money(nil), cost.OriginalTotals...)
+		if cost.TotalCost != nil && cost.Currency != "" {
+			usage.EstimatedCost = cost.TotalCost
+			currency := cost.Currency
 			usage.Currency = &currency
 		}
-		return usage
-	}
-	if a.events > 0 && a.pricedEvents == a.events && a.currency != "" && !math.IsNaN(a.estimatedCost) && !math.IsInf(a.estimatedCost, 0) {
-		cost := a.estimatedCost
-		currency := a.currency
-		usage.EstimatedCost = &cost
-		usage.Currency = &currency
-		complete := a.costComplete
-		usage.CostComplete = &complete
 	}
 	return usage
+}
+
+func projectionSource(projection usageledger.Projection) string {
+	source := ""
+	for _, row := range projection.ModelUsage {
+		if source == "" {
+			source = row.Source
+		} else if source != row.Source {
+			return "mixed"
+		}
+	}
+	if source == "" {
+		return event.UsageSourceExecutor
+	}
+	return source
 }
 
 type statusTelemetry struct {
@@ -311,8 +250,8 @@ func (t *statusTelemetry) onEvent(e event.Event) (string, bool) {
 		return "phase", true
 	case event.Usage:
 		t.mutate(func(t *statusTelemetry) {
-			t.turnUsage.addQuoted(e.Usage, e.Pricing, e.CostQuote, e.UsageSource)
-			t.cumulative.addQuoted(e.Usage, e.Pricing, e.CostQuote, e.UsageSource)
+			t.turnUsage.add(e)
+			t.cumulative.add(e)
 		})
 		return "usage", true
 	case event.ApprovalRequest:
@@ -407,18 +346,19 @@ type statusTelemetrySnapshot struct {
 }
 
 type persistedUsageAccumulator struct {
-	PromptTokens     int     `json:"promptTokens"`
-	CompletionTokens int     `json:"completionTokens"`
-	ReasoningTokens  int     `json:"reasoningTokens"`
-	CacheHitTokens   int     `json:"cacheHitTokens"`
-	CacheMissTokens  int     `json:"cacheMissTokens"`
-	Estimated        bool    `json:"estimated,omitempty"`
-	Events           int     `json:"events"`
-	PricedEvents     int     `json:"pricedEvents"`
-	EstimatedCost    float64 `json:"estimatedCost"`
-	Currency         string  `json:"currency,omitempty"`
-	Source           string  `json:"source,omitempty"`
-	CostComplete     *bool   `json:"costComplete,omitempty"`
+	PromptTokens     int                   `json:"promptTokens"`
+	CompletionTokens int                   `json:"completionTokens"`
+	ReasoningTokens  int                   `json:"reasoningTokens"`
+	CacheHitTokens   int                   `json:"cacheHitTokens"`
+	CacheMissTokens  int                   `json:"cacheMissTokens"`
+	Estimated        bool                  `json:"estimated,omitempty"`
+	Events           int                   `json:"events"`
+	PricedEvents     int                   `json:"pricedEvents"`
+	EstimatedCost    float64               `json:"estimatedCost"`
+	Currency         string                `json:"currency,omitempty"`
+	Source           string                `json:"source,omitempty"`
+	CostComplete     *bool                 `json:"costComplete,omitempty"`
+	Owner            *usageledger.Snapshot `json:"owner,omitempty"`
 }
 
 type persistedStatusTelemetry struct {
@@ -433,32 +373,88 @@ type persistedStatusTelemetry struct {
 }
 
 func persistUsage(a usageAccumulator) persistedUsageAccumulator {
-	var costComplete *bool
-	if a.pricedEvents > 0 {
-		complete := a.costComplete
-		costComplete = &complete
+	snapshot := usageledger.New().Snapshot()
+	var owner *usageledger.Snapshot
+	if a.ledger != nil {
+		snapshot = a.ledger.Snapshot()
+		owner = &snapshot
+	}
+	wire := a.wire()
+	var estimatedCost float64
+	if wire.EstimatedCost != nil {
+		estimatedCost = *wire.EstimatedCost
+	}
+	var currency string
+	if wire.Currency != nil {
+		currency = *wire.Currency
 	}
 	return persistedUsageAccumulator{
-		PromptTokens: a.promptTokens, CompletionTokens: a.completionTokens,
-		ReasoningTokens: a.reasoningTokens, CacheHitTokens: a.cacheHitTokens,
-		CacheMissTokens: a.cacheMissTokens, Estimated: a.estimated, Events: a.events,
-		PricedEvents: a.pricedEvents, EstimatedCost: a.estimatedCost,
-		Currency: a.currency, Source: a.source, CostComplete: costComplete,
+		PromptTokens: wire.PromptTokens, CompletionTokens: wire.CompletionTokens,
+		ReasoningTokens: wire.ReasoningTokens, CacheHitTokens: wire.CacheHitTokens,
+		CacheMissTokens: wire.CacheMissTokens, Estimated: wire.Estimated, Events: snapshot.UsageEvents,
+		PricedEvents: snapshot.QuoteEvents, EstimatedCost: estimatedCost,
+		Currency: currency, Source: wire.UsageSource, CostComplete: wire.CostComplete,
+		Owner: owner,
 	}
 }
 
 func restoreUsage(a persistedUsageAccumulator) usageAccumulator {
-	costComplete := a.PricedEvents > 0 && a.Currency != ""
-	if a.CostComplete != nil {
-		costComplete = *a.CostComplete
+	if a.Owner != nil {
+		return usageAccumulator{ledger: usageledger.Restore(*a.Owner)}
 	}
-	return usageAccumulator{
-		promptTokens: a.PromptTokens, completionTokens: a.CompletionTokens,
-		reasoningTokens: a.ReasoningTokens, cacheHitTokens: a.CacheHitTokens,
-		cacheMissTokens: a.CacheMissTokens, estimated: a.Estimated, events: a.Events,
-		pricedEvents: a.PricedEvents, estimatedCost: a.EstimatedCost,
-		currency: a.Currency, source: a.Source, costComplete: costComplete,
+	tokens := usageledger.Tokens{
+		InputTokens: a.PromptTokens, OutputTokens: a.CompletionTokens,
+		ReasoningTokens: a.ReasoningTokens, CacheReadInputTokens: a.CacheHitTokens,
+		CacheCreationInputTokens: a.CacheMissTokens, Estimated: a.Estimated,
 	}
+	events := a.Events
+	if events == 0 && (tokens.InputTokens != 0 || tokens.OutputTokens != 0 || tokens.ReasoningTokens != 0 || tokens.CacheReadInputTokens != 0 || tokens.CacheCreationInputTokens != 0) {
+		events = 1
+	}
+	source := strings.TrimSpace(a.Source)
+	if source == "" {
+		source = event.UsageSourceExecutor
+	}
+	snapshot := usageledger.Snapshot{
+		Usage: tokens, Rows: map[string]usageledger.RowSnapshot{},
+		QuoteLedger: billing.NewLedger(), UsageEvents: events,
+	}
+	if events > 0 {
+		snapshot.Rows[source+":"] = usageledger.RowSnapshot{
+			Source: source, Usage: tokens, UsageEvents: events,
+		}
+		snapshot.IncompleteReasons = []string{"missing_model_attribution"}
+	}
+	pricedEvents := min(max(a.PricedEvents, 0), events)
+	if pricedEvents > 0 && billing.NormalizeCurrency(a.Currency) != "" {
+		complete := pricedEvents == events
+		if a.CostComplete != nil {
+			complete = *a.CostComplete
+		}
+		money := billing.MoneyOf(billing.NewAmountFromFloat(a.EstimatedCost), a.Currency)
+		selected := money
+		status := billing.DisplayStatusUnavailable
+		if complete {
+			status = billing.DisplayStatusMatched
+		}
+		quote := billing.CostQuote{
+			Original: money, Selected: &selected, Estimated: true,
+			CostComplete: complete, DisplayComplete: complete, Complete: complete,
+			DisplayStatus: status, AggregateMode: billing.AggregateModeSingleCurrency,
+			UsageSource: source, PricingFingerprint: "legacy-acp-status",
+			LegacyEstimate: true,
+		}
+		snapshot.QuoteLedger.Add(quote, billing.UsageTokens{
+			PromptTokens: a.PromptTokens, CompletionTokens: a.CompletionTokens,
+			CacheHitTokens: a.CacheHitTokens, CacheMissTokens: a.CacheMissTokens,
+			Estimated: a.Estimated,
+		}, time.Time{})
+		snapshot.QuoteEvents = pricedEvents
+		row := snapshot.Rows[source+":"]
+		row.QuoteEvents = pricedEvents
+		snapshot.Rows[source+":"] = row
+	}
+	return usageAccumulator{ledger: usageledger.Restore(snapshot)}
 }
 
 func (t *statusTelemetry) persisted() *persistedStatusTelemetry {
