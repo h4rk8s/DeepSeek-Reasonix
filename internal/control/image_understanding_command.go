@@ -165,7 +165,7 @@ func (u *CommandImageUnderstanding) describeOne(ctx context.Context, userInput s
 	defer cancel()
 	args := append([]string{}, u.argv[1:]...)
 	args = append(args, img.Path)
-	cmd := exec.CommandContext(runCtx, u.argv[0], args...)
+	cmd := proc.CommandContext(runCtx, u.argv[0], args...)
 	setShellKillTree(cmd)
 	cmd.WaitDelay = time.Second
 	proc.HideWindow(cmd)

@@ -334,7 +334,7 @@ func (m *chatTUI) applyComposerPasteOnce(msg tea.PasteMsg) []tea.Cmd {
 	m.followComposerCursor()
 	pasteBefore := m.input.Value()
 	var cmds []tea.Cmd
-	if m.state != tuiRunning && m.attachPastedImages(msg.Content) {
+	if m.attachPastedImages(msg.Content) {
 		if shouldClearWideInputChange(pasteBefore, m.input.Value()) {
 			cmds = append(cmds, tea.ClearScreen)
 		}
