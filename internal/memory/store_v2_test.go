@@ -134,6 +134,37 @@ func TestStoreV2MigrationPersistsLegacyIdentity(t *testing.T) {
 	}
 }
 
+func TestStoreV2MigrationConvergesLegacyOwnerAliases(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "legacy-owner.md")
+	legacy := "---\nid: mem-legacy-owner\nrevision: 4\nname: legacy-owner\ndescription: old owners\nmetadata:\n  type: project\n  source_scope: project\n  last_confirmed_at: 2026-07-16T08:00:00Z\n  source_kind: import\n---\n\nlegacy body\n"
+	if err := os.WriteFile(path, []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store := Store{Dir: dir}
+	report, err := store.MigrateV2()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Migrated != 1 {
+		t.Fatalf("migration report = %+v", report)
+	}
+	raw := mustReadString(t, path)
+	if strings.Contains(raw, "last_confirmed_at:") || strings.Contains(raw, "source_scope:") {
+		t.Fatalf("migration retained legacy owner fields:\n%s", raw)
+	}
+	frontmatter, body := splitFrontmatter(raw)
+	if frontmatter["id"] != "mem-legacy-owner" || frontmatter["revision"] != "4" ||
+		frontmatter["scope"] != "project" || frontmatter["last_verified_at"] != "2026-07-16T08:00:00Z" ||
+		frontmatter["source_kind"] != "import" || strings.TrimSpace(body) != "legacy body" {
+		t.Fatalf("canonical migration lost metadata: frontmatter=%+v body=%q", frontmatter, body)
+	}
+	again, err := store.MigrateV2()
+	if err != nil || again.Migrated != 0 {
+		t.Fatalf("idempotent owner migration = %+v, %v", again, err)
+	}
+}
+
 func TestStoreV2LegacyIdentityIncludesScope(t *testing.T) {
 	root := t.TempDir()
 	store := Store{Dir: filepath.Join(root, "project"), GlobalDir: filepath.Join(root, "global")}

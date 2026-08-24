@@ -123,6 +123,7 @@ func (t rememberTool) Execute(ctx context.Context, args json.RawMessage) (string
 		LastVerifiedAt: verifiedAt,
 		Keywords:       in.Keywords,
 		Body:           in.Body,
+		SourceKind:     "remember_tool",
 	}, SaveOptions{
 		ExpectedRevision:        in.ExpectedRevision,
 		RequireExpectedRevision: in.ExpectedRevision > 0,
