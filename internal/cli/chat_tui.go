@@ -3911,10 +3911,22 @@ func (m *chatTUI) commitReasoning() {
 		raw := m.reasoning.String()
 		if strings.TrimSpace(raw) != "" {
 			secs := int(time.Since(m.thinkStart).Seconds())
+			summary := formatReasoningSummary(secs)
 			m.commitSpacer()
-			m.commitLine(dim(formatReasoningSummary(secs)))
-			if m.showReasoning && strings.TrimSpace(raw) != "" {
-				m.commitLine(reasoningBlock(raw, m.width, 0))
+			summaryIdx := len(m.transcript)
+			if m.lazyReasoning {
+				expanded := m.showReasoning
+				if expanded {
+					m.commitLine(reasoningBlockStyled(raw, m.width, 0, true, false))
+				} else {
+					m.commitLine(renderReasoningSummary(summary, m.width, false))
+				}
+				m.rememberCompletedReasoning(summaryIdx, summary, raw, expanded)
+			} else {
+				m.commitLine(dim(summary))
+				if m.showReasoning {
+					m.commitLine(reasoningBlock(raw, m.width, 0))
+				}
 			}
 		}
 		m.reasoning.Reset()

@@ -3,6 +3,7 @@ package cli
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/viewport"
@@ -10,6 +11,7 @@ import (
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi"
 
+	"reasonix/internal/config"
 	"reasonix/internal/control"
 	"reasonix/internal/event"
 	"reasonix/internal/provider"
@@ -80,6 +82,67 @@ func subagentStatus(id, phase string) event.Event {
 
 func subagentPreview(id, channel, text string, truncated bool) event.Event {
 	return event.Event{Kind: event.ToolProgress, Tool: event.Tool{ID: id, Name: channel, Output: text, Truncated: truncated}}
+}
+
+func TestNativeReasoningCommitRegistersLazyDisclosure(t *testing.T) {
+	m := newTestChatTUI()
+	m.lazyReasoning = config.Default().UI.LazyReasoning
+	if !m.lazyReasoning {
+		t.Fatal("completed reasoning disclosures must be interactive by default")
+	}
+	m.reasoningNative = true
+	m.thinkStart = time.Now().Add(-time.Second)
+	m.reasoning.WriteString("native provider reasoning body")
+	m.commitLine("before")
+
+	m.commitReasoning()
+
+	idx := firstTranscriptIndexContaining(m.transcript, "Thought for")
+	if idx < 0 {
+		t.Fatalf("native reasoning summary missing: %q", m.transcript)
+	}
+	if !m.toggleReasoningAtTranscriptIdx(idx) {
+		t.Fatal("native reasoning summary is not registered as a disclosure")
+	}
+	expanded := ansi.Strip(m.transcript[idx])
+	if !strings.Contains(expanded, "native provider reasoning body") {
+		t.Fatalf("expanded native reasoning missing raw body: %q", expanded)
+	}
+	if strings.Contains(expanded, "Thought for") {
+		t.Fatalf("expanded native reasoning should replace its summary: %q", expanded)
+	}
+	if !m.toggleReasoningAtTranscriptIdx(idx) {
+		t.Fatal("native reasoning disclosure did not collapse")
+	}
+	if !hasThoughtFor(m.transcript[idx]) {
+		t.Fatalf("collapsed native reasoning summary was not restored: %q", m.transcript[idx])
+	}
+}
+
+func TestNativeReasoningCommitKeepsExpandedDisclosureInteractive(t *testing.T) {
+	m := newTestChatTUI()
+	m.lazyReasoning = true
+	m.showReasoning = true
+	m.reasoningNative = true
+	m.thinkStart = time.Now().Add(-time.Second)
+	m.reasoning.WriteString("expanded native provider reasoning")
+
+	m.commitReasoning()
+
+	idx := firstTranscriptIndexContaining(m.transcript, "expanded native provider reasoning")
+	if idx < 0 {
+		t.Fatalf("expanded native reasoning missing: %q", m.transcript)
+	}
+	if !m.toggleReasoningAtTranscriptIdx(idx) {
+		t.Fatal("expanded native reasoning is not registered as a disclosure")
+	}
+	collapsed := ansi.Strip(m.transcript[idx])
+	if !strings.Contains(collapsed, "Thought for") {
+		t.Fatalf("expanded native reasoning did not collapse to its summary: %q", collapsed)
+	}
+	if strings.Contains(collapsed, "expanded native provider reasoning") {
+		t.Fatalf("collapsed native reasoning still contains its body: %q", collapsed)
+	}
 }
 
 func TestCacheRateLabelKeepsTwoDecimals(t *testing.T) {

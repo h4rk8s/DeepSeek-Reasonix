@@ -2003,7 +2003,10 @@ func TestLazyReasoningExpandKeepsLowerViewportAnchor(t *testing.T) {
 	}
 
 	cur := adv(newChatTUI(ctrl, "", ch, 80), tea.WindowSizeMsg{Width: 80, Height: 16})
-	cur.lazyReasoning = true
+	cur.lazyReasoning = config.Default().UI.LazyReasoning
+	if !cur.lazyReasoning {
+		t.Fatal("completed reasoning disclosures must be mouse-interactive by default")
+	}
 	summary := formatReasoningSummary(1)
 	cur.transcript = cur.transcript[:0]
 	for i := 0; i < 10; i++ {
