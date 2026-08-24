@@ -180,6 +180,7 @@ type chatTUI struct {
 	reasoning     *strings.Builder
 	pending       *strings.Builder
 	pendingCommit *[]string
+	renderer      *mdRenderer
 	showReasoning bool // Ctrl+O / /verbose: show raw thinking text in the CLI
 	lazyReasoning bool // [ui].lazy_reasoning: keep completed thinking collapsed but clickable
 	cfg           *config.Config
@@ -760,6 +761,7 @@ func newChatTUI(ctrl control.SessionAPI, missing string, eventCh chan event.Even
 	nativeScrollback := detectTermuxTerminal()
 	history := chatUIDisplayHistory(ctrl)
 	nextPasteID, usedPasteIDs := pasteIDStateForHistory(history)
+	renderW := transcriptContentWidth(termW, nativeScrollback)
 	m := chatTUI{
 		ctrl:                       ctrl,
 		label:                      ctrl.Label(),
@@ -784,6 +786,7 @@ func newChatTUI(ctrl control.SessionAPI, missing string, eventCh chan event.Even
 		reasoning:                  &strings.Builder{},
 		pending:                    &strings.Builder{},
 		pendingCommit:              &commitBuf,
+		renderer:                   newMarkdownRenderer(renderW),
 		diffMaxLines:               diffFoldLimit,
 		showReasoning:              nativeScrollback,
 		showTurnUsage:              true,
@@ -1231,6 +1234,8 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.input.SetWidth(max(msg.Width-4, 1))
+		contentW := transcriptContentWidth(msg.Width, m.nativeScrollback)
+		m.renderer = newMarkdownRenderer(contentW)
 		// Commit the banner — and a resumed session's transcript — once, now
 		// that the width is known.
 		if !m.started {
@@ -4620,16 +4625,19 @@ func (m chatTUI) workspaceTag() string {
 }
 
 func (m chatTUI) workspaceLabel() string {
-	cwd, err := os.Getwd()
-	if err != nil || strings.TrimSpace(cwd) == "" {
+	if m.ctrl == nil {
 		return ""
 	}
-	return compactWorkspacePath(cwd)
+	root := strings.TrimSpace(m.ctrl.WorkspaceRoot())
+	if root == "" {
+		return ""
+	}
+	return compactWorkspacePath(root)
 }
 
 func (m chatTUI) balanceTag() string {
 	if text := strings.TrimSpace(m.balance); text != "" {
-		return dim(text)
+		return footerMetric(i18n.M.ChatStatusBalanceLabel, footerValue(text))
 	}
 	return ""
 }
