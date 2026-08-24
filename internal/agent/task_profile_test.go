@@ -20,7 +20,15 @@ func TestTaskSchemaIncludesProfileAndWritePaths(t *testing.T) {
 		}
 	}
 	// No dynamic profile enum.
-	if strings.Contains(schema, `"enum"`) {
+	var decoded struct {
+		Properties map[string]struct {
+			Enum []string `json:"enum"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal([]byte(schema), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.Properties["profile"].Enum) != 0 {
 		t.Fatalf("profile names must not be enum'd in schema: %s", schema)
 	}
 }
@@ -31,7 +39,7 @@ func TestTaskWriterWithoutPathsClaimsWholeWorkspace(t *testing.T) {
 		WithTranscripts(mustSubagentStore(t), root, "base", "high").
 		WithScheduler(NewSubagentScheduler(6, 3))
 
-	spec, err := task.buildTaskSpec(context.Background(), "rewrite docs", "", "", nil, nil, 0, "", "", "", "", false, false)
+	spec, err := task.buildTaskSpec(context.Background(), "rewrite docs", "", "", nil, nil, 0, "", "", "", "", "", false, false)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -57,7 +57,8 @@ func (*FleetTool) Schema() json.RawMessage {
         "depends_on":{"type":"array","items":{"type":"string"},"description":"Ids of tasks that must complete before this one starts. Unknown ids, self-edges, and cycles fail preflight. A task whose dependency fails or is skipped is skipped too. Ordered tasks may share write_paths; only tasks that can run at the same time need disjoint claims."},
         "description":{"type":"string","description":"Optional short label shown in the job list."},
         "profile":{"type":"string","description":"Optional runAs=subagent profile name."},
-        "write_paths":{"type":"array","items":{"type":"string"},"description":"Write targets for this item. Writers that can run at the same time must declare non-overlapping paths; writers ordered by depends_on may share them. Omitting write_paths claims the whole workspace; two concurrent whole-workspace claims (or any overlap between concurrent writers) fail preflight and start nothing."},
+		"isolation":{"type":"string","enum":["none","worktree"],"description":"Optional workspace isolation policy. worktree is valid only for writer tasks."},
+		"write_paths":{"type":"array","items":{"type":"string"},"description":"Write targets for this item. Writers that can run at the same time must declare non-overlapping paths; writers ordered by depends_on may share them. Omitting write_paths claims the whole workspace; two concurrent whole-workspace claims (or any overlap between concurrent writers) fail preflight and start nothing."},
         "read_only":{"type":"boolean","description":"Force the read-only registry even if the profile is writable."},
         "tools":{"type":"array","items":{"type":"string"},"description":"Optional tool whitelist (intersected with profile allowed-tools)."},
         "max_steps":{"type":"integer","description":"Optional max tool-call rounds.","minimum":1},
@@ -88,6 +89,7 @@ type fleetTaskItem struct {
 	MaxSteps    int      `json:"max_steps"`
 	Model       string   `json:"model"`
 	Effort      string   `json:"effort"`
+	Isolation   string   `json:"isolation"`
 }
 
 type fleetItemStatus string
@@ -186,7 +188,7 @@ func (f *FleetTool) Execute(ctx context.Context, args json.RawMessage) (result s
 		// Fleet writers without write_paths claim the whole workspace so the
 		// preflight can detect multi-writer collisions before anything starts.
 		forceBackgroundClaim := !item.ReadOnly
-		spec, err := f.taskTool.buildTaskSpec(ctx, item.Prompt, item.Description, item.Profile, item.WritePaths, item.Tools, item.MaxSteps, item.Model, item.Effort, "", "", false, item.ReadOnly)
+		spec, err := f.taskTool.buildTaskSpec(ctx, item.Prompt, item.Description, item.Profile, item.WritePaths, item.Tools, item.MaxSteps, item.Model, item.Effort, "", "", item.Isolation, false, item.ReadOnly)
 		if err != nil {
 			return "", fmt.Errorf("task %d: %w", i+1, err)
 		}

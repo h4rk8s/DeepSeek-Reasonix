@@ -21,6 +21,7 @@ type ProfileDefinition struct {
 	Model        string
 	Effort       string
 	ReadOnly     bool
+	Isolation    string
 	// Invocation is "auto" or "manual". Explicit profile= on task/fleet may
 	// call manual profiles; automatic discovery still respects the index.
 	Invocation string
@@ -46,6 +47,7 @@ func ProfileFromSkill(sk skill.Skill) ProfileDefinition {
 		Model:        sk.Model,
 		Effort:       sk.Effort,
 		ReadOnly:     sk.ReadOnly,
+		Isolation:    sk.Isolation,
 		Invocation:   sk.Invocation,
 		NamedBuiltin: NamedBuiltinProfile(sk.Name),
 	}
@@ -107,6 +109,8 @@ type CapabilityGrant struct {
 	ProfileTools []string
 	// WritePaths is the normalized write claim (empty for read-only).
 	WritePaths WritePathSet
+	// Isolation selects the child workspace policy: none or worktree.
+	Isolation string
 }
 
 // ContextRequest is the context a child starts from, as opposed to the task it
