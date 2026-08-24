@@ -3417,10 +3417,10 @@ func hasPlanModeReadOnlyCommand(commands []string, want string) bool {
 	return false
 }
 
-// TestBuildMigratesLegacyConfigEndToEnd drives the real boot path: a v0.x
-// ~/.reasonix/config.json with no v1+ config present must be imported during
-// Build — config written, key pinned into the env, and the user told via a notice.
-func TestBuildMigratesLegacyConfigEndToEnd(t *testing.T) {
+// TestBuildDoesNotMigrateLegacyConfigEndToEnd proves ordinary boot may read
+// compatibility sources but never rewrites them into current config or
+// credential files. Explicit migration owns those writes.
+func TestBuildDoesNotMigrateLegacyConfigEndToEnd(t *testing.T) {
 	home := robustTempDir(t)
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)                               // os.UserHomeDir on Windows
@@ -3453,31 +3453,23 @@ func TestBuildMigratesLegacyConfigEndToEnd(t *testing.T) {
 	}
 	defer ctrl.Close()
 
-	migrated := false
 	for _, n := range notices {
 		if strings.Contains(n, "migrated your previous configuration") {
-			migrated = true
+			t.Fatalf("ordinary boot emitted config migration notice: %q", n)
 		}
-	}
-	if !migrated {
-		t.Fatalf("no migration notice emitted; got %v", notices)
 	}
 
 	dest := config.UserConfigPath()
-	data, err := os.ReadFile(dest)
-	if err != nil {
-		t.Fatalf("v2 config not written to %s: %v", dest, err)
-	}
-	if !strings.Contains(string(data), `name    = "fs"`) || !strings.Contains(string(data), `language      = "zh"`) {
-		t.Errorf("migrated config missing plugin/lang:\n%s", data)
+	if _, err := os.Stat(dest); !os.IsNotExist(err) {
+		t.Fatalf("ordinary boot wrote current config %s: %v", dest, err)
 	}
 
-	if got := os.Getenv("DEEPSEEK_API_KEY"); got != "sk-e2e" {
-		t.Errorf("DEEPSEEK_API_KEY not pinned into env after migration: %q", got)
+	if got := os.Getenv("DEEPSEEK_API_KEY"); got != "" {
+		t.Errorf("ordinary boot imported legacy API key into env: %q", got)
 	}
 
-	if data, err := os.ReadFile(config.UserCredentialsPath()); err != nil || !strings.Contains(string(data), "DEEPSEEK_API_KEY=sk-e2e") {
-		t.Errorf("credentials store missing migrated key: %q (err %v)", data, err)
+	if _, err := os.Stat(config.UserCredentialsPath()); !os.IsNotExist(err) {
+		t.Errorf("ordinary boot wrote credentials store: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(home, ".env")); !os.IsNotExist(err) {
 		t.Errorf("migration must not write the user's ~/.env, stat err=%v", err)
@@ -3498,73 +3490,7 @@ func TestBuildMigratesLegacyConfigEndToEnd(t *testing.T) {
 	}
 }
 
-func TestBuildMigratesLegacyDeepSeekProtocolWithOneNotice(t *testing.T) {
-	home := isolateConfigHome(t)
-	t.Setenv("REASONIX_HOME", filepath.Join(home, "reasonix-home"))
-	userPath := config.UserConfigPath()
-	if err := os.MkdirAll(filepath.Dir(userPath), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(userPath, []byte(`default_model = "deepseek-flash/deepseek-v4-flash"
-
-[[providers]]
-name = "deepseek-flash"
-kind = "openai"
-base_url = "https://api.deepseek.com"
-model = "deepseek-v4-flash"
-api_key_env = "DEEPSEEK_API_KEY"
-`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	var notices []event.Event
-	sink := event.FuncSink(func(e event.Event) {
-		if e.Kind == event.Notice {
-			notices = append(notices, e)
-		}
-	})
-	build := func() {
-		t.Helper()
-		ctrl, err := Build(context.Background(), Options{Sink: sink, WorkspaceRoot: t.TempDir()})
-		if err != nil {
-			t.Fatalf("Build: %v", err)
-		}
-		ctrl.Close()
-	}
-
-	build()
-	migrationNotices := 0
-	for _, notice := range notices {
-		if notice.Text != "DeepSeek official access was upgraded to Anthropic Messages." {
-			continue
-		}
-		migrationNotices++
-		if notice.Level != event.LevelInfo || !strings.Contains(notice.Detail, "prefix-cache") {
-			t.Fatalf("migration notice = %+v", notice)
-		}
-	}
-	if migrationNotices != 1 {
-		t.Fatalf("migration notices = %d, want 1; got %+v", migrationNotices, notices)
-	}
-	raw, err := os.ReadFile(userPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(raw), `kind = "anthropic"`) ||
-		!strings.Contains(string(raw), `base_url = "https://api.deepseek.com/anthropic"`) {
-		t.Fatalf("legacy DeepSeek protocol remained on disk:\n%s", raw)
-	}
-
-	notices = nil
-	build()
-	for _, notice := range notices {
-		if strings.Contains(notice.Text, "DeepSeek official access was upgraded") {
-			t.Fatalf("second boot repeated migration notice: %+v", notice)
-		}
-	}
-}
-
-func TestBuildMigratesDeprecatedAgentStepLimitsWithOneNotice(t *testing.T) {
+func TestBuildIgnoresDeprecatedAgentStepLimitsWithoutRewriting(t *testing.T) {
 	home := isolateConfigHome(t)
 	t.Setenv("REASONIX_HOME", filepath.Join(home, "reasonix-home"))
 	project := robustTempDir(t)
@@ -3599,12 +3525,16 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 		ctrl.Close()
 	}
 
+	before, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	build()
 	migrationNotices := 0
 	for _, notice := range notices {
-		if notice.Text == "Deprecated agent step limits were removed." {
+		if notice.Text == "Deprecated agent step limits were ignored." {
 			migrationNotices++
-			if notice.Level != event.LevelInfo || !strings.Contains(notice.Detail, "--max-steps") || !strings.Contains(notice.Detail, "[bot].max_steps") {
+			if notice.Level != event.LevelWarn || !strings.Contains(notice.Detail, "--max-steps") || !strings.Contains(notice.Detail, "[bot].max_steps") {
 				t.Fatalf("migration notice = %+v", notice)
 			}
 		}
@@ -3616,20 +3546,24 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(raw), "planner_max_steps") || strings.Contains(string(raw), "\nmax_steps = 3") {
-		t.Fatalf("deprecated agent step limits remain after boot:\n%s", raw)
+	if string(raw) != string(before) {
+		t.Fatalf("ordinary boot rewrote deprecated agent settings:\n--- before\n%s\n--- after\n%s", before, raw)
 	}
 
 	notices = nil
 	build()
+	repeated := 0
 	for _, notice := range notices {
-		if strings.Contains(notice.Text, "Deprecated agent step") {
-			t.Fatalf("second boot repeated migration notice: %+v", notice)
+		if notice.Text == "Deprecated agent step limits were ignored." {
+			repeated++
 		}
+	}
+	if repeated != 1 {
+		t.Fatalf("second read-only boot warnings = %d, want 1; got %+v", repeated, notices)
 	}
 }
 
-func TestBuildMigratesDeprecatedRedactToolOutputWithOneNotice(t *testing.T) {
+func TestBuildIgnoresDeprecatedRedactToolOutputWithoutRewriting(t *testing.T) {
 	home := isolateConfigHome(t)
 	t.Setenv("REASONIX_HOME", filepath.Join(home, "reasonix-home"))
 	project := robustTempDir(t)
@@ -3663,12 +3597,16 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 		ctrl.Close()
 	}
 
+	before, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	build()
 	migrationNotices := 0
 	for _, notice := range notices {
-		if notice.Text == "Deprecated redact_tool_output setting was removed." {
+		if notice.Text == "Deprecated redact_tool_output setting was ignored." {
 			migrationNotices++
-			if notice.Level != event.LevelInfo || !strings.Contains(notice.Detail, "doctor redact-sessions") {
+			if notice.Level != event.LevelWarn || !strings.Contains(notice.Detail, "does not rewrite configuration") {
 				t.Fatalf("migration notice = %+v", notice)
 			}
 		}
@@ -3680,16 +3618,20 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(raw), "redact_tool_output") {
-		t.Fatalf("deprecated redact_tool_output remains after boot:\n%s", raw)
+	if string(raw) != string(before) {
+		t.Fatalf("ordinary boot rewrote deprecated redact setting:\n--- before\n%s\n--- after\n%s", before, raw)
 	}
 
 	notices = nil
 	build()
+	repeated := 0
 	for _, notice := range notices {
-		if strings.Contains(notice.Text, "redact_tool_output") {
-			t.Fatalf("second boot repeated migration notice: %+v", notice)
+		if notice.Text == "Deprecated redact_tool_output setting was ignored." {
+			repeated++
 		}
+	}
+	if repeated != 1 {
+		t.Fatalf("second read-only boot warnings = %d, want 1; got %+v", repeated, notices)
 	}
 }
 
