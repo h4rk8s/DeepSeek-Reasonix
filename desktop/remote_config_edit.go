@@ -43,9 +43,9 @@ func editUserConfigIfChangedAtPath(
 		return fmt.Errorf("lock user config edits: %w", err)
 	}
 	defer unlock()
-	cfg := config.LoadForEdit(path)
-	if cfg == nil {
-		cfg = config.Default()
+	cfg, err := config.LoadForEditReadOnlyStrict(path)
+	if err != nil {
+		return fmt.Errorf("load user config for remote edit: %w", err)
 	}
 	changed, err := mutate(cfg)
 	if err != nil {
