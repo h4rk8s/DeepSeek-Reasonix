@@ -299,9 +299,9 @@ func TestCompletionMenuPadsWithNonBreakingSpaces(t *testing.T) {
 }
 
 // TestTranscriptViewportSizing proves the viewport tracks the terminal size and
-// gets the rows left over after the pinned bottom region (input box + the
-// three-row status block = 6 with an empty 1-line composer), and is fed the
-// committed transcript.
+// gets the rows left over after the pinned bottom region (input box + the one
+// available information row = 4 with an empty 1-line composer and no Git or
+// telemetry), and is fed the committed transcript.
 func TestTranscriptViewportSizing(t *testing.T) {
 	ctrl := control.New(control.Options{})
 	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 80)
@@ -309,14 +309,14 @@ func TestTranscriptViewportSizing(t *testing.T) {
 	m0, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = m0.(chatTUI)
 
-	if got := m.bottomRows(); got != 6 {
-		t.Fatalf("bottomRows with an empty composer = %d, want 6 (input 1 + border 2 + status 3)", got)
+	if got := m.bottomRows(); got != 4 {
+		t.Fatalf("bottomRows with an empty composer = %d, want 4 (input 1 + border 2 + status 1)", got)
 	}
 	if m.viewport.Width() != 79 {
 		t.Errorf("viewport content width = %d, want 79 (terminal 80 - 1 scrollbar column)", m.viewport.Width())
 	}
-	if want := m.transcriptHeight(); m.viewport.Height() != want || want != 18 {
-		t.Errorf("viewport height = %d, transcriptHeight = %d, want 18 (24-6)", m.viewport.Height(), want)
+	if want := m.transcriptHeight(); m.viewport.Height() != want || want != 20 {
+		t.Errorf("viewport height = %d, transcriptHeight = %d, want 20 (24-4)", m.viewport.Height(), want)
 	}
 	if m.viewport.TotalLineCount() == 0 {
 		t.Errorf("viewport should hold the committed banner after the first resize")

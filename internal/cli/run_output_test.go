@@ -32,7 +32,7 @@ func TestRunOutputJSONResult(t *testing.T) {
 	var out bytes.Buffer
 	sink := newRunOutputSink(&out, runOutputJSON)
 	sink.Emit(event.Event{Kind: event.Message, Text: "done"})
-	sink.Emit(event.Event{Kind: event.Usage, Usage: &provider.Usage{
+	sink.Emit(event.Event{Kind: event.Usage, UsageModel: "deepseek", Usage: &provider.Usage{
 		PromptTokens: 12, CompletionTokens: 3, CacheHitTokens: 8, CacheMissTokens: 4, Estimated: true,
 	}})
 	sink.Emit(event.Event{Kind: event.TurnDone})
@@ -43,7 +43,7 @@ func TestRunOutputJSONResult(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
 		t.Fatalf("decode result: %v\n%s", err, out.String())
 	}
-	if result.Type != "result" || result.Subtype != "success" || result.IsError || result.Result != "done" || result.SessionID != "abc" {
+	if result.SchemaVersion != 2 || result.Type != "result" || result.Subtype != "success" || result.IsError || result.Result != "done" || result.SessionID != "abc" {
 		t.Fatalf("result = %+v", result)
 	}
 	if result.Usage.InputTokens != 12 || result.Usage.OutputTokens != 3 || result.Usage.CacheReadInputTokens != 8 || result.Usage.CacheCreationInputTokens != 4 {
@@ -78,8 +78,15 @@ func TestRunOutputJSONIncludesCurrencyAwareCostFields(t *testing.T) {
 			if err := json.Unmarshal(out.Bytes(), &result); err != nil {
 				t.Fatal(err)
 			}
-			if result.TotalCost != 2 || result.TotalCostUSD != result.TotalCost || result.Currency != tt.wantCode {
+			if result.TotalCost == nil || *result.TotalCost != 2 || result.Currency != tt.wantCode {
 				t.Fatalf("currency-aware result = %+v", result)
+			}
+			if tt.wantCode == "USD" {
+				if result.TotalCostUSD == nil || *result.TotalCostUSD != *result.TotalCost {
+					t.Fatalf("USD compatibility total = %+v", result)
+				}
+			} else if result.TotalCostUSD != nil {
+				t.Fatalf("non-USD result must omit normalized USD total: %+v", result)
 			}
 		})
 	}
@@ -102,7 +109,7 @@ func TestRunOutputJSONTotalsMoreThanAuditLimit(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
-	if !result.CostComplete || result.TotalCost != 65 || result.Currency != "USD" {
+	if !result.CostComplete || result.TotalCost == nil || *result.TotalCost != 65 || result.Currency != "USD" {
 		t.Fatalf("65-event total was truncated: %+v", result)
 	}
 	if result.CostQuote == nil || result.CostQuote.Selected == nil || result.CostQuote.Selected.Amount != "65" {
@@ -150,11 +157,11 @@ func TestRunOutputSessionIDPreservesExistingFormats(t *testing.T) {
 	}
 }
 
-func TestRunOutputJSONUnknownPricingLooksLikeZeroCostToday(t *testing.T) {
+func TestRunOutputJSONUnknownPricingFailsClosed(t *testing.T) {
 	var out bytes.Buffer
 	sink := newRunOutputSink(&out, runOutputJSON)
 	sink.Emit(event.Event{Kind: event.Message, Text: "done"})
-	sink.Emit(event.Event{Kind: event.Usage, Usage: &provider.Usage{
+	sink.Emit(event.Event{Kind: event.Usage, UsageModel: "deepseek", Usage: &provider.Usage{
 		PromptTokens: 100, CompletionTokens: 20, CacheHitTokens: 80, CacheMissTokens: 20,
 	}})
 	sink.Emit(event.Event{Kind: event.TurnDone})
@@ -165,13 +172,55 @@ func TestRunOutputJSONUnknownPricingLooksLikeZeroCostToday(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
 		t.Fatalf("decode result: %v\n%s", err, out.String())
 	}
-	if got, ok := result["total_cost_usd"].(float64); !ok || got != 0 {
-		t.Fatalf("unknown pricing should currently serialize as total_cost_usd=0, got %#v", result["total_cost_usd"])
+	if _, ok := result["total_cost_usd"]; ok {
+		t.Fatalf("unknown pricing must omit total_cost_usd: %s", out.String())
 	}
-	for _, key := range []string{"schema_version", "usage_is_incomplete", "cost_is_partial", "total_cost_usd_ticks", "modelUsage"} {
-		if _, ok := result[key]; ok {
-			t.Fatalf("run output unexpectedly has v2 field %q before usage contract is implemented: %s", key, out.String())
-		}
+	if _, ok := result["total_cost"]; ok {
+		t.Fatalf("unknown pricing must omit total_cost: %s", out.String())
+	}
+	if result["schema_version"] != float64(2) || result["cost_is_partial"] != true {
+		t.Fatalf("v2 fail-closed fields missing: %s", out.String())
+	}
+	if _, ok := result["total_cost_usd_ticks"]; ok {
+		t.Fatalf("unknown pricing must omit total_cost_usd_ticks: %s", out.String())
+	}
+	if _, ok := result["modelUsage"].(map[string]any)["executor:deepseek"]; !ok {
+		t.Fatalf("model attribution missing: %s", out.String())
+	}
+}
+
+func TestRunOutputJSONCompleteUSDIncludesExactTicks(t *testing.T) {
+	var out bytes.Buffer
+	sink := newRunOutputSink(&out, runOutputJSON)
+	sink.Emit(event.Event{Kind: event.Usage, UsageSource: event.UsageSourcePlanner, UsageModel: "planner", Usage: &provider.Usage{PromptTokens: 3, CompletionTokens: 1, CacheMissTokens: 3}, Pricing: &provider.Pricing{Input: 0.1, Output: 0.2, Currency: "USD"}})
+	sink.Emit(event.Event{Kind: event.Usage, UsageSource: event.UsageSourceExecutor, UsageModel: "executor", Usage: &provider.Usage{PromptTokens: 7, CompletionTokens: 2, CacheHitTokens: 7}, Pricing: &provider.Pricing{CacheHit: 0.01, Output: 0.2, Currency: "USD"}})
+	if err := sink.Finalize("abc", time.Now(), nil); err != nil {
+		t.Fatal(err)
+	}
+	var result runResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.CostIsPartial || result.TotalCostUSDTicks == nil || *result.TotalCostUSDTicks != 9700 || result.TotalCostUSD == nil || *result.TotalCostUSD != 0.00000097 {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestRunOutputJSONReportsOpenBackgroundSubagent(t *testing.T) {
+	var out bytes.Buffer
+	sink := newRunOutputSink(&out, runOutputJSON)
+	sink.Emit(event.Event{Kind: event.BackgroundJobLifecycle, BackgroundJob: event.BackgroundJob{
+		ID: "task-1", Kind: "task", Status: "running",
+	}})
+	if err := sink.Finalize("abc", time.Now(), nil); err != nil {
+		t.Fatal(err)
+	}
+	var result runResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if !result.UsageIsIncomplete || result.OpenBackgroundSubagents != 1 || len(result.IncompleteReasons) != 2 {
+		t.Fatalf("result = %+v", result)
 	}
 }
 
