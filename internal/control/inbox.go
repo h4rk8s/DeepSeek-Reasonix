@@ -51,6 +51,7 @@ type Inbox interface {
 	UpdateInboxItem(id string, display, raw, submit string) (sessioninbox.InboxItemMeta, error)
 	AppendInboxItem(id, text, idempotency string, extra map[string]string) (sessioninbox.InboxItemMeta, error)
 	DeleteInboxItem(id string) error
+	ClearInbox() (InboxClearResult, error)
 	CancelWithInboxItems(ids []string, source string) error
 	CancelWithInboxItemsResult(ids []string, source string) (InboxCancelResult, error)
 	MoveInboxItem(id string, toIndex int) error
@@ -62,6 +63,13 @@ type Inbox interface {
 	TrySteerInboxItem(id string) (sessioninbox.InboxReceipt, error)
 	TryEnqueueAndSteer(req InboxRequest) (sessioninbox.InboxReceipt, error)
 	TryEnqueueFollowup(req InboxRequest) (sessioninbox.InboxReceipt, error)
+}
+
+// InboxClearResult reports the atomic queue-clear outcome. Active items that
+// already crossed the delivery boundary are retained rather than interrupted.
+type InboxClearResult struct {
+	Cleared  int
+	Retained int
 }
 
 // Compile-time port satisfaction.
@@ -471,6 +479,37 @@ func (c *Controller) DeleteInboxItem(id string) error {
 		return nil
 	}
 	return err
+}
+
+// ClearInbox atomically removes every cancellable queue item. Admission is
+// serialized around orphan recovery and the batch manifest transaction so a
+// concurrent turn cannot leave the user with a partially cleared queue.
+func (c *Controller) ClearInbox() (InboxClearResult, error) {
+	result := InboxClearResult{}
+	c.inbox.admissionMu.Lock()
+	defer c.inbox.admissionMu.Unlock()
+	st, err := c.ensureInbox()
+	if err != nil {
+		return result, err
+	}
+	if _, recoverErr := st.RecoverOrphanedInFlightOwnedBy(c.inbox.ownsItem); recoverErr != nil {
+		slog.Warn("controller: recover inbox items before clear", "err", recoverErr)
+	}
+	snap := st.Snapshot()
+	ids := make([]string, 0, len(snap.Items))
+	for _, item := range snap.Items {
+		switch item.State {
+		case sessioninbox.StateQueued, sessioninbox.StateBlocked, sessioninbox.StateUncertain:
+			ids = append(ids, item.ID)
+		}
+	}
+	discarded, err := st.DiscardPendingItemsOwnedResult(ids, "")
+	if err != nil {
+		return result, err
+	}
+	result.Cleared = len(discarded)
+	result.Retained = len(st.Snapshot().Items)
+	return result, nil
 }
 
 func (c *Controller) MoveInboxItem(id string, toIndex int) error {

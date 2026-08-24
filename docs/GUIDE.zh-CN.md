@@ -550,6 +550,12 @@ TUI 展示，不会把额外内容写入下一轮模型输入，也不改变 pro
 | `/paste-image` | 粘贴剪贴板图片 | 与图片快捷键相同的纯图片命令入口。 |
 | 以 `!` 开头的一行 | 直接运行 shell 命令 | 命令在本地执行，不经过模型。 |
 
+`/queue list` 只展示有长度上限的预览，不加载完整正文。可用 `/queue
+show|edit|delete|clear|move`、`/queue pause|resume` 和 `/queue retry|refresh`
+检查或管理待处理消息。`/queue clear` 会用一次原子操作清掉全部排队消息，并在恢复队列变空时
+同时解除暂停；已经进入执行边界的活动消息会保留。崩溃恢复后 inbox 默认暂停，检查完后可用
+`/queue resume` 继续派发。
+
 模式与显示：
 
 | 按键或命令 | 作用 | 说明 |
