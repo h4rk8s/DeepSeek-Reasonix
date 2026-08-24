@@ -29,9 +29,10 @@ type memoryFrontmatter struct {
 	ExpiresAt      string `yaml:"expires_at,omitempty"`
 	LastVerifiedAt string `yaml:"last_verified_at,omitempty"`
 	Metadata       struct {
-		Type     string `yaml:"type"`
-		FactType string `yaml:"fact_type,omitempty"`
-		Scope    string `yaml:"scope"`
+		Type       string `yaml:"type"`
+		FactType   string `yaml:"fact_type,omitempty"`
+		Scope      string `yaml:"scope"`
+		SourceKind string `yaml:"source_kind,omitempty"`
 	} `yaml:"metadata"`
 }
 
@@ -63,6 +64,7 @@ func render(m Memory, name string) string {
 		fm.Metadata.FactType = string(actualType)
 	}
 	fm.Metadata.Scope = string(scope)
+	fm.Metadata.SourceKind = strings.TrimSpace(m.SourceKind)
 	var b strings.Builder
 	b.WriteString("---\n")
 	enc := yaml.NewEncoder(&b)

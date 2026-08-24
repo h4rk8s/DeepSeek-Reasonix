@@ -69,7 +69,10 @@ func (s Store) MigrateV2() (MigrationReport, error) {
 				return report, err
 			}
 			frontmatter, _ := splitFrontmatter(string(raw))
-			if strings.TrimSpace(frontmatter["id"]) != "" && parsePositiveInt(frontmatter["revision"]) > 0 {
+			hasIdentity := strings.TrimSpace(frontmatter["id"]) != "" && parsePositiveInt(frontmatter["revision"]) > 0
+			hasLegacyOwners := strings.TrimSpace(frontmatter["last_confirmed_at"]) != "" ||
+				strings.TrimSpace(frontmatter["source_scope"]) != ""
+			if hasIdentity && !hasLegacyOwners {
 				continue
 			}
 			memory, ok := loadMemory(path)
@@ -154,6 +157,10 @@ func (s Store) validatePinnedBudget(m Memory) error {
 }
 
 func (s Store) SaveWithOptions(m Memory, opts SaveOptions) (SaveResult, error) {
+	return s.saveWithOptionsAt(m, opts, time.Now())
+}
+
+func (s Store) saveWithOptionsAt(m Memory, opts SaveOptions, now time.Time) (SaveResult, error) {
 	memoryStoreMutationMu.Lock()
 	defer memoryStoreMutationMu.Unlock()
 
@@ -204,10 +211,16 @@ func (s Store) SaveWithOptions(m Memory, opts SaveOptions) (SaveResult, error) {
 	if m.Name == "" {
 		return SaveResult{}, fmt.Errorf("memory name needs at least one letter or digit")
 	}
-	now := time.Now().UTC()
+	now = now.UTC()
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
 	if exists {
 		m.ID, m.Revision, m.CreatedAt = existing.ID, existing.Revision+1, existing.CreatedAt
 		m = inheritOnUpdate(m, existing, opts.ClearExpiry)
+		if strings.TrimSpace(m.SourceKind) == "" {
+			m.SourceKind = existing.SourceKind
+		}
 	} else {
 		m.ID = newMemoryID(m.Name, now)
 		m.Revision = 1

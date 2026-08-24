@@ -92,6 +92,7 @@ type Memory struct {
 	LastVerifiedAt time.Time  // last explicit confirmation; renews the freshness clock
 	Keywords       string     // search aliases (bilingual synonyms, related commands); recall-only, never rendered into the index
 	Body           string     // the fact itself (Markdown)
+	SourceKind     string     // origin of the fact, independent of where it applies
 }
 
 // ArchivedMemory is a saved fact that has been removed from active memory but
@@ -178,6 +179,15 @@ func (s Store) Path(name string) string {
 // from the files. Returns the path written.
 func (s Store) Save(m Memory) (string, error) {
 	result, err := s.SaveWithOptions(m, SaveOptions{})
+	return result.Path, err
+}
+
+// SaveAt is Save with an explicit clock for deterministic importers and tests.
+// Updating an existing fact preserves its creation time and provenance unless
+// the caller explicitly supplies replacements. UpdatedAt records the mutation;
+// only an explicit verification advances LastVerifiedAt.
+func (s Store) SaveAt(m Memory, now time.Time) (string, error) {
+	result, err := s.saveWithOptionsAt(m, SaveOptions{}, now)
 	return result.Path, err
 }
 
@@ -713,6 +723,14 @@ func loadMemory(path string) (Memory, bool) {
 		return Memory{}, false
 	}
 	fm, body := splitFrontmatter(string(b))
+	lastVerifiedAt := parseMemoryTime(fm["last_verified_at"])
+	if lastVerifiedAt.IsZero() {
+		lastVerifiedAt = parseMemoryTime(fm["last_confirmed_at"])
+	}
+	scope := factScopeFromFrontmatter(fm["scope"])
+	if scope == "" {
+		scope = factScopeFromFrontmatter(fm["source_scope"])
+	}
 	m := Memory{
 		ID:             fm["id"],
 		Revision:       parsePositiveInt(fm["revision"]),
@@ -726,10 +744,11 @@ func loadMemory(path string) (Memory, bool) {
 		Volatility:     NormalizeVolatility(fm["volatility"]),
 		SubjectKey:     NormalizeSubjectKey(fm["subject_key"]),
 		ExpiresAt:      parseMemoryTime(fm["expires_at"]),
-		LastVerifiedAt: parseMemoryTime(fm["last_verified_at"]),
+		LastVerifiedAt: lastVerifiedAt,
 		Type:           persistedFactType(fm),
-		Scope:          factScopeFromFrontmatter(fm["scope"]),
+		Scope:          scope,
 		Body:           strings.TrimSpace(body),
+		SourceKind:     strings.TrimSpace(fm["source_kind"]),
 	}
 	if m.Name == "" {
 		m.Name = strings.TrimSuffix(filepath.Base(path), ".md")

@@ -73,13 +73,7 @@ func memoryFreshness(m Memory, now time.Time) string {
 	if !m.ExpiresAt.IsZero() && now.After(m.ExpiresAt) {
 		return FreshnessExpired
 	}
-	updated := m.UpdatedAt
-	if updated.IsZero() {
-		updated = m.CreatedAt
-	}
-	if m.LastVerifiedAt.After(updated) {
-		updated = m.LastVerifiedAt
-	}
+	updated := freshnessReferenceTime(m)
 	if updated.IsZero() || updated.After(now) {
 		return FreshnessCurrent
 	}
@@ -95,4 +89,15 @@ func memoryFreshness(m Memory, now time.Time) string {
 		return FreshnessCurrent
 	}
 	return FreshnessStale
+}
+
+func freshnessReferenceTime(m Memory) time.Time {
+	updated := m.UpdatedAt
+	if updated.IsZero() {
+		updated = m.CreatedAt
+	}
+	if m.LastVerifiedAt.After(updated) {
+		updated = m.LastVerifiedAt
+	}
+	return updated
 }
