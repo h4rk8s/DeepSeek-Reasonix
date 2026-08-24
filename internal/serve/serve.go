@@ -1440,7 +1440,7 @@ func (s *Server) generateTitle(ctx context.Context, firstMsg string) string {
 	defer func() {
 		usage = provider.UsageWithRequestAttemptCount(ctx, usage)
 		if usage != nil && !nilutil.IsNil(s.titleUsageSink) {
-			s.titleUsageSink.Emit(event.Event{Kind: event.Usage, ModelRef: s.titleModelRef, Usage: usage, Pricing: s.titlePrice, UsageSource: event.UsageSourceTitle})
+			s.titleUsageSink.Emit(event.Event{Kind: event.Usage, ModelRef: s.titleModelRef, UsageModel: s.titleProv.Name(), Usage: usage, Pricing: s.titlePrice, UsageSource: event.UsageSourceTitle})
 		}
 	}()
 	ch, err := s.titleProv.Stream(ctx, provider.Request{
