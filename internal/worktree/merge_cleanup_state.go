@@ -65,7 +65,7 @@ type cleanupJournal struct {
 }
 
 func cleanupJournalPath(metadata mergeMetadata) string {
-	return filepath.Join(filepath.Dir(metadata.WorktreeRoot), cleanupStateName)
+	return filepath.Join(mergeControlDir(metadata), cleanupStateName)
 }
 
 func writeCleanupState(metadata mergeMetadata, state cleanupState) error {
@@ -210,7 +210,7 @@ func validateLegacyCleanupState(metadata mergeMetadata, expectedHead string, sta
 }
 
 func validateCleanupRecoveryPath(metadata mergeMetadata, path string) error {
-	cleanupDir := filepath.Join(filepath.Dir(metadata.WorktreeRoot), ".reasonix-cleanup")
+	cleanupDir := cleanupRecoveryDir(metadata)
 	cleanupInfo, err := os.Lstat(cleanupDir)
 	if err != nil || !cleanupInfo.IsDir() || cleanupInfo.Mode()&os.ModeSymlink != 0 {
 		return errors.New("cleanup recovery directory is not a real directory")
@@ -226,6 +226,9 @@ func validateCleanupRecoveryPath(metadata mergeMetadata, path string) error {
 	rel, err := filepath.Rel(filepath.Clean(realCleanupDir), filepath.Clean(realPath))
 	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || strings.Contains(rel, string(filepath.Separator)) {
 		return errors.New("cleanup state path escapes the allocation recovery directory")
+	}
+	if metadata.Kind == KindSubagent && !strings.HasPrefix(rel, filepath.Base(metadata.WorktreeRoot)+"-recovery-") {
+		return errors.New("cleanup state path is not the subagent recovery allocation")
 	}
 	return nil
 }

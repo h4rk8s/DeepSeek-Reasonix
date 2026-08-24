@@ -1,14 +1,13 @@
 // Package worktree creates durable, Git-backed workspaces for parallel
-// Delivery sessions. Attached worktrees live under Reasonix-managed state,
-// never inside the source repository, and are never deleted automatically;
-// an exact untouched allocation may be rolled back before it is attached.
+// Delivery sessions and isolated subagents. Delivery allocations use managed
+// state; subagent allocations use the source repository's .worktree directory.
+// Changed allocations are never deleted automatically.
 package worktree
 
 import (
 	"bytes"
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -46,7 +45,7 @@ func RollbackCreate(ctx context.Context, result Result) error {
 	if sourceRoot == "" || worktreeRoot == "" || branch == "" || head == "" {
 		return errors.New("rollback needs the complete created worktree identity")
 	}
-	if !strings.HasPrefix(branch, "reasonix/delivery-") {
+	if _, ok := managedBranchKind(branch); !ok {
 		return fmt.Errorf("refuse to roll back unmanaged branch %q", branch)
 	}
 	if _, _, err := runGit(ctx, sourceRoot, "check-ref-format", "refs/heads/"+branch); err != nil {
@@ -167,78 +166,24 @@ func Inspect(ctx context.Context, workspaceRoot string) Availability {
 // subdirectory, Result.WorkspaceRoot points at the corresponding subdirectory
 // in the new worktree.
 func Create(ctx context.Context, workspaceRoot, managedRoot string) (Result, error) {
-	info, err := inspect(ctx, workspaceRoot)
+	manager := NewManager(managedRoot)
+	res, err := manager.Create(ctx, workspaceRoot, CreatePolicy{
+		Kind:        KindDelivery,
+		DirtyPolicy: DirtyPolicyCommittedHead,
+		Durable:     true,
+	})
 	if err != nil {
 		return Result{}, err
 	}
-	managedRoot = strings.TrimSpace(managedRoot)
-	if managedRoot == "" {
-		return Result{}, errors.New("Reasonix worktree storage is unavailable")
+	result := Result{
+		WorkspaceRoot: res.WorkspaceRoot,
+		WorktreeRoot:  res.WorktreeRoot,
+		SourceRoot:    res.SourceRoot,
+		Branch:        res.Branch,
+		Head:          res.BaseCommit,
+		SourceDirty:   res.SourceDirty,
 	}
-	if err := os.MkdirAll(managedRoot, 0o700); err != nil {
-		return Result{}, fmt.Errorf("create Reasonix worktree storage: %w", err)
-	}
-
-	repoSum := sha256.Sum256([]byte(info.commonDir))
-	repoKey := hex.EncodeToString(repoSum[:8])
-	repoBase := safePathComponent(filepath.Base(info.RepoRoot))
-	if repoBase == "" {
-		repoBase = "repository"
-	}
-
-	for range 5 {
-		id, randomErr := randomID()
-		if randomErr != nil {
-			return Result{}, randomErr
-		}
-		branch := fmt.Sprintf("reasonix/delivery-%s-%s", time.Now().Format("20060102-150405"), id)
-		worktreeRoot := filepath.Join(managedRoot, repoKey, id, repoBase)
-		if _, statErr := os.Stat(worktreeRoot); statErr == nil {
-			continue
-		} else if !os.IsNotExist(statErr) {
-			return Result{}, fmt.Errorf("inspect worktree destination: %w", statErr)
-		}
-		if err := os.MkdirAll(filepath.Dir(worktreeRoot), 0o700); err != nil {
-			return Result{}, fmt.Errorf("create worktree parent: %w", err)
-		}
-
-		_, stderr, addErr := runGit(ctx, info.RepoRoot, "worktree", "add", "-b", branch, worktreeRoot, info.head)
-		if addErr != nil {
-			// A random branch collision is retryable. We deliberately leave any
-			// non-empty partial directory untouched rather than risk deleting user
-			// data after Git returned an ambiguous failure.
-			if strings.Contains(strings.ToLower(stderr), "already exists") {
-				continue
-			}
-			return Result{}, fmt.Errorf("create Git worktree: %w%s", addErr, stderrSuffix(stderr))
-		}
-
-		selectedRoot := worktreeRoot
-		if prefix := filepath.FromSlash(strings.Trim(strings.TrimSpace(info.prefix), "/")); prefix != "" && prefix != "." {
-			selectedRoot = filepath.Join(worktreeRoot, prefix)
-			st, statErr := os.Stat(selectedRoot)
-			if statErr != nil || !st.IsDir() {
-				return Result{}, fmt.Errorf("created worktree is missing selected project subdirectory %q", prefix)
-			}
-		}
-		result := Result{
-			WorkspaceRoot: selectedRoot,
-			WorktreeRoot:  worktreeRoot,
-			SourceRoot:    info.RepoRoot,
-			Branch:        branch,
-			Head:          info.head,
-			SourceDirty:   info.SourceDirty,
-		}
-		if err := writeMergeMetadata(result, info.Branch); err != nil {
-			rollbackErr := RollbackCreate(ctx, result)
-			if rollbackErr != nil {
-				return Result{}, fmt.Errorf("publish merge metadata and roll back allocation: %w", errors.Join(err, fmt.Errorf("exact-clean rollback failed and the worktree was preserved: %w", rollbackErr)))
-			}
-			return Result{}, err
-		}
-		return result, nil
-	}
-	return Result{}, errors.New("could not allocate a unique Delivery worktree")
+	return result, nil
 }
 
 // IsManagedPath reports whether path belongs to Reasonix's durable worktree

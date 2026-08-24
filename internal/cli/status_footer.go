@@ -439,10 +439,7 @@ func (m chatTUI) layoutGitTelemetry(width int) string {
 	}
 
 	if len(identityLines) == 0 {
-		if visibleWidth(telemetry) > width {
-			return packStatusGroups(telemetryGroups, width)
-		}
-		return rightAlignStatusGroup(telemetry, width)
+		return packStatusGroups(telemetryGroups, width)
 	}
 	if telemetry == "" {
 		return strings.Join(identityLines, "\n")

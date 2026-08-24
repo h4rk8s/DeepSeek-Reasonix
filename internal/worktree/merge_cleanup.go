@@ -95,7 +95,7 @@ func beginRetainedCleanup(ctx context.Context, metadata mergeMetadata, expectedH
 		}
 		return retention, err
 	}
-	cleanupDir := filepath.Join(filepath.Dir(metadata.WorktreeRoot), ".reasonix-cleanup")
+	cleanupDir := cleanupRecoveryDir(metadata)
 	if err := ensureCleanupRecoveryDir(cleanupDir); err != nil {
 		return emptyCleanupRetention(), err
 	}
@@ -105,7 +105,7 @@ func beginRetainedCleanup(ctx context.Context, metadata mergeMetadata, expectedH
 	}
 	state := cleanupState{
 		Version: cleanupStateVersion, OriginalRoot: metadata.WorktreeRoot,
-		RecoveryRoot:   filepath.Join(cleanupDir, "recovery-"+recoveryID),
+		RecoveryRoot:   cleanupRecoveryRoot(metadata, recoveryID),
 		WorktreeBranch: metadata.WorktreeBranch, WorktreeHead: expectedHead, Stage: cleanupStagePlanned,
 	}
 	if _, err := os.Lstat(state.RecoveryRoot); err == nil {
@@ -117,6 +117,20 @@ func beginRetainedCleanup(ctx context.Context, metadata mergeMetadata, expectedH
 		return emptyCleanupRetention(), err
 	}
 	return resumeRetainedCleanup(ctx, metadata, state)
+}
+
+func cleanupRecoveryDir(metadata mergeMetadata) string {
+	if metadata.Kind == KindSubagent {
+		return filepath.Dir(metadata.WorktreeRoot)
+	}
+	return filepath.Join(filepath.Dir(metadata.WorktreeRoot), ".reasonix-cleanup")
+}
+
+func cleanupRecoveryRoot(metadata mergeMetadata, recoveryID string) string {
+	if metadata.Kind == KindSubagent {
+		return filepath.Join(cleanupRecoveryDir(metadata), filepath.Base(metadata.WorktreeRoot)+"-recovery-"+recoveryID)
+	}
+	return filepath.Join(cleanupRecoveryDir(metadata), "recovery-"+recoveryID)
 }
 
 func resumeRetainedCleanup(ctx context.Context, metadata mergeMetadata, state cleanupState) (cleanupRetention, error) {
