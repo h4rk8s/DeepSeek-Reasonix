@@ -196,10 +196,10 @@ api_key_env = "`+defaultModelTestConfiguredEnv+`"
 		t.Fatal(err)
 	}
 
-	if got := resolveServeModel(""); got != "minimax/MiniMax-M3" {
+	if got, err := resolveServeModel(""); err != nil || got != "minimax/MiniMax-M3" {
 		t.Fatalf("resolveServeModel(\"\") = %q, want global chat fallback", got)
 	}
-	if got := resolveServeModel("explicit/chat"); got != "explicit/chat" {
+	if got, err := resolveServeModel("explicit/chat"); err != nil || got != "explicit/chat" {
 		t.Fatalf("resolveServeModel(explicit) = %q, want explicit model preserved", got)
 	}
 }

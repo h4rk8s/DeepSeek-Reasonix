@@ -2,6 +2,7 @@ package boot
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -11,6 +12,15 @@ import (
 	"reasonix/internal/history"
 	"reasonix/internal/historycatalog"
 )
+
+func readBootTestFile(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
 
 // isolateConfigHome redirects user config and cache paths to a per-test temp
 // directory. The history projection is process-global, so it must be closed on

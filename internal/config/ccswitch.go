@@ -113,7 +113,10 @@ func importMCPEntries(entries []PluginEntry) (total, added, updated int, err err
 	}
 	unlock := LockUserConfigEdits()
 	defer unlock()
-	cfg := LoadForEdit(path)
+	cfg, err := LoadForEditReadOnlyStrict(path)
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("cc-switch import: load user config: %w", err)
+	}
 	existing := make(map[string]PluginEntry, len(cfg.Plugins))
 	for _, p := range cfg.Plugins {
 		existing[p.Name] = p
