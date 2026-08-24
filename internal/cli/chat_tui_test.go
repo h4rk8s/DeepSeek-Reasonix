@@ -343,7 +343,8 @@ func TestStatusLineWrapAccounting(t *testing.T) {
 			m.transcriptHeight(), m.bottomRows(), got, m.height)
 	}
 
-	// When running, the working line should increase statusLineCount.
+	// Running may replace an idle footer row rather than grow the pinned region.
+	// The important contract is that it never shrinks the reserved status area.
 	idleCount := m.statusLineCount
 	m.state = tuiRunning
 	m.elapsed = 5
@@ -357,8 +358,8 @@ func TestStatusLineWrapAccounting(t *testing.T) {
 	m2.width = m.width
 	m2.statusLineCount = m2.computeStatusLineCount(m2.width)
 	runCount := m2.statusLineCount
-	if runCount <= idleCount {
-		t.Fatalf("statusLineCount when running (%d) should be > idle (%d)", runCount, idleCount)
+	if runCount < idleCount {
+		t.Fatalf("statusLineCount when running (%d) should be >= idle (%d)", runCount, idleCount)
 	}
 
 	// Reset and test that a custom statusline command is still fixed-height.
@@ -472,8 +473,8 @@ func TestRunningQueueAndTodoKeepComposerVisible(t *testing.T) {
 	if !strings.Contains(view, "保留输入框") {
 		t.Fatalf("composer draft was pushed out of the frame:\n%s", view)
 	}
-	if !strings.Contains(view, "[5]") {
-		t.Fatalf("queued feedback preview should still render above composer:\n%s", view)
+	if !strings.Contains(view, "[1]") || !strings.Contains(view, "… +2 more") {
+		t.Fatalf("bounded queued feedback preview should render above composer:\n%s", view)
 	}
 	if got, want := m.transcriptHeight()+m.bottomRows(), m.height; got != want {
 		t.Fatalf("transcriptHeight(%d) + bottomRows(%d) = %d, want %d",
@@ -4719,10 +4720,15 @@ func TestCtrlCCopySelection(t *testing.T) {
 	// Execute the command (copyToClipboard → OSC 52).
 	cmd()
 
-	// Second Ctrl+C should now arm quit (selection is gone). Rendering the
-	// changed model does not require a command.
+	// Second Ctrl+C should now arm quit (selection is gone). In alt-screen mode
+	// the hint is already part of the returned model, so no asynchronous command
+	// is required solely to repaint it.
 	out2, _ := m2.Update(ctrlC)
-	if out2.(chatTUI).lastCtrlCAt.IsZero() {
+	m3, ok := out2.(chatTUI)
+	if !ok {
+		t.Fatalf("Update returned %T, want chatTUI", out2)
+	}
+	if m3.lastCtrlCAt.IsZero() {
 		t.Error("Ctrl+C after copy should arm quit")
 	}
 }

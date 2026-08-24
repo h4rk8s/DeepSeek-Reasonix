@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/colorprofile"
@@ -41,40 +40,14 @@ func TestAssistantBlockAddsStableGutter(t *testing.T) {
 // newTestChatTUI builds a chatTUI with just the pieces the streaming/commit and
 // completion paths need, for unit tests that don't run the bubbletea loop.
 func newTestChatTUI() chatTUI {
-	commit := []string{}
-	ti := textarea.New()
-	configureChatTextarea(&ti)
-	ti.SetWidth(80)
-	shellIdx := map[string]int{}
-	shellOut := map[string]string{}
-	shellExp := map[string]bool{}
-	m := chatTUI{
-		ctrl:                 control.New(control.Options{}),
-		input:                ti,
-		width:                80,
-		height:               40,
-		statusLineCount:      2,
-		submittedInputCursor: -1,
-		queueEditCursor:      -1,
-		nextPasteID:          1,
-		reasoningLineIdx:     -1,
-		reasoningTextIdx:     -1,
-		answerIdx:            -1,
-		toolStreamIdx:        -1,
-		reasoning:            &strings.Builder{},
-		pending:              &strings.Builder{},
-		pendingCommit:        &commit,
-		shellOutputs:         shellOut,
-		shellExpanded:        shellExp,
-		shellTranscriptIdx:   shellIdx,
-		toolLineCountByID:    map[string]int{},
-		subagentProgressIdx:  map[string]int{},
-		subagentProgress:     map[string]*cliSubagentProgress{},
-		showTurnUsage:        true,
-	}
+	m := newChatTUI(control.New(control.Options{}), "", make(chan event.Event, 1), 80)
 	m.buildController = func(controllerBuildSpec, []provider.Message, string, control.SessionAPI) (*control.Controller, error) {
 		return control.New(control.Options{}), nil
 	}
+	m.input.SetWidth(80)
+	m.width = 80
+	m.height = 40
+	m.statusLineCount = 2
 	return m
 }
 
