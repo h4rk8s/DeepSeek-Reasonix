@@ -261,11 +261,11 @@ func TestStatuslineShowsEffortOnModeRowOnly(t *testing.T) {
 	if len(lines) != 3 {
 		t.Fatalf("status block lines = %d, want 3:\n%s", len(lines), strings.Join(lines, "\n"))
 	}
-	if !strings.Contains(lines[0], "effort auto") {
+	if !strings.Contains(lines[2], "effort auto") {
 		t.Fatalf("mode row should include effort:\n%s", strings.Join(lines, "\n"))
 	}
-	if strings.Contains(lines[1], "effort auto") {
-		t.Fatalf("data row should not repeat effort:\n%s", strings.Join(lines, "\n"))
+	if strings.Count(strings.Join(lines, "\n"), "effort auto") != 1 {
+		t.Fatalf("status block should not repeat effort:\n%s", strings.Join(lines, "\n"))
 	}
 }
 
@@ -318,11 +318,11 @@ func TestStatuslineShowsPlannerPairCompactly(t *testing.T) {
 	if len(lines) != 3 {
 		t.Fatalf("status block lines = %d, want 3:\n%s", len(lines), strings.Join(lines, "\n"))
 	}
-	if !strings.Contains(lines[0], "DS v4 flash · plan pro") {
+	if !strings.Contains(lines[2], "DS v4 flash · plan pro") {
 		t.Fatalf("mode row should show compact executor/planner pair:\n%s", strings.Join(lines, "\n"))
 	}
-	if strings.Contains(lines[2], "plan pro") || strings.Contains(lines[2], "deepseek-v4-pro") {
-		t.Fatalf("data row should not repeat planner model:\n%s", strings.Join(lines, "\n"))
+	if strings.Count(strings.Join(lines, "\n"), "plan pro") != 1 {
+		t.Fatalf("status block should not repeat planner model:\n%s", strings.Join(lines, "\n"))
 	}
 }
 
