@@ -84,7 +84,7 @@ var English = Messages{
 	ChatStatusJobsLabel:                    "JOBS",
 	ChatStatusBalanceLabel:                 "BAL",
 	ChatStatusCostLabel:                    "COST",
-	ChatStatusCacheNowFmt:                  "turn hit %s",
+	ChatStatusCacheNowFmt:                  "hit %s",
 	ChatStatusCacheAvgFmt:                  "avg %s",
 	ChatStatusPlanApproval:                 "1 execute · 2 revise · 3 exit without executing · n/Esc keeps planning · PgUp/PgDn/Ctrl+Home/End scrolls",
 	PlanApprovalPrompt:                     "Plan ready above — choose what to do next",
@@ -258,12 +258,14 @@ var English = Messages{
 	CmdCompact:          "compact context",
 	CmdContinueChecks:   "continue a paused final-readiness check",
 	CmdContext:          "show context window, thresholds, and last maintenance",
+	CmdRecap:            "recap visible conversation",
 	CmdRewind:           "rewind to an earlier turn",
 	CmdTree:             "show conversation branches",
 	CmdBranch:           "create a conversation branch",
 	CmdSwitchBranch:     "switch conversation branch",
 	CmdResume:           "resume a saved session",
 	CmdRename:           "rename a session",
+	CmdTitle:            "configure terminal title",
 	CmdModel:            "switch model",
 	CmdStatus:           "show session status",
 	CmdWorkMode:         "deprecated: adaptive standard execution",
@@ -569,6 +571,8 @@ Usage:
   reasonix config compact-ratio [--local] [30..85]       configure automatic compaction threshold
   reasonix config telemetry [auto|on|off]                configure content-free CLI usage metrics
   reasonix report [list|show|send|delete] [ID]           review and explicitly send local CLI crash reports
+  reasonix config lazy-reasoning [off|on|status]         configure folded thinking expansion
+  reasonix config image-understanding-log [off|summary|detail|status]  configure image understanding transcript details
   reasonix mcp <add|remove|list|import>                 manage MCP servers in reasonix.toml
   reasonix subagent <list|create|edit|delete|try|run>   manage and run isolated subagent profiles
   reasonix init                                         show how to generate project memory (AGENTS.md)

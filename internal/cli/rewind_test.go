@@ -9,6 +9,7 @@ import (
 
 	"reasonix/internal/agent"
 	"reasonix/internal/checkpoint"
+	"reasonix/internal/config"
 	"reasonix/internal/control"
 	"reasonix/internal/i18n"
 	"reasonix/internal/provider"
@@ -20,6 +21,7 @@ type rewindConfirmationController struct {
 	commits  []string
 	result   checkpoint.RewindResult
 	switches []string
+	session  string
 }
 
 func (c *rewindConfirmationController) PrepareRewind(_ int, _ control.RewindScope) (checkpoint.RewindPlan, error) {
@@ -36,11 +38,13 @@ func (c *rewindConfirmationController) CommitRewind(planID string) (checkpoint.R
 
 func (c *rewindConfirmationController) SwitchBranch(ref string) (agent.BranchInfo, error) {
 	c.switches = append(c.switches, ref)
+	c.session = ref
 	return agent.BranchInfo{Path: ref}, nil
 }
 
 func (c *rewindConfirmationController) SetPlanMode(bool)            {}
 func (c *rewindConfirmationController) History() []provider.Message { return nil }
+func (c *rewindConfirmationController) SessionPath() string         { return c.session }
 
 func (c *rewindConfirmationController) SummarizeFrom(context.Context, int) error { return nil }
 func (c *rewindConfirmationController) SummarizeUpTo(context.Context, int) error { return nil }
@@ -179,6 +183,7 @@ func TestConversationRewindActivatesReturnedFork(t *testing.T) {
 	}
 	m := newTestChatTUI()
 	m.ctrl = ctrl
+	m.terminalTitleItems = []string{config.TerminalTitleSessionTitle}
 	m.rewind = &rewindPicker{
 		metas:       []checkpoint.Meta{{Turn: 0}},
 		pendingPlan: plan,
@@ -191,5 +196,8 @@ func TestConversationRewindActivatesReturnedFork(t *testing.T) {
 	}
 	if !m.sessionSwitch {
 		t.Fatal("conversation rewind did not replay the forked session")
+	}
+	if m.windowTitle != "fork" {
+		t.Fatalf("conversation rewind title = %q, want fork", m.windowTitle)
 	}
 }
