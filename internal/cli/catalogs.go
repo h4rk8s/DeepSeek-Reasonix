@@ -8,6 +8,7 @@ import (
 	"os"
 	"time"
 
+	"reasonix/internal/i18n"
 	"reasonix/internal/projectiondb"
 	"reasonix/internal/sessioncatalog"
 )
@@ -31,7 +32,10 @@ func registerCatalogCommand(command catalogCommand) {
 }
 
 func runSessionOrCatalogCommand(command string, args []string) int {
-	configureCLIThemeFromConfig()
+	if err := configureCLIThemeFromConfig(); err != nil {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+		return 1
+	}
 	if command != "catalogs" {
 		return sessionOrSessionsCommand(command, args)
 	}

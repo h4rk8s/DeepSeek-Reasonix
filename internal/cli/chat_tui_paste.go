@@ -671,8 +671,8 @@ func stripPromptPrefixesFromPasteLines(text string) string {
 func promptPrefixedPasteLine(line string) (string, bool) {
 	s := strings.TrimLeft(line, " \t")
 	for _, marker := range []string{"›", ">"} {
-		if strings.HasPrefix(s, marker) {
-			return strings.TrimLeft(strings.TrimPrefix(s, marker), " \t"), true
+		if after, ok := strings.CutPrefix(s, marker); ok {
+			return strings.TrimLeft(after, " \t"), true
 		}
 	}
 	return "", false
@@ -808,8 +808,8 @@ func imageSourceCandidates(src pastedImageSource) []pastedImageSource {
 
 func unwrapImageSourceCandidate(src string) (string, bool) {
 	src = strings.TrimSpace(src)
-	if strings.HasPrefix(src, "@") {
-		return strings.TrimSpace(strings.TrimPrefix(src, "@")), true
+	if after, ok := strings.CutPrefix(src, "@"); ok {
+		return strings.TrimSpace(after), true
 	}
 	if isQuotedImageSource(src) || isAngleWrappedImageSource(src) {
 		return strings.TrimSpace(src[1 : len(src)-1]), true
@@ -881,28 +881,11 @@ func nonEmptyPasteLines(text string) []string {
 	return out
 }
 
-func allImageSources(sources []pastedImageSource, goos string) bool {
-	if len(sources) == 0 {
-		return false
-	}
-	for _, src := range sources {
-		if !looksLikeImageSource(src, goos) {
-			return false
-		}
-	}
-	return true
-}
-
 func looksLikeImageSource(src pastedImageSource, goos string) bool {
 	if isDataImage(strings.TrimSpace(src.value)) {
 		return true
 	}
-	for _, path := range pastedPathCandidates(src.value, goos, src.shellDecoded) {
-		if hasImageExtension(path) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(pastedPathCandidates(src.value, goos, src.shellDecoded), hasImageExtension)
 }
 
 func looksLikeExistingImageSource(src pastedImageSource, goos string) bool {

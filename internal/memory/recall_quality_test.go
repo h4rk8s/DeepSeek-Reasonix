@@ -117,7 +117,7 @@ func BenchmarkMemoryRecallQualityCorpus(b *testing.B) {
 	store, now := seedRecallQualityCorpus(b)
 	options := RecallRankingOptions{Now: func() time.Time { return now }}
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		if _, err := searchMemoriesWithOptions(context.Background(), store, "cache prefix hit rate diagnostics", "", "", 4, options); err != nil {
 			b.Fatal(err)
 		}
