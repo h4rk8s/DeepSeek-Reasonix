@@ -26,7 +26,6 @@ func newServeBootstrap() (*serve.Broadcaster, *serve.SessionTagSink, *config.Con
 }
 
 func setupCLIMultiSessionProfile(ctx context.Context, model string, maxSteps int, preset string, tag *serve.SessionTagSink, leases *control.SessionLeaseKeeper) (*control.Controller, boot.Options, error) {
-	migrateMCPConfigForCLIWorkspace()
 	opts := cliProfileBuildOptions(model, maxSteps, false, tag, cliBuildOverrides{
 		Preset: preset, OnSessionRecovered: cliSessionRecoveredHandler(leases),
 	})

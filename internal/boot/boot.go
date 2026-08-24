@@ -226,19 +226,11 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Import v1/v0.5 config before Load so this boot sees the new config + ~/.env.
-	// CLI Run also calls this before config-only commands; keep a shared fallback.
-	migrated, migErr := config.MigrateLegacyIfNeededForRoot(root)
-	deepSeekProtocolMigrated, deepSeekProtocolMigErr := config.MigrateLegacyDeepSeekProtocolUserConfig()
-	stepLimitsMigrated, stepLimitMigErr := config.MigrateLegacyAgentStepLimitsForRoot(root)
-	redactToolOutputMigrated, redactToolOutputMigErr := config.MigrateLegacyRedactToolOutputForRoot(root)
-	memoryCompilerMigrated, memoryCompilerMigErr := config.MigrateLegacyMemoryCompilerForRoot(root)
-	multiThresholdMigrated, multiThresholdMigErr := config.MigrateLegacyMultiThresholdCompactionForRoot(root)
 	cfg, err := config.LoadForRoot(root)
 	if err != nil {
 		return nil, err
 	}
-	deepSeekProtocolMigErr = deepSeekProtocolMigrationNoticeError(handleConfigLoadWarnings(opts, cfg), deepSeekProtocolMigErr)
+	handleConfigLoadWarnings(opts, cfg)
 	// Arm the credential-protection layers from the user-global [secrets]
 	// section before any tool, hook, or plugin subprocess can spawn. Package
 	// globals are correct here because [secrets] is user-global (project
@@ -447,77 +439,24 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 		}
 	}
 
-	if migErr != nil {
-		sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "Config migration did not complete.", Detail: "config migration from ~/.reasonix failed: " + migErr.Error()})
-	} else if migrated != nil {
-		sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: migrated.Notice()})
-	}
-	if deepSeekProtocolMigrated {
-		sink.Emit(event.Event{
-			Kind:   event.Notice,
-			Level:  event.LevelInfo,
-			Text:   "DeepSeek official access was upgraded to Anthropic Messages.",
-			Detail: "Your unmodified legacy OpenAI Chat Completions configuration now uses DeepSeek's recommended Anthropic endpoint with server-side web search. Existing model names and pricing were preserved. The first request starts a new provider cache prefix; later requests rebuild normal prefix-cache reuse.",
-		})
-	} else if deepSeekProtocolMigErr != nil {
+	if cfg.IgnoredLegacyAgentStepLimits() {
+		detail := "[agent].max_steps and planner_max_steps are no longer used; Reasonix now manages interactive progress automatically. " +
+			"Use the CLI --max-steps flag for a one-off run or [bot].max_steps for unattended bot sessions."
 		sink.Emit(event.Event{
 			Kind:   event.Notice,
 			Level:  event.LevelWarn,
-			Text:   "DeepSeek protocol migration did not complete.",
-			Detail: deepSeekProtocolMigErr.Error(),
-		})
-	}
-	if stepLimitsMigrated || cfg.IgnoredLegacyAgentStepLimits() {
-		level := event.LevelInfo
-		text := "Deprecated agent step limits were removed."
-		detail := "[agent].max_steps and planner_max_steps are no longer used; Reasonix now manages interactive progress automatically. " +
-			"Use the CLI --max-steps flag for a one-off run or [bot].max_steps for unattended bot sessions."
-		if stepLimitMigErr != nil {
-			level = event.LevelWarn
-			text = "Deprecated agent step limits were ignored."
-			detail += " The old keys were ignored but could not be removed: " + stepLimitMigErr.Error()
-		}
-		sink.Emit(event.Event{
-			Kind:   event.Notice,
-			Level:  level,
-			Text:   text,
+			Text:   "Deprecated agent step limits were ignored.",
 			Detail: detail,
 		})
-	} else if stepLimitMigErr != nil {
-		sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "Deprecated agent step-limit migration did not complete.", Detail: stepLimitMigErr.Error()})
 	}
-	if redactToolOutputMigrated || redactToolOutputMigErr != nil {
-		level := event.LevelInfo
-		text := "Deprecated redact_tool_output setting was removed."
-		detail := "[secrets].redact_tool_output no longer has any effect: ordinary model/tool content and local session/job artifacts now preserve their original text. Explicit diagnostics and reasonix doctor redact-sessions still redact credential values."
-		if redactToolOutputMigErr != nil {
-			level = event.LevelWarn
-			text = "Deprecated redact_tool_output setting was ignored."
-			detail += " The old key could not be removed: " + redactToolOutputMigErr.Error()
-		}
-		sink.Emit(event.Event{Kind: event.Notice, Level: level, Text: text, Detail: detail})
-	}
-	if memoryCompilerMigrated || memoryCompilerMigErr != nil {
-		level := event.LevelInfo
-		text := "Deprecated memory_compiler setting was removed."
-		detail := "The Memory v5 execution compiler has been removed from Reasonix: [agent].memory_compiler no longer has any effect, user turns are never replaced by compiled execution contracts, and no compiler state is written. Old transcripts containing compiled turns still display normally."
-		if memoryCompilerMigErr != nil {
-			level = event.LevelWarn
-			text = "Deprecated memory_compiler setting was ignored."
-			detail += " The old key could not be removed: " + memoryCompilerMigErr.Error()
-		}
-		sink.Emit(event.Event{Kind: event.Notice, Level: level, Text: text, Detail: detail})
-	}
-	if multiThresholdMigrated || multiThresholdMigErr != nil {
-		level := event.LevelInfo
-		text := "上下文维护已简化为单一自动压缩阈值。"
-		detail := "Context maintenance now uses a single automatic compact_ratio (default 0.80). soft_compact_ratio, tool_result_snip_ratio, compact_force_ratio, cold_resume_prune, and context_editing were removed from config."
-		if multiThresholdMigErr != nil {
-			level = event.LevelWarn
-			text = "Deprecated multi-threshold compaction keys were ignored."
-			detail += " The old keys could not be removed: " + multiThresholdMigErr.Error()
-		}
-		sink.Emit(event.Event{Kind: event.Notice, Level: level, Text: text, Detail: detail})
+	if cfg.IgnoredLegacyRedactToolOutput() {
+		sink.Emit(event.Event{
+			Kind:  event.Notice,
+			Level: event.LevelWarn,
+			Text:  "Deprecated redact_tool_output setting was ignored.",
+			Detail: "[secrets].redact_tool_output no longer controls runtime redaction. " +
+				"Ordinary startup does not rewrite configuration; remove the key manually or run the explicit migration command.",
+		})
 	}
 	migration.MigrateLegacyMemorySources(sink)
 	migration.MigrateLegacySessionSources(sink)
