@@ -98,7 +98,11 @@ func (s *Service) summarizeImages(ctx context.Context, modelRef string, images, 
 		CreatedAt:     time.Now().UnixMilli(),
 	}
 	if usage != nil {
-		sink.Emit(event.Event{Kind: event.Usage, ModelRef: modelRef, Usage: usage, UsageSource: event.UsageSourceClassifier})
+		var pricing *provider.Pricing
+		if s.config.Pricing != nil {
+			pricing = s.config.Pricing(modelRef)
+		}
+		sink.Emit(event.Event{Kind: event.Usage, ModelRef: modelRef, Usage: usage, Pricing: pricing, UsageSource: event.UsageSourceVision})
 	}
 	return summary, nil
 }

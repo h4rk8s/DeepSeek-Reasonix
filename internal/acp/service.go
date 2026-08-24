@@ -1234,7 +1234,10 @@ func (s *service) sessionPrompt(ctx context.Context, raw json.RawMessage) (any, 
 		// that for ACP and tell clients how the successful turn ended.
 		sess.sink.Emit(promptPauseNotice(runErr, warning))
 	}
-	res := SessionPromptResult{StopReason: stop}
+	res := SessionPromptResult{
+		StopReason: stop,
+		Meta:       &SessionPromptMeta{Usage: sess.sink.usageProjection()},
+	}
 	if sess.transcript != "" {
 		res.TranscriptPath = &sess.transcript
 	}

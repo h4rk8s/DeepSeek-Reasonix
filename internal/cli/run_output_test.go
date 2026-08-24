@@ -5,14 +5,24 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"reasonix/internal/agent"
+	"reasonix/internal/billing"
 	"reasonix/internal/event"
 	"reasonix/internal/provider"
 )
+
+func quotedRunUsageEvent(model, source string, usage *provider.Usage, pricing provider.Pricing) event.Event {
+	e := event.Event{Kind: event.Usage, ModelRef: model, UsageSource: source, Usage: usage, Pricing: &pricing}
+	e.CostQuote = event.EnsureCostQuote(e, nil)
+	e.Pricing = nil
+	return e
+}
 
 func TestRunOutputTextPrintsOnlyFinalMessage(t *testing.T) {
 	var out bytes.Buffer
@@ -32,7 +42,7 @@ func TestRunOutputJSONResult(t *testing.T) {
 	var out bytes.Buffer
 	sink := newRunOutputSink(&out, runOutputJSON)
 	sink.Emit(event.Event{Kind: event.Message, Text: "done"})
-	sink.Emit(event.Event{Kind: event.Usage, Usage: &provider.Usage{
+	sink.Emit(event.Event{Kind: event.Usage, ModelRef: "provider/deepseek", Usage: &provider.Usage{
 		PromptTokens: 12, CompletionTokens: 3, CacheHitTokens: 8, CacheMissTokens: 4, Estimated: true,
 	}})
 	sink.Emit(event.Event{Kind: event.TurnDone})
@@ -43,7 +53,7 @@ func TestRunOutputJSONResult(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
 		t.Fatalf("decode result: %v\n%s", err, out.String())
 	}
-	if result.Type != "result" || result.Subtype != "success" || result.IsError || result.Result != "done" || result.SessionID != "abc" {
+	if result.SchemaVersion != 2 || result.Type != "result" || result.Subtype != "success" || result.IsError || result.Result != "done" || result.SessionID != "abc" {
 		t.Fatalf("result = %+v", result)
 	}
 	if result.Usage.InputTokens != 12 || result.Usage.OutputTokens != 3 || result.Usage.CacheReadInputTokens != 8 || result.Usage.CacheCreationInputTokens != 4 {
@@ -66,11 +76,9 @@ func TestRunOutputJSONIncludesCurrencyAwareCostFields(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var out bytes.Buffer
 			sink := newRunOutputSink(&out, runOutputJSON)
-			sink.Emit(event.Event{
-				Kind:    event.Usage,
-				Usage:   &provider.Usage{PromptTokens: 1_000_000, CompletionTokens: 500_000},
-				Pricing: &provider.Pricing{Input: 1, Output: 2, Currency: tt.currency},
-			})
+			sink.Emit(quotedRunUsageEvent("provider/model", event.UsageSourceExecutor,
+				&provider.Usage{PromptTokens: 1_000_000, CompletionTokens: 500_000},
+				provider.Pricing{Input: 1, Output: 2, Currency: tt.currency}))
 			if err := sink.Finalize("abc", time.Now(), nil); err != nil {
 				t.Fatal(err)
 			}
@@ -78,8 +86,15 @@ func TestRunOutputJSONIncludesCurrencyAwareCostFields(t *testing.T) {
 			if err := json.Unmarshal(out.Bytes(), &result); err != nil {
 				t.Fatal(err)
 			}
-			if result.TotalCost != 2 || result.TotalCostUSD != result.TotalCost || result.Currency != tt.wantCode {
+			if result.TotalCost == nil || *result.TotalCost != 2 || result.Currency != tt.wantCode {
 				t.Fatalf("currency-aware result = %+v", result)
+			}
+			if tt.wantCode == "USD" {
+				if result.TotalCostUSD == nil || *result.TotalCostUSD != *result.TotalCost {
+					t.Fatalf("USD compatibility total = %+v", result)
+				}
+			} else if result.TotalCostUSD != nil {
+				t.Fatalf("non-USD result must omit normalized USD total: %+v", result)
 			}
 		})
 	}
@@ -89,11 +104,8 @@ func TestRunOutputJSONTotalsMoreThanAuditLimit(t *testing.T) {
 	var out bytes.Buffer
 	sink := newRunOutputSink(&out, runOutputJSON)
 	for range 65 {
-		sink.Emit(event.Event{
-			Kind:    event.Usage,
-			Usage:   &provider.Usage{PromptTokens: 1_000_000},
-			Pricing: &provider.Pricing{Input: 1, Currency: "USD"},
-		})
+		sink.Emit(quotedRunUsageEvent("provider/model", event.UsageSourceExecutor,
+			&provider.Usage{PromptTokens: 1_000_000}, provider.Pricing{Input: 1, Currency: "USD"}))
 	}
 	if err := sink.Finalize("abc", time.Now(), nil); err != nil {
 		t.Fatal(err)
@@ -102,7 +114,7 @@ func TestRunOutputJSONTotalsMoreThanAuditLimit(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
-	if !result.CostComplete || result.TotalCost != 65 || result.Currency != "USD" {
+	if !result.CostComplete || result.TotalCost == nil || *result.TotalCost != 65 || result.Currency != "USD" {
 		t.Fatalf("65-event total was truncated: %+v", result)
 	}
 	if result.CostQuote == nil || result.CostQuote.Selected == nil || result.CostQuote.Selected.Amount != "65" {
@@ -116,11 +128,8 @@ func TestRunOutputJSONRejectsMixedPricingCurrencies(t *testing.T) {
 	var out bytes.Buffer
 	sink := newRunOutputSink(&out, runOutputJSON)
 	for _, currency := range []string{"$", "¥"} {
-		sink.Emit(event.Event{
-			Kind:    event.Usage,
-			Usage:   &provider.Usage{PromptTokens: 1_000_000},
-			Pricing: &provider.Pricing{Input: 1, Currency: currency},
-		})
+		sink.Emit(quotedRunUsageEvent("provider/model", event.UsageSourceExecutor,
+			&provider.Usage{PromptTokens: 1_000_000}, provider.Pricing{Input: 1, Currency: currency}))
 	}
 	if err := sink.Finalize("abc", time.Now(), nil); err != nil {
 		t.Fatalf("Finalize mixed currencies: %v", err)
@@ -150,13 +159,13 @@ func TestRunOutputSessionIDPreservesExistingFormats(t *testing.T) {
 	}
 }
 
-func TestRunOutputJSONUnknownPricingLooksLikeZeroCostToday(t *testing.T) {
+func TestRunOutputJSONUnknownPricingFailsClosed(t *testing.T) {
 	var out bytes.Buffer
 	sink := newRunOutputSink(&out, runOutputJSON)
 	sink.Emit(event.Event{Kind: event.Message, Text: "done"})
-	sink.Emit(event.Event{Kind: event.Usage, Usage: &provider.Usage{
+	sink.Emit(event.Event{Kind: event.Usage, ModelRef: "provider/deepseek", UsageModel: "legacy/wrong", Usage: &provider.Usage{
 		PromptTokens: 100, CompletionTokens: 20, CacheHitTokens: 80, CacheMissTokens: 20,
-	}})
+	}, Pricing: &provider.Pricing{Input: 999, Output: 999, Currency: "USD"}})
 	sink.Emit(event.Event{Kind: event.TurnDone})
 	if err := sink.Finalize("abc", time.Now(), nil); err != nil {
 		t.Fatal(err)
@@ -165,13 +174,87 @@ func TestRunOutputJSONUnknownPricingLooksLikeZeroCostToday(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
 		t.Fatalf("decode result: %v\n%s", err, out.String())
 	}
-	if got, ok := result["total_cost_usd"].(float64); !ok || got != 0 {
-		t.Fatalf("unknown pricing should currently serialize as total_cost_usd=0, got %#v", result["total_cost_usd"])
+	if _, ok := result["total_cost_usd"]; ok {
+		t.Fatalf("unknown pricing must omit total_cost_usd: %s", out.String())
 	}
-	for _, key := range []string{"schema_version", "usage_is_incomplete", "cost_is_partial", "total_cost_usd_ticks", "modelUsage"} {
-		if _, ok := result[key]; ok {
-			t.Fatalf("run output unexpectedly has v2 field %q before usage contract is implemented: %s", key, out.String())
-		}
+	if _, ok := result["total_cost"]; ok {
+		t.Fatalf("unknown pricing must omit total_cost: %s", out.String())
+	}
+	if result["schema_version"] != float64(2) || result["cost_is_partial"] != true {
+		t.Fatalf("v2 fail-closed fields missing: %s", out.String())
+	}
+	if _, ok := result["total_cost_usd_ticks"]; ok {
+		t.Fatalf("unknown pricing must omit total_cost_usd_ticks: %s", out.String())
+	}
+	modelUsage := result["modelUsage"].(map[string]any)
+	if _, ok := modelUsage["executor:provider/deepseek"]; !ok {
+		t.Fatalf("model attribution missing: %s", out.String())
+	}
+	if _, ok := modelUsage["executor:legacy/wrong"]; ok {
+		t.Fatalf("legacy UsageModel remained a model truth: %s", out.String())
+	}
+}
+
+func TestRunOutputJSONCompleteUSDIncludesExactTicks(t *testing.T) {
+	var out bytes.Buffer
+	sink := newRunOutputSink(&out, runOutputJSON)
+	sink.Emit(quotedRunUsageEvent("provider/planner", event.UsageSourcePlanner,
+		&provider.Usage{PromptTokens: 3, CompletionTokens: 1, CacheMissTokens: 3},
+		provider.Pricing{Input: 0.1, Output: 0.2, Currency: "USD"}))
+	sink.Emit(quotedRunUsageEvent("provider/executor", event.UsageSourceExecutor,
+		&provider.Usage{PromptTokens: 7, CompletionTokens: 2, CacheHitTokens: 7},
+		provider.Pricing{CacheHit: 0.01, Output: 0.2, Currency: "USD"}))
+	if err := sink.Finalize("abc", time.Now(), nil); err != nil {
+		t.Fatal(err)
+	}
+	var result runResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.CostIsPartial || result.TotalCostUSDTicks == nil || *result.TotalCostUSDTicks != 9700 || result.TotalCostUSD == nil || *result.TotalCostUSD != 0.00000097 {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestRunOutputJSONReportsOpenBackgroundSubagent(t *testing.T) {
+	var out bytes.Buffer
+	sink := newRunOutputSink(&out, runOutputJSON)
+	sink.Emit(event.Event{Kind: event.BackgroundJobLifecycle, BackgroundJob: event.BackgroundJob{
+		ID: "task-1", Kind: "task", Status: "running",
+	}})
+	if err := sink.Finalize("abc", time.Now(), nil); err != nil {
+		t.Fatal(err)
+	}
+	var result runResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if !result.UsageIsIncomplete || !result.CostIsPartial || result.TotalCostUSD != nil || result.OpenBackgroundSubagents != 1 || len(result.IncompleteReasons) != 2 {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestRunOutputJSONUsesOccurrenceTimeQuoteWithoutRepricing(t *testing.T) {
+	var out bytes.Buffer
+	sink := newRunOutputSink(&out, runOutputJSON)
+	money := billing.Money{Amount: "0.125", Currency: "USD"}
+	sink.Emit(event.Event{
+		Kind: event.Usage, ModelRef: "provider/model", Usage: &provider.Usage{PromptTokens: 1_000_000},
+		Pricing: &provider.Pricing{Input: 999, Currency: "USD"},
+		CostQuote: &billing.CostQuote{
+			Original: money, Selected: &money, CostComplete: true, DisplayComplete: true, Complete: true,
+			DisplayStatus: billing.DisplayStatusMatched, ModelRef: "legacy/wrong", UsageSource: "wrong",
+		},
+	})
+	if err := sink.Finalize("abc", time.Now(), nil); err != nil {
+		t.Fatal(err)
+	}
+	var result runResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.TotalCostUSDTicks == nil || *result.TotalCostUSDTicks != 1_250_000_000 || result.TotalCostUSD == nil || *result.TotalCostUSD != 0.125 {
+		t.Fatalf("occurrence-time quote was not authoritative: %+v", result)
 	}
 }
 
@@ -260,12 +343,32 @@ func TestEventsJSONLHasOneCanonicalFlag(t *testing.T) {
 		t.Fatal("events-jsonl must use the dedicated --events-jsonl flag")
 	}
 	var code int
-	stderr := captureStderr(t, func() {
+	stderr := captureRunOutputStderr(t, func() {
 		code = runAgent([]string{"--events-jsonl", "--output-format", "json", "task"}, "dev")
 	})
 	if code != 2 || !strings.Contains(stderr, "cannot be combined") {
 		t.Fatalf("exit=%d stderr=%q", code, stderr)
 	}
+}
+
+func captureRunOutputStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+	defer func() { os.Stderr = old }()
+	fn()
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }
 
 func TestRunOutputJSONClassifiesRecoveryPauseAsControlledOutcome(t *testing.T) {

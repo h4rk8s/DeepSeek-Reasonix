@@ -16,6 +16,7 @@ type fakeProvider struct {
 	release chan struct{}
 	fail    bool
 	seen    chan provider.Request
+	usage   *provider.Usage
 }
 
 func (*fakeProvider) Name() string { return "vision" }
@@ -41,7 +42,11 @@ func (p *fakeProvider) Stream(ctx context.Context, r provider.Request) (<-chan p
 			}
 		}
 		out <- provider.Chunk{Type: provider.ChunkText, Text: "left red, right blue, OCR Z7"}
-		out <- provider.Chunk{Type: provider.ChunkUsage, Usage: &provider.Usage{}}
+		usage := p.usage
+		if usage == nil {
+			usage = &provider.Usage{}
+		}
+		out <- provider.Chunk{Type: provider.ChunkUsage, Usage: usage}
 	}()
 	return out, nil
 }
@@ -152,7 +157,7 @@ func TestCachedSummaryDoesNotEmitAdditionalUsage(t *testing.T) {
 	var usage atomic.Int32
 	sink := event.FuncSink(func(e event.Event) {
 		if e.Kind == event.Usage {
-			if e.ModelRef != "vision/model" || e.UsageSource != event.UsageSourceClassifier {
+			if e.ModelRef != "vision/model" || e.UsageSource != event.UsageSourceVision {
 				t.Errorf("usage attribution: %+v", e)
 			}
 			usage.Add(1)
@@ -165,5 +170,31 @@ func TestCachedSummaryDoesNotEmitAdditionalUsage(t *testing.T) {
 	}
 	if usage.Load() != 1 {
 		t.Fatalf("usage events=%d", usage.Load())
+	}
+}
+
+func TestVisionUsageCarriesOccurrencePricingIntoQuoteSink(t *testing.T) {
+	p := &fakeProvider{usage: &provider.Usage{PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15}}
+	s := New(Config{
+		Model:   "vision/model",
+		Resolve: func(string) (provider.Provider, error) { return p, nil },
+		Pricing: func(string) *provider.Pricing {
+			return &provider.Pricing{Input: 1, Output: 2, Currency: "USD"}
+		},
+	})
+	var got event.Event
+	sink := event.NewCostQuoteSink(event.FuncSink(func(e event.Event) {
+		if e.Kind == event.Usage {
+			got = e
+		}
+	}), nil)
+	if _, err := s.Understand(context.Background(), "text/model", []string{"data:image/png;base64,QUFB"}, nil, sink); err != nil {
+		t.Fatal(err)
+	}
+	if got.ModelRef != "vision/model" || got.UsageSource != event.UsageSourceVision {
+		t.Fatalf("usage attribution: %+v", got)
+	}
+	if got.CostQuote == nil || !got.CostQuote.CostComplete {
+		t.Fatalf("cost quote: %+v", got.CostQuote)
 	}
 }

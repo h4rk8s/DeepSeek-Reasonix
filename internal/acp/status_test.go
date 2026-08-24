@@ -19,17 +19,19 @@ type statusFactory struct {
 	*configurableFactory
 }
 
+func quotedStatusUsageEvent(model, source string, usage *provider.Usage, pricing provider.Pricing) event.Event {
+	e := event.Event{Kind: event.Usage, ModelRef: model, UsageSource: source, Usage: usage, Pricing: &pricing}
+	e.CostQuote = event.EnsureCostQuote(e, nil)
+	e.Pricing = nil
+	return e
+}
+
 func TestUsageAccumulatorTotalsMoreThanAuditLimit(t *testing.T) {
 	var accumulator usageAccumulator
 	usage := &provider.Usage{PromptTokens: 1_000_000}
 	pricing := &provider.Pricing{Input: 1, Currency: "USD"}
 	for range 65 {
-		quote := billing.BuildQuote(billing.QuoteInput{
-			Usage:           billing.UsageTokens{PromptTokens: usage.PromptTokens},
-			Rates:           billing.RateCard{Input: pricing.Input, Currency: pricing.Currency},
-			DisplayCurrency: "USD",
-		})
-		accumulator.addQuoted(usage, pricing, &quote, event.UsageSourceExecutor)
+		accumulator.add(quotedStatusUsageEvent("provider/model", event.UsageSourceExecutor, usage, *pricing))
 	}
 	wire := accumulator.wire()
 	if wire.EstimatedCost == nil || *wire.EstimatedCost != 65 || wire.Currency == nil || *wire.Currency != "USD" {
@@ -45,10 +47,10 @@ func TestUsageAccumulatorTotalsMoreThanAuditLimit(t *testing.T) {
 
 func TestUsageAccumulatorExposesAuthoritativeTotalWithoutCacheDoubleCount(t *testing.T) {
 	var accumulator usageAccumulator
-	accumulator.addQuoted(&provider.Usage{
+	accumulator.add(event.Event{Kind: event.Usage, ModelRef: "provider/model", Usage: &provider.Usage{
 		PromptTokens: 1_000, CompletionTokens: 500, ReasoningTokens: 300,
 		CacheHitTokens: 800, CacheMissTokens: 200,
-	}, nil, nil, event.UsageSourceExecutor)
+	}, UsageSource: event.UsageSourceExecutor})
 
 	wire := accumulator.wire()
 	if wire.TotalTokens != 1_500 {
@@ -83,13 +85,43 @@ func TestRestoredUsageKeepsFullScalarTotalAfterNewQuote(t *testing.T) {
 		Rates:           billing.RateCard{Input: pricing.Input, Currency: pricing.Currency},
 		DisplayCurrency: "USD",
 	})
-	accumulator.addQuoted(usage, pricing, &quote, event.UsageSourceExecutor)
+	accumulator.add(event.Event{Kind: event.Usage, ModelRef: "provider/model", Usage: usage, UsageSource: event.UsageSourceExecutor, CostQuote: &quote})
 	wire := accumulator.wire()
 	if wire.EstimatedCost == nil || *wire.EstimatedCost != 3 {
 		t.Fatalf("restored scalar history was replaced by the new ledger fragment: %+v", wire)
 	}
 	if wire.CostComplete == nil || !*wire.CostComplete {
 		t.Fatalf("restored complete state was lost: %+v", wire)
+	}
+}
+
+func TestUsageAccumulatorNeverRepricesProviderPricing(t *testing.T) {
+	var accumulator usageAccumulator
+	accumulator.add(event.Event{
+		Kind: event.Usage, ModelRef: "provider/model", Usage: &provider.Usage{PromptTokens: 1_000_000},
+		Pricing: &provider.Pricing{Input: 999, Currency: "USD"},
+	})
+	wire := accumulator.wire()
+	if wire.EstimatedCost != nil || wire.Currency != nil || wire.CostQuote != nil {
+		t.Fatalf("ACP status repriced an event without an occurrence-time quote: %+v", wire)
+	}
+}
+
+func TestUsageAccumulatorUsesOccurrenceTimeQuoteIdentity(t *testing.T) {
+	var accumulator usageAccumulator
+	money := billing.Money{Amount: "0.125", Currency: "USD"}
+	accumulator.add(event.Event{
+		Kind: event.Usage, ModelRef: "provider/canonical", UsageModel: "legacy/wrong",
+		UsageSource: event.UsageSourcePlanner, Usage: &provider.Usage{PromptTokens: 1},
+		Pricing: &provider.Pricing{Input: 999, Currency: "USD"},
+		CostQuote: &billing.CostQuote{
+			Original: money, Selected: &money, CostComplete: true, DisplayComplete: true, Complete: true,
+			DisplayStatus: billing.DisplayStatusMatched, ModelRef: "legacy/wrong", UsageSource: "wrong",
+		},
+	})
+	wire := accumulator.wire()
+	if wire.EstimatedCost == nil || *wire.EstimatedCost != 0.125 || wire.UsageSource != event.UsageSourcePlanner {
+		t.Fatalf("ACP status did not use canonical event identity and occurrence quote: %+v", wire)
 	}
 }
 
@@ -147,13 +179,13 @@ func TestStatusExtensionTracksMultipleSessionsAndUsage(t *testing.T) {
 	factory := &statusFactory{configurableFactory: &configurableFactory{
 		behavior: func(_ context.Context, sink event.Sink, input string, _ SessionParams) error {
 			sink.Emit(event.Event{Kind: event.Phase, Source: event.UsageSourceExecutor, Text: "executor · implementing"})
-			sink.Emit(event.Event{Kind: event.Usage, Usage: &provider.Usage{
+			sink.Emit(quotedStatusUsageEvent("provider/executor", event.UsageSourceExecutor, &provider.Usage{
 				PromptTokens: 10, CompletionTokens: 4, ReasoningTokens: 2,
 				CacheHitTokens: 7, CacheMissTokens: 3, Estimated: true,
-			}, Pricing: &provider.Pricing{CacheHit: 0.1, Input: 1, Output: 2, Currency: "USD"}, UsageSource: event.UsageSourceExecutor})
-			sink.Emit(event.Event{Kind: event.Usage, Usage: &provider.Usage{
+			}, provider.Pricing{CacheHit: 0.1, Input: 1, Output: 2, Currency: "USD"}))
+			sink.Emit(quotedStatusUsageEvent("provider/executor", event.UsageSourceCompaction, &provider.Usage{
 				PromptTokens: 5, CompletionTokens: 1, CacheMissTokens: 5,
-			}, Pricing: &provider.Pricing{CacheHit: 0.1, Input: 1, Output: 2, Currency: "USD"}, UsageSource: event.UsageSourceCompaction})
+			}, provider.Pricing{CacheHit: 0.1, Input: 1, Output: 2, Currency: "USD"}))
 			sink.Emit(event.Event{Kind: event.Text, Text: input})
 			return nil
 		},

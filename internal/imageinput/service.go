@@ -14,6 +14,7 @@ type Config struct {
 	Model   string
 	Resolve func(string) (provider.Provider, error)
 	Select  func(string, string) (string, bool)
+	Pricing func(string) *provider.Pricing
 }
 type Service struct {
 	config Config

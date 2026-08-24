@@ -3,6 +3,7 @@ package eventwire
 
 import (
 	"encoding/json"
+	"strings"
 
 	"reasonix/internal/billing"
 	"reasonix/internal/event"
@@ -74,6 +75,13 @@ type StreamAttempt struct {
 	Attempt int    `json:"attempt,omitempty"`
 	Max     int    `json:"max,omitempty"`
 	Reason  string `json:"reason,omitempty"` // connection_reset | premature_eof | idle_timeout
+}
+
+type BackgroundJob struct {
+	ID        string `json:"id"`
+	Kind      string `json:"kind"`
+	Status    string `json:"status"`
+	SessionID string `json:"sessionId,omitempty"`
 }
 
 // ToWire converts a typed runtime event into the shared frontend JSON contract.
@@ -189,6 +197,11 @@ func ToWire(e event.Event) Event {
 		}
 	case event.CompletionSummary:
 		w.Completion = toWireCompletionSummary(e.Completion)
+	case event.BackgroundJobLifecycle:
+		w.BackgroundJob = &BackgroundJob{
+			ID: e.BackgroundJob.ID, Kind: e.BackgroundJob.Kind,
+			Status: e.BackgroundJob.Status, SessionID: e.BackgroundJob.SessionID,
+		}
 	}
 	return w
 }
@@ -204,6 +217,7 @@ func toWireUsage(e event.Event) *Usage {
 		CacheMissTokens: u.CacheMissTokens, ReasoningTokens: u.ReasoningTokens,
 		Estimated:               u.Estimated,
 		Source:                  e.UsageSource,
+		Model:                   usageModelRef(e),
 		ContextPromptTokens:     u.ContextPromptTokens,
 		ContextCompletionTokens: u.ContextCompletionTokens,
 		ContextReasoningTokens:  u.ContextReasoningTokens,
@@ -215,9 +229,6 @@ func toWireUsage(e event.Event) *Usage {
 		wire.CacheDiagnostics = ToWireCacheDiagnostics(e.CacheDiagnostics)
 	}
 	quote := e.CostQuote
-	if quote == nil && e.Pricing != nil {
-		quote = event.EnsureCostQuote(e, nil)
-	}
 	if quote != nil {
 		wire.CostQuote = quote
 		wire.CostComplete = quote.CostComplete
@@ -228,11 +239,20 @@ func toWireUsage(e event.Event) *Usage {
 		if quote.Selected != nil {
 			wire.Cost = quote.Selected.Float64()
 			wire.Currency = quote.LegacyCurrencySymbol()
-			wire.CostUSD = wire.Cost
 			wire.CurrencyCode = quote.LegacyCurrencyCode()
+			if isUSD(wire.CurrencyCode) {
+				wire.CostUSD = wire.Cost
+			}
 		}
 	}
 	return wire
+}
+
+func usageModelRef(e event.Event) string {
+	if modelRef := strings.TrimSpace(e.ModelRef); modelRef != "" {
+		return modelRef
+	}
+	return strings.TrimSpace(e.UsageModel)
 }
 
 // DecisionReceipt is the JSON form of a provider-excluded user decision.
@@ -401,6 +421,7 @@ type Usage struct {
 	ReasoningTokens  int               `json:"reasoningTokens,omitempty"`
 	Estimated        bool              `json:"estimated,omitempty"`
 	Source           string            `json:"source,omitempty"`
+	Model            string            `json:"model,omitempty"`
 	CacheDiagnostics *CacheDiagnostics `json:"cacheDiagnostics,omitempty"`
 	// Session-cumulative cache tokens keep status displays steadier than one-turn values.
 	SessionCacheHitTokens  int `json:"sessionCacheHitTokens"`
@@ -427,6 +448,15 @@ type Usage struct {
 	DisplayStatus   string             `json:"displayStatus,omitempty"`
 	AggregateMode   string             `json:"aggregateMode,omitempty"`
 	OriginalTotals  []billing.Money    `json:"originalTotals,omitempty"`
+}
+
+func isUSD(currency string) bool {
+	switch strings.ToUpper(strings.TrimSpace(currency)) {
+	case "$", "USD", "US$":
+		return true
+	default:
+		return false
+	}
 }
 
 // CacheDiagnostics is the JSON form of cache prefix diagnostics.
@@ -481,8 +511,10 @@ func ToWireGuardian(g event.GuardianResult) *Guardian {
 				out.Usage.CostQuote = q
 				out.Usage.Cost = q.LegacyCostFloat()
 				out.Usage.Currency = q.LegacyCurrencySymbol()
-				out.Usage.CostUSD = out.Usage.Cost
 				out.Usage.CurrencyCode = q.LegacyCurrencyCode()
+				if isUSD(out.Usage.CurrencyCode) {
+					out.Usage.CostUSD = out.Usage.Cost
+				}
 			}
 		}
 	}
@@ -583,6 +615,7 @@ var kindNames = map[event.Kind]string{
 	event.PromptAnswered:          "prompt_answered",
 	event.SessionChanged:          "session_changed",
 	event.ReadStatus:              "read_status",
+	event.BackgroundJobLifecycle:  "background_job_lifecycle",
 }
 
 // ContextMaintenance is the JSON form of event.ContextMaintenance.

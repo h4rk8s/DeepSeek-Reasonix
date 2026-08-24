@@ -50,17 +50,34 @@ func TestMetricsSinkForwardsObservedCapabilities(t *testing.T) {
 
 func TestMetricsSinkUsesProviderCacheWriteCost(t *testing.T) {
 	s := &metricsSink{inner: event.Discard}
-	s.Emit(event.Event{
-		Kind: event.Usage,
+	e := event.Event{
+		Kind:     event.Usage,
+		ModelRef: "test/model",
 		Usage: &provider.Usage{
 			CacheMissTokens:        500_000,
 			CacheWriteTokens:       100_000,
 			CacheWriteBilledTokens: 200_000,
 		},
-		Pricing: &provider.Pricing{Input: 2},
-	})
+		Pricing: &provider.Pricing{Input: 2, Currency: "USD"},
+	}
+	e.CostQuote = event.EnsureCostQuote(e, &event.QuoteContext{DisplayCurrency: "USD"})
+	s.Emit(e)
 	if got := s.Snapshot().Cost; got != 1.2 {
 		t.Fatalf("metrics cost = %f, want 1.2", got)
+	}
+}
+
+func TestMetricsSinkDoesNotRepriceMissingOccurrenceQuote(t *testing.T) {
+	s := &metricsSink{inner: event.Discard}
+	s.Emit(event.Event{
+		Kind: event.Usage, ModelRef: "test/model",
+		Usage:   &provider.Usage{PromptTokens: 1_000_000, CacheMissTokens: 1_000_000},
+		Pricing: &provider.Pricing{Input: 99, Currency: "USD"},
+	})
+
+	got := s.Snapshot()
+	if got.Cost != 0 || got.Currency != "" || got.CostComplete {
+		t.Fatalf("unquoted usage was repriced: %+v", got)
 	}
 }
 

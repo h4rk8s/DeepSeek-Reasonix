@@ -59,6 +59,7 @@ func (m *Manager) StartForSession(parentSession, kind, label string, run func(ct
 	}
 
 	m.emitIfActive(parentSession, event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: startedText(kind, id, label)})
+	m.emitIfActive(parentSession, lifecycleEvent(parentSession, id, kind, Running))
 	m.notifyRuntime(parentSession, id)
 
 	if !nilutil.IsNil(m.taskRecorder) {

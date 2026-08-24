@@ -679,6 +679,7 @@ func (m *Manager) recordCompletion(j *Job, st Status, err error) string {
 	}
 	if shouldEmit {
 		m.sink.Emit(event.Event{Kind: event.Notice, Code: event.NoticeCodeBackgroundJobFinished, Level: level, Text: text, Detail: detail})
+		m.sink.Emit(lifecycleEvent(parentSession, id, kind, st))
 	}
 	return parentSession
 }
@@ -1756,6 +1757,17 @@ func (m *Manager) emitTeardownTimeout(action string, result TeardownResult) {
 		}
 	}
 	m.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "Background job teardown timed out.", Detail: b.String()})
+	for _, job := range result.TimedOut {
+		m.sink.Emit(event.Event{Kind: event.BackgroundJobLifecycle, BackgroundJob: event.BackgroundJob{
+			ID: job.ID, Kind: job.Kind, Status: "drain_timeout",
+		}})
+	}
+}
+
+func lifecycleEvent(parentSession, id, kind string, status Status) event.Event {
+	return event.Event{Kind: event.BackgroundJobLifecycle, BackgroundJob: event.BackgroundJob{
+		ID: id, Kind: kind, Status: string(status), SessionID: strings.TrimSpace(parentSession),
+	}}
 }
 
 func (m *Manager) removeTempRoot() {

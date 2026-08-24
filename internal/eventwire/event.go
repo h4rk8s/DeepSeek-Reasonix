@@ -64,5 +64,6 @@ type Event struct {
 	// Phase is set on turn_phase events: working | checking | verifying | reviewing.
 	Phase string `json:"phase,omitempty"`
 	// Completion is set on completion_summary events (content-free quality summary).
-	Completion *CompletionSummary `json:"completion,omitempty"`
+	Completion    *CompletionSummary `json:"completion,omitempty"`
+	BackgroundJob *BackgroundJob     `json:"backgroundJob,omitempty"`
 }

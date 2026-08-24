@@ -1108,6 +1108,13 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 		}
 		return resolveProvider(effectiveResolver, cfg, proxySpec, provider.Selection{Ref: modelRefFromEntry(ve)})
 	}
+	visionPricingResolver := func(ref string) *provider.Pricing {
+		ve, ok := resolveOptionalEntry(effectiveResolver, cfg, strings.TrimSpace(ref))
+		if !ok || ve == nil {
+			return nil
+		}
+		return ve.Price
+	}
 	visionModelSelector := func(currentRef, _ string) (string, bool) {
 		current, ok := resolveOptionalEntry(effectiveResolver, cfg, strings.TrimSpace(currentRef))
 		if !ok || current == nil {
@@ -1138,7 +1145,7 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 		return "", false
 	}
 
-	imageConfig := &imageinput.Config{Model: cfg.Agent.VisionModel, Resolve: visionProviderResolver, Select: visionModelSelector}
+	imageConfig := &imageinput.Config{Model: cfg.Agent.VisionModel, Resolve: visionProviderResolver, Select: visionModelSelector, Pricing: visionPricingResolver}
 	newTaskTool := func() *agent.TaskTool {
 		return agent.NewTaskToolWithOptions(agent.TaskToolOptions{
 			ImageInput:          imageConfig,
