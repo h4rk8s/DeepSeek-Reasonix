@@ -43,7 +43,10 @@ func (m *chatTUI) runCurrencySubcommand(input string) tea.Cmd {
 	if err := func() error {
 		unlock := config.LockUserConfigEdits()
 		defer unlock()
-		edit := config.LoadForEdit(path)
+		edit, err := config.LoadForEditReadOnlyStrict(path)
+		if err != nil {
+			return fmt.Errorf("load user config for currency edit: %w", err)
+		}
 		if err := edit.SetDisplayCurrency(mode); err != nil {
 			return err
 		}

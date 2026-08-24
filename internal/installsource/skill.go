@@ -126,10 +126,16 @@ func (t *installSourceTool) skillCanonicalPath(name, scope string) (string, erro
 func (t *installSourceTool) verifySkill(scope, name string, act *action) error {
 	custom := []string(nil)
 	if scope == "project" {
-		cfg := config.LoadForEdit(filepath.Join(t.root, "reasonix.toml"))
+		cfg, err := config.LoadForEditReadOnlyStrict(filepath.Join(t.root, "reasonix.toml"))
+		if err != nil {
+			return newErr(ErrSourceUnreadable, "load project config after installing skill: %v", err)
+		}
 		custom = cfg.SkillCustomPaths()
 	} else {
-		cfg := config.LoadForEdit(t.configPath(scope))
+		cfg, err := config.LoadForEditReadOnlyStrict(t.configPath(scope))
+		if err != nil {
+			return newErr(ErrSourceUnreadable, "load user config after installing skill: %v", err)
+		}
 		custom = cfg.SkillCustomPaths()
 	}
 	var stderr bytes.Buffer

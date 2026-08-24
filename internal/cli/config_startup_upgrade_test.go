@@ -1,7 +1,7 @@
 package cli
 
 import (
-	"fmt"
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,19 +10,20 @@ import (
 	"reasonix/internal/config"
 )
 
-func TestRunMigratesLegacyConfigBeforeConfigOnlyCommands(t *testing.T) {
+func TestRunIgnoresLegacyGlobalConfigWithoutPersistingMigration(t *testing.T) {
 	isolateCLIConfigHome(t)
 	legacyPath := filepath.Join(filepath.Dir(config.UserConfigPath()), "reasonix.toml")
 	if err := os.MkdirAll(filepath.Dir(legacyPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(legacyPath, []byte(`
+	original := []byte(`
 default_model = "deepseek-flash"
 
 [[plugins]]
 name = "legacy-cli"
 command = "legacy-bin"
-`), 0o644); err != nil {
+`)
+	if err := os.WriteFile(legacyPath, original, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -31,28 +32,29 @@ command = "legacy-bin"
 			t.Fatalf("mcp list rc = %d, want 0", rc)
 		}
 	})
-	if !strings.Contains(out, "legacy-cli") {
-		t.Fatalf("mcp list should include migrated legacy config:\n%s", out)
+	if strings.Contains(out, "legacy-cli") {
+		t.Fatalf("ordinary CLI startup should not import legacy global config:\n%s", out)
 	}
-
-	body, err := os.ReadFile(config.UserConfigPath())
+	if _, err := os.Stat(config.UserConfigPath()); !os.IsNotExist(err) {
+		t.Fatalf("ordinary CLI startup created a migrated user config: %v", err)
+	}
+	body, err := os.ReadFile(legacyPath)
 	if err != nil {
-		t.Fatalf("read migrated user config: %v", err)
+		t.Fatalf("read legacy config: %v", err)
 	}
-	for _, want := range []string{fmt.Sprintf("config_version = %d", config.Default().ConfigVersion), `[desktop]`, `name    = "legacy-cli"`} {
-		if !strings.Contains(string(body), want) {
-			t.Fatalf("migrated config missing %q:\n%s", want, body)
-		}
+	if !bytes.Equal(body, original) {
+		t.Fatalf("ordinary CLI startup rewrote legacy config:\n%s", body)
 	}
 }
 
-func TestRunAppliesUserConfigUpgradesOnStartup(t *testing.T) {
+func TestRunDoesNotPersistUserConfigUpgradesOnStartup(t *testing.T) {
 	isolateCLIConfigHome(t)
 	path := config.UserConfigPath()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte("config_version = 2\ndefault_model = \"deepseek-flash\"\n"), 0o644); err != nil {
+	original := []byte("config_version = 2\ndefault_model = \"deepseek-flash\"\n")
+	if err := os.WriteFile(path, original, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -66,7 +68,7 @@ func TestRunAppliesUserConfigUpgradesOnStartup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read upgraded user config: %v", err)
 	}
-	if !strings.Contains(string(body), fmt.Sprintf("config_version = %d", config.Default().ConfigVersion)) {
-		t.Fatalf("CLI startup should apply user config upgrades:\n%s", body)
+	if !bytes.Equal(body, original) {
+		t.Fatalf("ordinary CLI startup rewrote user config:\n%s", body)
 	}
 }

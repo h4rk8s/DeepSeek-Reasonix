@@ -85,9 +85,9 @@ func editUserConfig(mutate func(*config.Config) error) error {
 	if strings.TrimSpace(path) == "" {
 		return fmt.Errorf("cannot resolve user config path")
 	}
-	cfg := config.LoadForEdit(path)
-	if cfg == nil {
-		cfg = config.Default()
+	cfg, err := config.LoadForEditReadOnlyStrict(path)
+	if err != nil {
+		return fmt.Errorf("load user config for remote edit: %w", err)
 	}
 	if err := mutate(cfg); err != nil {
 		return err

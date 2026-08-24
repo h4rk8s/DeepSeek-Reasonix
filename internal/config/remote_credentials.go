@@ -85,9 +85,9 @@ func EditUserConfigWithCredentials(mutate func(*Config) ([]CredentialChange, err
 	if strings.TrimSpace(path) == "" {
 		return fmt.Errorf("cannot resolve user config path")
 	}
-	cfg := LoadForEdit(path)
-	if cfg == nil {
-		cfg = Default()
+	cfg, err := LoadForEditReadOnlyStrict(path)
+	if err != nil {
+		return fmt.Errorf("load user config for credential edit: %w", err)
 	}
 	changes, err := mutate(cfg)
 	if err != nil {
