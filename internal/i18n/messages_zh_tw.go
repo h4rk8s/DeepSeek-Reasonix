@@ -282,6 +282,7 @@ var ChineseTraditional = Messages{
 	CmdHelp:             "檢視命令列表",
 	CmdWeb:              "在 Web UI 中繼續目前工作階段",
 	CmdTodo:             "清除任務清單",
+	CmdQueue:            "管理排隊指令",
 	CmdQuit:             "退出會話",
 	CmdCopy:             "選擇回覆複製到剪貼簿",
 	CmdExport:           "將會話匯出為 Markdown",

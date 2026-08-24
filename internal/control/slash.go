@@ -48,7 +48,7 @@ type ArgData struct {
 // the token being typed and the byte offset where that token begins, so a caller
 // replaces just that token. Only structured commands participate (/mcp /model
 // /skills /plugins /hooks /effort /goal /reasoning-language
-// /theme /language /currency /memory);
+// /theme /language /currency /memory /queue);
 // others yield nil. Single source of truth for CLI + desktop.
 func SlashArgItems(line string, d ArgData) ([]SlashItem, int) {
 	cmdEnd := strings.IndexAny(line, " \t")
@@ -86,10 +86,30 @@ func SlashArgItems(line string, d ArgData) ([]SlashItem, int) {
 		raw = currencyArgItems(prior)
 	case "/memory":
 		raw = memoryArgItems(prior, d)
+	case "/queue":
+		raw = queueArgItems(prior)
 	default:
 		return nil, from
 	}
 	return filterSlash(raw, line, from, cur), from
+}
+
+func queueArgItems(prior []string) []SlashItem {
+	if len(prior) > 1 {
+		return nil
+	}
+	return []SlashItem{
+		{Label: "list", Insert: "list", Hint: "show queued instructions"},
+		{Label: "show", Insert: "show ", Hint: "show one queued instruction", Descend: true},
+		{Label: "edit", Insert: "edit ", Hint: "edit one queued instruction", Descend: true},
+		{Label: "delete", Insert: "delete ", Hint: "delete one queued instruction", Descend: true},
+		{Label: "clear", Insert: "clear", Hint: "clear all queued instructions"},
+		{Label: "move", Insert: "move ", Hint: "reorder a queued instruction", Descend: true},
+		{Label: "pause", Insert: "pause", Hint: "pause inbox dispatch"},
+		{Label: "resume", Insert: "resume", Hint: "resume inbox dispatch"},
+		{Label: "retry", Insert: "retry ", Hint: "retry one queued instruction", Descend: true},
+		{Label: "refresh", Insert: "refresh ", Hint: "refresh one instruction's references", Descend: true},
+	}
 }
 
 func memoryArgItems(prior []string, d ArgData) []SlashItem {
