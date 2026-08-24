@@ -145,6 +145,15 @@ func loadForRoot(root string, opts loadForRootOptions) (*Config, error) {
 	if cfg.systemPromptFileSource == promptFileSourceUnknown && cfg.Agent.SystemPromptFile != "" {
 		cfg.systemPromptFileSource = promptFileSourceUser
 	}
+	globalMemoryRecall := cfg.Agent.MemoryRecall
+	if cfg.Agent.MemoryRecall.Diversity != nil {
+		v := *cfg.Agent.MemoryRecall.Diversity
+		globalMemoryRecall.Diversity = &v
+	}
+	if cfg.Agent.MemoryRecall.Staleness != nil {
+		v := *cfg.Agent.MemoryRecall.Staleness
+		globalMemoryRecall.Staleness = &v
+	}
 	userDefaultModel := cfg.DefaultModel
 	globalCLI := cfg.CLI
 	globalSecrets := cfg.Secrets
@@ -172,6 +181,7 @@ func loadForRoot(root string, opts loadForRootOptions) (*Config, error) {
 	// The native CLI update channel controls the one user-installed binary.
 	// A repository-local reasonix.toml must never switch that global choice.
 	cfg.CLI = globalCLI
+	cfg.Agent.MemoryRecall = globalMemoryRecall
 	// Secret protection is a user-global security control: a cloned repo's
 	// reasonix.toml must not be able to flip on the workflow-breaking env/path
 	// protections.
