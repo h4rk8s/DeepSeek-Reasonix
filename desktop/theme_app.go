@@ -353,7 +353,10 @@ func (a *App) migrateThemeDesktopStateLocked() ThemeDesktopState {
 func (a *App) desktopAppearanceLocked() (themeMode, baseStyle string) {
 	// Read-only snapshot of user desktop prefs. applyConfigOnly serializes
 	// writers; a concurrent save may race, which is acceptable for UI display.
-	cfg := config.LoadForEdit(config.UserConfigPath())
+	cfg, err := config.LoadForEditWithoutCredentialsReadOnlyStrict(config.UserConfigPath())
+	if err != nil {
+		return "auto", "graphite"
+	}
 	themeMode = cfg.DesktopTheme()
 	if themeMode == "" {
 		themeMode = "auto"

@@ -553,7 +553,10 @@ func ForgetAutoSessionMappingsForPath(sessionPath string) error {
 	unlock := config.LockUserConfigEdits()
 	defer unlock()
 
-	cfg := config.LoadForEdit(userPath)
+	cfg, err := config.LoadForEditReadOnlyStrict(userPath)
+	if err != nil {
+		return fmt.Errorf("load user config to forget session mappings: %w", err)
+	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	changed := false
 	for i := range cfg.Bot.Connections {
@@ -605,7 +608,10 @@ func rememberInbound(msg bot.InboundMessage, sessionID string, actualWorkspaceRo
 	unlock := config.LockUserConfigEdits()
 	defer unlock()
 
-	cfg := config.LoadForEdit(userPath)
+	cfg, err := config.LoadForEditReadOnlyStrict(userPath)
+	if err != nil {
+		return fmt.Errorf("load user config to remember inbound session: %w", err)
+	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	changed := false
 	for i := range cfg.Bot.Connections {

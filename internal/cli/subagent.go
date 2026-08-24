@@ -492,7 +492,10 @@ func editBuiltinSubagentProfile(sk skill.Skill, values subagentProfileFlags) err
 	unlock := config.LockUserConfigEdits()
 	defer unlock()
 	path := config.UserConfigPath()
-	cfg := config.LoadForEdit(path)
+	cfg, err := config.LoadForEditReadOnlyStrict(path)
+	if err != nil {
+		return fmt.Errorf("load user config for subagent edit: %w", err)
+	}
 	if values.model.set {
 		deleteSubagentOverrideAliases(cfg.Agent.SubagentModels, sk.Name)
 		ref := strings.TrimSpace(values.model.value)

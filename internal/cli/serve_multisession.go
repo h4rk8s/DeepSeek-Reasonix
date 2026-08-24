@@ -30,7 +30,6 @@ func newServeBootstrap() (*serve.Broadcaster, *serve.SessionTagSink, *config.Con
 }
 
 func setupCLIMultiSessionProfile(ctx context.Context, model string, maxSteps int, preset string, tag *serve.SessionTagSink, leases *control.SessionLeaseKeeper) (*control.Controller, boot.Options, error) {
-	migrateMCPConfigForCLIWorkspace()
 	broker, err := serveBrowserBrokerFromEnv(os.Getenv)
 	if err != nil {
 		return nil, boot.Options{}, err

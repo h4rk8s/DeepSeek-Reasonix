@@ -93,14 +93,8 @@ func RunWithBuildInfo(args []string, info BuildInfo) int {
 	if len(args) > 0 && isDefaultInteractiveFlag(cmd) {
 		cmd = ""
 	}
-	doctorRepair := isDoctorRepairCommand(args)
-	if shouldMigrateLegacyConfigForCLI(cmd) && !doctorRepair {
-		if err := migrateLegacyConfigForCLI(); err != nil {
-			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
-			return 1
-		}
-	}
-	if shouldMigrateLegacyConfigForCLI(cmd) && !doctorRepair {
+	doctorConfigSafe := isDoctorConfigSafeCommand(args)
+	if shouldLoadConfigForCLI(cmd) && !doctorConfigSafe {
 		cfg, err := config.Load()
 		if err != nil {
 			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
@@ -182,7 +176,7 @@ func RunWithBuildInfo(args []string, info BuildInfo) int {
 		configureCLIThemeFromConfigForTTYOutput()
 		return subagentCommand(rest)
 	case "doctor":
-		if !doctorRepair {
+		if !doctorConfigSafe {
 			if err := configureCLIThemeFromConfigNoProbe(); err != nil {
 				fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 				return 1
@@ -238,10 +232,6 @@ func RunWithBuildInfo(args []string, info BuildInfo) int {
 	}
 }
 
-func isDoctorRepairCommand(args []string) bool {
-	return len(args) > 1 && args[0] == "doctor" && args[1] == "repair"
-}
-
 func isDefaultInteractiveFlag(arg string) bool {
 	switch arg {
 	case "--model", "--max-steps", "--continue", "-c", "--resume", "-r", "--copy", "--dangerously-skip-permissions", "--yolo", "--permission-mode", "--effort", "--dir", "--add-dir", "--allowed-tools", "--allowedTools", "--profile", "--preset":
@@ -253,20 +243,12 @@ func isDefaultInteractiveFlag(arg string) bool {
 	return false
 }
 
-func shouldMigrateLegacyConfigForCLI(cmd string) bool {
+func shouldLoadConfigForCLI(cmd string) bool {
 	switch cmd {
 	case "", "run", "chat", "code", "serve", "web", "setup", "config", "init", "acp", "mcp", "remote", "plugin", "subagent", "doctor", "bot", "upgrade", "update":
 		return true
 	default:
 		return false
-	}
-}
-
-func migrateMCPConfigForCLIWorkspace() {
-	if wd, err := os.Getwd(); err == nil {
-		if _, err := config.MigrateMCPToUserConfigOnUpgrade([]string{wd}); err != nil {
-			fmt.Fprintln(os.Stderr, "warning: MCP config migration failed:", err)
-		}
 	}
 }
 
@@ -334,7 +316,6 @@ func sessionTempFromCLIController(ctrl control.SessionAPI) *sessiontemp.Manager 
 }
 
 func setupProfileWithOverrides(ctx context.Context, modelName string, maxStepsOverride int, requireKey bool, sink event.Sink, overrides cliBuildOverrides) (*control.Controller, error) {
-	migrateMCPConfigForCLIWorkspace()
 	return boot.Build(ctx, cliProfileBuildOptions(modelName, maxStepsOverride, requireKey, sink, overrides))
 }
 
@@ -980,7 +961,11 @@ func runServeWithOptions(args []string, opts serveRunOptions) int {
 	// Serve always resolves an implicit model from the user-global config,
 	// ignoring project-level default_model overrides. Explicit flags and
 	// resumable session models remain strict and are preserved verbatim.
-	*model = resolveServeModel(*model)
+	*model, err = resolveServeModel(*model)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+		return 1
+	}
 	// Keep the browser reachable when the selected provider has no saved key.
 	// The loopback-only provider setup surface stores the missing credential and
 	// rebuilds this controller in place before the normal web UI is exposed.
@@ -2463,7 +2448,11 @@ func configCurrencyCommand(args []string) int {
 	}
 	unlock := config.LockUserConfigEdits()
 	defer unlock()
-	cfg := config.LoadForEdit(path)
+	cfg, err := config.LoadForEditReadOnlyStrict(path)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+		return 1
+	}
 	if err := cfg.SetDisplayCurrency(mode); err != nil {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 2
@@ -2524,7 +2513,11 @@ func configTelemetryCommand(args []string) int {
 	}
 	unlock := config.LockUserConfigEdits()
 	defer unlock()
-	cfg := config.LoadForEdit(path)
+	cfg, err := config.LoadForEditReadOnlyStrict(path)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+		return 1
+	}
 	if err := cfg.SetCLITelemetryMode(rest[0]); err != nil {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 2

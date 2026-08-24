@@ -105,10 +105,9 @@ func TestLoadForRootKeepsCustomProviderFreeOfOfficialDefaults(t *testing.T) {
 	assertNoOfficialDeepSeekFields(t, "LoadForRoot", p)
 }
 
-// TestLastKnownGoodRecoveryKeepsCustomProviderFreeOfOfficialDefaults covers the
-// recovery path, which decodes a snapshot onto a freshly seeded Config and so
-// leaked through the same positional overlay.
-func TestLastKnownGoodRecoveryKeepsCustomProviderFreeOfOfficialDefaults(t *testing.T) {
+// A broken authoritative user config must fail closed even when an older
+// last-known-good snapshot exists.
+func TestBrokenUserConfigDoesNotUseLastKnownGoodProvider(t *testing.T) {
 	home := t.TempDir()
 	ws := t.TempDir()
 	t.Setenv("REASONIX_HOME", home)
@@ -128,15 +127,9 @@ func TestLastKnownGoodRecoveryKeepsCustomProviderFreeOfOfficialDefaults(t *testi
 		t.Fatal(err)
 	}
 
-	cfg, err := LoadForRootReadOnly(ws)
-	if err != nil {
-		t.Fatal(err)
+	if _, err := LoadForRootReadOnly(ws); err == nil {
+		t.Fatal("LoadForRootReadOnly accepted a broken user config via last-known-good provider recovery")
 	}
-	p, ok := cfg.Provider("gateway")
-	if !ok {
-		t.Fatal("gateway provider missing after last-known-good recovery")
-	}
-	assertNoOfficialDeepSeekFields(t, "last-known-good", p)
 }
 
 // TestSecondCustomProviderKeepsNoOfficialDefaults guards the index-1 overlay:

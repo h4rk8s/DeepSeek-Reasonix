@@ -3,11 +3,10 @@ package config
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
-func TestLoadForRootUsesLastKnownGoodWhenUserConfigBroken(t *testing.T) {
+func TestLoadForRootRejectsBrokenUserConfigEvenWithLastKnownGood(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("REASONIX_HOME", home)
 	// Broken live config.
@@ -24,15 +23,8 @@ func TestLoadForRootUsesLastKnownGoodWhenUserConfigBroken(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfg, err := LoadForRoot(t.TempDir())
-	if err != nil {
-		t.Fatalf("LoadForRoot: %v", err)
-	}
-	if cfg.DefaultModel != "from-lkg" {
-		t.Fatalf("default_model=%q want from-lkg", cfg.DefaultModel)
-	}
-	if !cfg.HasLoadWarnings() {
-		t.Fatal("expected load warning")
+	if _, err := LoadForRoot(t.TempDir()); err == nil {
+		t.Fatal("LoadForRoot accepted a broken user config via last-known-good fallback")
 	}
 	// Original file must remain untouched.
 	raw, err := os.ReadFile(filepath.Join(home, "config.toml"))
@@ -41,27 +33,14 @@ func TestLoadForRootUsesLastKnownGoodWhenUserConfigBroken(t *testing.T) {
 	}
 }
 
-func TestLoadForRootUsesDefaultsWhenNoLKG(t *testing.T) {
+func TestLoadForRootRejectsBrokenUserConfigWithoutLastKnownGood(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("REASONIX_HOME", home)
 	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte("[broken\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := LoadForRoot(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !cfg.HasLoadWarnings() {
-		t.Fatal("expected warning")
-	}
-	found := false
-	for _, w := range cfg.LoadWarnings() {
-		if strings.Contains(w, "built-in defaults") {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("warnings=%v", cfg.LoadWarnings())
+	if _, err := LoadForRoot(t.TempDir()); err == nil {
+		t.Fatal("LoadForRoot accepted a broken user config via built-in defaults")
 	}
 }
 
@@ -72,16 +51,8 @@ func TestLoadForRootTypeErrorDoesNotPartiallyApplyUserConfig(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	want := Default().DefaultModel
-	cfg, err := LoadForRoot(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.DefaultModel != want {
-		t.Fatalf("partially decoded user model=%q want default %q", cfg.DefaultModel, want)
-	}
-	if !cfg.HasLoadWarnings() {
-		t.Fatal("expected user config warning")
+	if _, err := LoadForRoot(t.TempDir()); err == nil {
+		t.Fatal("LoadForRoot accepted a partially decoded user config")
 	}
 }
 

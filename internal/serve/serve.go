@@ -504,7 +504,10 @@ func (s *Server) switchEffortExpected(ctx context.Context, level, expectedPath s
 	if err := func() error {
 		unlock := config.LockUserConfigEdits()
 		defer unlock()
-		edit := config.LoadForEdit(editPath)
+		edit, err := config.LoadForEditReadOnlyStrict(editPath)
+		if err != nil {
+			return fmt.Errorf("load config for effort edit: %w", err)
+		}
 		if err := applyEffortEdit(edit, entry, effort); err != nil {
 			return err
 		}
@@ -690,7 +693,6 @@ func (s *Server) index(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = config.MigrateLegacyIfNeeded()
 	lang := "auto"
 	if cfg, err := config.Load(); err == nil {
 		if dl := cfg.DesktopLanguage(); dl != "" {

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -65,7 +66,10 @@ func (c *Config) SaveForRoot(root string) error {
 		projectTOML = filepath.Join(root, "reasonix.toml")
 	}
 	if _, err := os.Stat(projectTOML); err == nil {
-		projectCfg := LoadForEditWithoutCredentials(projectTOML)
+		projectCfg, err := LoadForEditWithoutCredentialsReadOnlyStrict(projectTOML)
+		if err != nil {
+			return fmt.Errorf("load project config for edit: %w", err)
+		}
 		return projectCfg.SaveTo(projectTOML)
 	}
 	if uc := userConfigPath(); uc != "" {

@@ -335,7 +335,15 @@ func (t *installSourceTool) executeUninstall(req request) string {
 	actions := []action{}
 	scopes := t.uninstallSearchScopes(req)
 	for _, scope := range scopes {
-		actions = t.uninstallActionsForScope(req.Name, scope)
+		var err error
+		actions, err = t.uninstallActionsForScope(req.Name, scope)
+		if err != nil {
+			return marshalJSON(response{
+				OK: false, Status: "failed", Op: req.Op, Applied: false,
+				Source: req.Source, Name: req.Name, Scope: scope,
+				Error: err.Error(), Next: "Fix the configuration error, then retry op=uninstall.",
+			})
+		}
 		if len(actions) > 0 {
 			break
 		}
@@ -408,10 +416,13 @@ func (t *installSourceTool) uninstallSearchScopes(req request) []string {
 	return append(scopes, "global")
 }
 
-func (t *installSourceTool) uninstallActionsForScope(name, scope string) []action {
+func (t *installSourceTool) uninstallActionsForScope(name, scope string) ([]action, error) {
 	var actions []action
 	cfgPath := t.configPath(scope)
-	cfg := config.LoadForEdit(cfgPath)
+	cfg, err := config.LoadForEditReadOnlyStrict(cfgPath)
+	if err != nil {
+		return nil, fmt.Errorf("load %s config for uninstall: %w", scope, err)
+	}
 
 	// Skills: try the flat file, then the directory layout, in the chosen
 	// scope. We don't require a kind — "name" disambiguates.
@@ -473,7 +484,7 @@ func (t *installSourceTool) uninstallActionsForScope(name, scope string) []actio
 			}
 		}
 	}
-	return actions
+	return actions, nil
 }
 
 // resolveSkillPath finds the on-disk location of a previously installed

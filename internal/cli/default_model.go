@@ -47,13 +47,16 @@ func resolveModelForCLI(explicitRef string, cfg *config.Config) (ref string, fal
 // resolveServeModel keeps serve's implicit model scoped to the user config.
 // A project reasonix.toml may configure the served workspace, but it must not
 // replace the account-level model used for new serve sessions.
-func resolveServeModel(modelName string) string {
+func resolveServeModel(modelName string) (string, error) {
 	if strings.TrimSpace(modelName) != "" {
-		return modelName
+		return modelName, nil
 	}
-	cfg := config.LoadForEdit(config.UserConfigPath())
+	cfg, err := config.LoadForEditReadOnlyStrict(config.UserConfigPath())
+	if err != nil {
+		return "", fmt.Errorf("load user config for serve model: %w", err)
+	}
 	if resolved, _, ok := cfg.ResolveNewSessionChatModel(); ok {
-		return resolved
+		return resolved, nil
 	}
-	return modelName
+	return modelName, nil
 }

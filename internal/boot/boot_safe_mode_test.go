@@ -43,7 +43,7 @@ func TestBuildIgnoresSafeModeEnvForTools(t *testing.T) {
 	}
 }
 
-func TestBuildMemoryMigrationFailureWarnsAndContinues(t *testing.T) {
+func TestBuildDoesNotAttemptMemoryMigrationOnRead(t *testing.T) {
 	isolateConfigHome(t)
 	project := robustTempDir(t)
 	t.Setenv("REASONIX_SAFE_MODE", "")
@@ -69,11 +69,17 @@ func TestBuildMemoryMigrationFailureWarnsAndContinues(t *testing.T) {
 	}
 	ctrl.Close()
 	for _, notice := range notices {
-		if notice.Level == event.LevelWarn && strings.Contains(notice.Text, "Memory metadata migration") && notice.Detail != "" {
-			return
+		if strings.Contains(notice.Text, "Memory metadata migration") {
+			t.Fatalf("ordinary boot emitted a memory migration notice: %+v", notice)
 		}
 	}
-	t.Fatalf("memory migration warning missing: %+v", notices)
+	got, err := os.ReadFile(globalDir)
+	if err != nil {
+		t.Fatalf("read memory sentinel after boot: %v", err)
+	}
+	if string(got) != "not a directory" {
+		t.Fatalf("ordinary boot rewrote memory sentinel: %q", got)
+	}
 }
 
 func TestBuildNormalModeKeepsSourceConnectorAndSkillTools(t *testing.T) {

@@ -15,6 +15,18 @@ import (
 	"reasonix/internal/sessioncatalog"
 )
 
+func isDoctorConfigSafeCommand(args []string) bool {
+	return isDoctorRepairCommand(args) || isDoctorConfigCommand(args)
+}
+
+func isDoctorRepairCommand(args []string) bool {
+	return len(args) > 1 && args[0] == "doctor" && args[1] == "repair"
+}
+
+func isDoctorConfigCommand(args []string) bool {
+	return len(args) > 1 && args[0] == "doctor" && args[1] == "config"
+}
+
 func doctorBillingCommand(args []string) int {
 	fs := flag.NewFlagSet("doctor billing", flag.ContinueOnError)
 	jsonOut := fs.Bool("json", false, "print billing diagnostics as JSON")
@@ -42,6 +54,9 @@ func doctorBillingCommand(args []string) int {
 }
 
 func doctorCommand(args []string, version string) int {
+	if len(args) > 0 && args[0] == "config" {
+		return doctorConfigCommand(args[1:])
+	}
 	if len(args) > 0 && args[0] == "catalogs" {
 		return doctorCatalogsCommand(args[1:])
 	}
@@ -86,6 +101,34 @@ func doctorCommand(args []string, version string) int {
 		return 0
 	}
 	fmt.Print(doctor.RenderText(report))
+	return 0
+}
+
+func doctorConfigCommand(args []string) int {
+	fs := flag.NewFlagSet("doctor config", flag.ContinueOnError)
+	jsonOut := fs.Bool("json", false, "print effective config provenance as JSON")
+	root := fs.String("root", ".", "project root for config resolution")
+	if code, ok := parseCommandFlags(fs, args); !ok {
+		return code
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintln(os.Stderr, "usage: reasonix doctor config [--root PATH] [--json]")
+		return 2
+	}
+	report := config.InspectForRoot(*root)
+	if *jsonOut {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(report); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+	} else {
+		fmt.Print(config.RenderConfigInspectionText(report))
+	}
+	if !report.Valid {
+		return 1
+	}
 	return 0
 }
 

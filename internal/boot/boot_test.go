@@ -3398,10 +3398,10 @@ func hasPlanModeReadOnlyCommand(commands []string, want string) bool {
 	return false
 }
 
-// TestBuildMigratesLegacyConfigEndToEnd drives the real boot path: a v0.x
-// ~/.reasonix/config.json with no v1+ config present must be imported during
-// Build — config written, key pinned into the env, and the user told via a notice.
-func TestBuildMigratesLegacyConfigEndToEnd(t *testing.T) {
+// TestBuildDoesNotMigrateLegacyConfigEndToEnd proves ordinary boot may read
+// compatibility sources but never rewrites them into current config or
+// credential files. Explicit migration owns those writes.
+func TestBuildDoesNotMigrateLegacyConfigEndToEnd(t *testing.T) {
 	home := robustTempDir(t)
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)                               // os.UserHomeDir on Windows
@@ -3420,6 +3420,9 @@ func TestBuildMigratesLegacyConfigEndToEnd(t *testing.T) {
 	writeFile(t, filepath.Join(home, ".reasonix", "sessions"), "chat-1.events.jsonl",
 		`{"type":"user.message","id":1,"ts":"t","turn":0,"text":"hello from v0.x"}`+"\n"+
 			`{"type":"model.final","id":2,"ts":"t","turn":0,"content":"hi","toolCalls":[],"usage":{},"costUsd":0}`+"\n")
+	legacyMemory := "---\nname: legacy-memory\ndescription: old format\nmetadata:\n  type: project\n  source_scope: project\n  last_confirmed_at: 2026-07-16T08:00:00Z\n---\n\nlegacy body\n"
+	store := memory.StoreFor(config.MemoryUserDir(), proj)
+	writeFile(t, store.Dir, "legacy-memory.md", legacyMemory)
 
 	var notices []string
 	sink := event.FuncSink(func(e event.Event) {
@@ -3434,34 +3437,32 @@ func TestBuildMigratesLegacyConfigEndToEnd(t *testing.T) {
 	}
 	defer ctrl.Close()
 
-	migrated := false
 	for _, n := range notices {
 		if strings.Contains(n, "migrated your previous configuration") {
-			migrated = true
+			t.Fatalf("ordinary boot emitted config migration notice: %q", n)
 		}
-	}
-	if !migrated {
-		t.Fatalf("no migration notice emitted; got %v", notices)
 	}
 
 	dest := config.UserConfigPath()
-	data, err := os.ReadFile(dest)
-	if err != nil {
-		t.Fatalf("v2 config not written to %s: %v", dest, err)
-	}
-	if !strings.Contains(string(data), `name    = "fs"`) || !strings.Contains(string(data), `language      = "zh"`) {
-		t.Errorf("migrated config missing plugin/lang:\n%s", data)
+	if _, err := os.Stat(dest); !os.IsNotExist(err) {
+		t.Fatalf("ordinary boot wrote current config %s: %v", dest, err)
 	}
 
-	if got := os.Getenv("DEEPSEEK_API_KEY"); got != "sk-e2e" {
-		t.Errorf("DEEPSEEK_API_KEY not pinned into env after migration: %q", got)
+	if got := os.Getenv("DEEPSEEK_API_KEY"); got != "" {
+		t.Errorf("ordinary boot imported legacy API key into env: %q", got)
 	}
 
-	if data, err := os.ReadFile(config.UserCredentialsPath()); err != nil || !strings.Contains(string(data), "DEEPSEEK_API_KEY=sk-e2e") {
-		t.Errorf("credentials store missing migrated key: %q (err %v)", data, err)
+	if _, err := os.Stat(config.UserCredentialsPath()); !os.IsNotExist(err) {
+		t.Errorf("ordinary boot wrote credentials store: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(home, ".env")); !os.IsNotExist(err) {
 		t.Errorf("migration must not write the user's ~/.env, stat err=%v", err)
+	}
+	legacyMemoryPath := filepath.Join(store.Dir, "legacy-memory.md")
+	if body, err := os.ReadFile(legacyMemoryPath); err != nil {
+		t.Fatalf("read legacy memory after boot: %v", err)
+	} else if string(body) != legacyMemory {
+		t.Fatalf("ordinary boot rewrote legacy memory:\n%s", body)
 	}
 
 	sessionImported := false
@@ -3479,7 +3480,7 @@ func TestBuildMigratesLegacyConfigEndToEnd(t *testing.T) {
 	}
 }
 
-func TestBuildMigratesDeprecatedAgentStepLimitsWithOneNotice(t *testing.T) {
+func TestBuildIgnoresDeprecatedAgentStepLimitsWithoutRewriting(t *testing.T) {
 	home := isolateConfigHome(t)
 	t.Setenv("REASONIX_HOME", filepath.Join(home, "reasonix-home"))
 	project := robustTempDir(t)
@@ -3514,12 +3515,16 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 		ctrl.Close()
 	}
 
+	before, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	build()
 	migrationNotices := 0
 	for _, notice := range notices {
-		if notice.Text == "Deprecated agent step limits were removed." {
+		if notice.Text == "Deprecated agent step limits were ignored." {
 			migrationNotices++
-			if notice.Level != event.LevelInfo || !strings.Contains(notice.Detail, "--max-steps") || !strings.Contains(notice.Detail, "[bot].max_steps") {
+			if notice.Level != event.LevelWarn || !strings.Contains(notice.Detail, "--max-steps") || !strings.Contains(notice.Detail, "[bot].max_steps") {
 				t.Fatalf("migration notice = %+v", notice)
 			}
 		}
@@ -3531,20 +3536,24 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(raw), "planner_max_steps") || strings.Contains(string(raw), "\nmax_steps = 3") {
-		t.Fatalf("deprecated agent step limits remain after boot:\n%s", raw)
+	if string(raw) != string(before) {
+		t.Fatalf("ordinary boot rewrote deprecated agent settings:\n--- before\n%s\n--- after\n%s", before, raw)
 	}
 
 	notices = nil
 	build()
+	repeated := 0
 	for _, notice := range notices {
-		if strings.Contains(notice.Text, "Deprecated agent step") {
-			t.Fatalf("second boot repeated migration notice: %+v", notice)
+		if notice.Text == "Deprecated agent step limits were ignored." {
+			repeated++
 		}
+	}
+	if repeated != 1 {
+		t.Fatalf("second read-only boot warnings = %d, want 1; got %+v", repeated, notices)
 	}
 }
 
-func TestBuildMigratesDeprecatedRedactToolOutputWithOneNotice(t *testing.T) {
+func TestBuildIgnoresDeprecatedRedactToolOutputWithoutRewriting(t *testing.T) {
 	home := isolateConfigHome(t)
 	t.Setenv("REASONIX_HOME", filepath.Join(home, "reasonix-home"))
 	project := robustTempDir(t)
@@ -3578,12 +3587,16 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 		ctrl.Close()
 	}
 
+	before, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	build()
 	migrationNotices := 0
 	for _, notice := range notices {
-		if notice.Text == "Deprecated redact_tool_output setting was removed." {
+		if notice.Text == "Deprecated redact_tool_output setting was ignored." {
 			migrationNotices++
-			if notice.Level != event.LevelInfo || !strings.Contains(notice.Detail, "doctor redact-sessions") {
+			if notice.Level != event.LevelWarn || !strings.Contains(notice.Detail, "does not rewrite configuration") {
 				t.Fatalf("migration notice = %+v", notice)
 			}
 		}
@@ -3595,16 +3608,20 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(raw), "redact_tool_output") {
-		t.Fatalf("deprecated redact_tool_output remains after boot:\n%s", raw)
+	if string(raw) != string(before) {
+		t.Fatalf("ordinary boot rewrote deprecated redact setting:\n--- before\n%s\n--- after\n%s", before, raw)
 	}
 
 	notices = nil
 	build()
+	repeated := 0
 	for _, notice := range notices {
-		if strings.Contains(notice.Text, "redact_tool_output") {
-			t.Fatalf("second boot repeated migration notice: %+v", notice)
+		if notice.Text == "Deprecated redact_tool_output setting was ignored." {
+			repeated++
 		}
+	}
+	if repeated != 1 {
+		t.Fatalf("second read-only boot warnings = %d, want 1; got %+v", repeated, notices)
 	}
 }
 
@@ -3899,7 +3916,7 @@ func TestPluginSpecsForRootDoesNotPinHTTPCodeGraph(t *testing.T) {
 	}
 }
 
-func TestBuildMigratesLegacyEagerTierToBackground(t *testing.T) {
+func TestBuildTreatsLegacyEagerTierAsBackgroundWithoutRewriting(t *testing.T) {
 	isolateConfigHome(t)
 	dir := robustTempDir(t)
 	t.Chdir(dir)
@@ -3922,6 +3939,8 @@ name = "legacy-eager"
 command = "reasonix-missing-legacy-eager-mcp"
 tier = "eager"
 `)
+	configPath := filepath.Join(dir, "reasonix.toml")
+	before := readBootTestFile(t, configPath)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -3935,16 +3954,13 @@ tier = "eager"
 	if len(failures) != 1 || failures[0].Name != "legacy-eager" {
 		t.Fatalf("failures = %+v, want background startup failure for migrated legacy eager plugin", failures)
 	}
-	raw, err := os.ReadFile(filepath.Join(dir, "reasonix.toml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(raw), "\ntier") {
-		t.Fatalf("legacy eager tier should be removed during load:\n%s", raw)
+	raw := readBootTestFile(t, configPath)
+	if string(raw) != string(before) {
+		t.Fatalf("ordinary boot rewrote the legacy eager config:\n--- before\n%s\n--- after\n%s", before, raw)
 	}
 }
 
-func TestBuildMigratesLegacyLazyTierToBackground(t *testing.T) {
+func TestBuildTreatsLegacyLazyTierAsBackgroundWithoutRewriting(t *testing.T) {
 	isolateConfigHome(t)
 	dir := robustTempDir(t)
 	t.Chdir(dir)
@@ -3967,6 +3983,8 @@ name = "legacy-lazy"
 command = "reasonix-missing-legacy-lazy-mcp"
 tier = "lazy"
 `)
+	configPath := filepath.Join(dir, "reasonix.toml")
+	before := readBootTestFile(t, configPath)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -3980,12 +3998,9 @@ tier = "lazy"
 	if len(failures) != 1 || failures[0].Name != "legacy-lazy" {
 		t.Fatalf("failures = %+v, want background startup failure for migrated legacy lazy plugin", failures)
 	}
-	raw, err := os.ReadFile(filepath.Join(dir, "reasonix.toml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(raw), "\ntier") {
-		t.Fatalf("legacy lazy tier should be removed during load:\n%s", raw)
+	raw := readBootTestFile(t, configPath)
+	if string(raw) != string(before) {
+		t.Fatalf("ordinary boot rewrote the legacy lazy config:\n--- before\n%s\n--- after\n%s", before, raw)
 	}
 }
 

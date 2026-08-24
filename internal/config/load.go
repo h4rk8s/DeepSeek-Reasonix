@@ -32,16 +32,15 @@ func Load() (*Config, error) {
 // each project's reasonix.toml + .mcp.json are resolved independently without
 // changing the process cwd, while provider keys stay rooted in Reasonix home.
 //
-// Note: LoadForRoot may rewrite legacy MCP `tier` lines on disk (see
-// mergeRuntimeTOMLFileSnapshot). Callers that must not mutate config files should use
-// LoadForRootReadOnly instead.
+// Loading configuration is always read-only. Legacy values are normalized in
+// memory; on-disk migration is reserved for explicit migration/repair commands.
 func LoadForRoot(root string) (*Config, error) {
-	return loadForRoot(root, loadForRootOptions{migrateOnDisk: true, loadCredentials: true})
+	return loadForRoot(root, loadForRootOptions{loadCredentials: true})
 }
 
-// LoadForRootReadOnly is like LoadForRoot but never writes config files: it skips
-// on-disk legacy MCP tier migration. Prefer this for diagnostics, doctor, and
-// other read-only inspection paths.
+// LoadForRootReadOnly is retained as an explicit call-site marker for
+// diagnostics and other inspection paths. It has the same no-write semantics
+// as LoadForRoot.
 func LoadForRootReadOnly(root string) (*Config, error) {
 	return loadForRoot(root, loadForRootOptions{loadCredentials: true})
 }
@@ -115,35 +114,13 @@ func loadForRoot(root string, opts loadForRootOptions) (*Config, error) {
 		tomlSources = append(tomlSources, uc)
 		meta, err := mergeTOML(cfg, uc)
 		if err != nil {
-			// Never rewrite the broken original file. Prefer the last verified
-			// snapshot in memory, then built-in defaults, and keep loading so
-			// the rest of the app stays usable.
-			lkgCfg := Default()
-			lkgCfg.setExpansionEnv(expansionEnv)
-			lkgCfg.CredentialsStore = credentialsStoreMode()
-			if lkgErr := loadLastKnownGoodUserConfig(lkgCfg); lkgErr == nil {
-				*cfg = *lkgCfg
-				cfg.addLoadWarning(fmt.Sprintf(
-					"user config %s is invalid (%v); using last-known-good snapshot in memory without modifying the original file",
-					uc, err,
-				))
-			} else {
-				cfg.addLoadWarning(fmt.Sprintf(
-					"user config %s is invalid (%v); using built-in defaults in memory without modifying the original file",
-					uc, err,
-				))
-			}
+			return nil, fmt.Errorf("load user config %s: %w", uc, err)
 		} else {
 			userDefaultModelExplicit = meta.IsDefined("default_model")
 			if meta.IsDefined("agent", "system_prompt_file") {
 				cfg.systemPromptFileSource = promptFileSourceUser
 			}
 		}
-	}
-	// A last-known-good recovery is still trusted user configuration even though
-	// the broken source file cannot provide usable TOML metadata.
-	if cfg.systemPromptFileSource == promptFileSourceUnknown && cfg.Agent.SystemPromptFile != "" {
-		cfg.systemPromptFileSource = promptFileSourceUser
 	}
 	globalMemoryRecall := cfg.Agent.MemoryRecall
 	if cfg.Agent.MemoryRecall.Diversity != nil {
@@ -244,6 +221,7 @@ func loadForRoot(root string, opts loadForRootOptions) (*Config, error) {
 		cfg.mergeMCPJSON(loadLegacyMCP(legacyConfigPath()))
 	}
 	_ = mergeInstalledPluginPackages(cfg, root)
+	cfg.ignoredLegacyRedactOutput = tomlSourcesDefineKey(tomlSources, "secrets", "redact_tool_output")
 	if err := normalizeRuntimeConfigWithMigrationJournal(cfg); err != nil {
 		return nil, err
 	}
@@ -343,6 +321,15 @@ func tomlFileDefinesKey(path string, key ...string) bool {
 		return false
 	}
 	return meta.IsDefined(key...)
+}
+
+func tomlSourcesDefineKey(paths []string, key ...string) bool {
+	for _, path := range paths {
+		if tomlFileDefinesKey(path, key...) {
+			return true
+		}
+	}
+	return false
 }
 
 // backfillDeepSeekPro restores deepseek-pro for configs the pre-fix setup wizard
@@ -682,7 +669,27 @@ func DesktopProviderAccessDeclared(path string) (bool, error) {
 // of resetting to defaults. Reasonix's global .env is loaded so api_key_env
 // resolution works while the wizard decides which keys are still missing.
 func LoadForEdit(path string) *Config {
-	return loadForEdit(path, true, false)
+	cfg, err := LoadForEditStrict(path)
+	if err != nil {
+		panic(err)
+	}
+	return cfg
+}
+
+func LoadForEditWithoutCredentials(path string) *Config {
+	cfg, err := LoadForEditWithoutCredentialsStrict(path)
+	if err != nil {
+		panic(err)
+	}
+	return cfg
+}
+
+func LoadForEditStrict(path string) (*Config, error) {
+	cfg, err := loadForEditStrict(path, true, false)
+	if err != nil {
+		return nil, fmt.Errorf("refusing to edit config: %w", err)
+	}
+	return cfg, nil
 }
 
 // LoadForEditReadOnlyStrict is the error-returning commit-time variant. It must
@@ -730,23 +737,12 @@ func ValidateBytes(data []byte) error {
 	return nil
 }
 
-func loadForEdit(path string, loadCredentials, persistMigrations bool) *Config {
-	cfg, err := loadForEditStrict(path, loadCredentials, persistMigrations)
-	if err == nil {
-		return cfg
+func LoadForEditWithoutCredentialsStrict(path string) (*Config, error) {
+	cfg, err := loadForEditStrict(path, false, false)
+	if err != nil {
+		return nil, fmt.Errorf("refusing to edit config: %w", err)
 	}
-	slog.Warn("config: load for edit failed, using defaults", "path", path, "err", err)
-	if loadCredentials {
-		loadDotEnvForEditPath(path)
-	}
-	cfg = Default()
-	normalizeConfigForEdit(cfg)
-	cfg.editLoadErr = err
-	return cfg
-}
-
-func LoadForEditWithoutCredentials(path string) *Config {
-	return loadForEdit(path, false, false)
+	return cfg, nil
 }
 
 func loadForEditStrict(path string, loadCredentials, persistMigrations bool) (*Config, error) {

@@ -297,6 +297,9 @@ func cliCompletionRootSpec() cliCompletionSpec {
 func doctorCompletionSpec(help cliCompletionFlag) cliCompletionSpec {
 	return completionSpec("doctor", []cliCompletionFlag{completionFlag("--json", cliCompletionNoValue), help},
 		completionSpec("sessions", []cliCompletionFlag{completionFlag("--json", cliCompletionNoValue), help}),
+		completionSpec("config", []cliCompletionFlag{
+			completionFlag("--root", cliCompletionPathValue), completionFlag("--json", cliCompletionNoValue), help,
+		}),
 		completionSpec("repair", []cliCompletionFlag{
 			completionFlag("--root", cliCompletionStaticValue), completionFlag("--apply --project --json", cliCompletionNoValue), help,
 		}),

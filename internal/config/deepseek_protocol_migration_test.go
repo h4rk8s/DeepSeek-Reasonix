@@ -158,12 +158,8 @@ command = "C:\Users\reasonix\mcp.exe"
 		t.Fatalf("automatic migration rewrote malformed config:\n%s", next)
 	}
 
-	cfg, err := LoadForRootReadOnly(t.TempDir())
-	if err != nil {
-		t.Fatalf("resilient config load: %v", err)
-	}
-	if !cfg.HasLoadWarnings() {
-		t.Fatal("resilient config loader did not expose the malformed config")
+	if _, err := LoadForRootReadOnly(t.TempDir()); err == nil {
+		t.Fatal("strict config loader accepted the malformed authoritative user config")
 	}
 
 	if _, err := UpgradeDeepSeekProviderProtocol(path, "deepseek"); err == nil {

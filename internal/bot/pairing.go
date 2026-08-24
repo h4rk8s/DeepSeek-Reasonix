@@ -160,7 +160,10 @@ func ApprovePairingCode(code string) (PairingRequest, error) {
 	}
 	unlock := config.LockUserConfigEdits()
 	defer unlock()
-	cfg := config.LoadForEdit(userPath)
+	cfg, err := config.LoadForEditReadOnlyStrict(userPath)
+	if err != nil {
+		return PairingRequest{}, fmt.Errorf("load user config for pairing approval: %w", err)
+	}
 	if approvePairingForConnectionAccess(&cfg.Bot, req) {
 		if err := cfg.SaveTo(userPath); err != nil {
 			return PairingRequest{}, err

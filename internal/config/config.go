@@ -74,6 +74,7 @@ type Config struct {
 	shadowedProjectProviders   []ProviderEntry
 	ignoredProjectDefaultModel string
 	ignoredLegacyStepLimits    bool
+	ignoredLegacyRedactOutput  bool
 	expansionEnv               map[string]string
 	pluginPackageOwners        map[string]string
 	pluginPackageSkillOwners   map[string][]string
@@ -220,6 +221,13 @@ func (c *Config) addLoadWarning(msg string) {
 // and normalize them in memory.
 func (c *Config) IgnoredLegacyAgentStepLimits() bool {
 	return c != nil && c.ignoredLegacyStepLimits
+}
+
+// IgnoredLegacyRedactToolOutput reports whether this load found the retired
+// [secrets].redact_tool_output setting. Runtime loads ignore it without
+// rewriting the source file.
+func (c *Config) IgnoredLegacyRedactToolOutput() bool {
+	return c != nil && c.ignoredLegacyRedactOutput
 }
 
 // IgnoredProjectDefaultModel returns the project reasonix.toml default_model

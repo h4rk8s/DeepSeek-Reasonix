@@ -526,7 +526,8 @@ func (a *App) beforeClose(ctx context.Context) bool {
 	}
 	cfg, _, err := a.loadDesktopUserConfigForView()
 	if err != nil {
-		cfg = config.LoadForEdit(config.UserConfigPath())
+		// A malformed config must never be replaced with defaults during close.
+		return false
 	}
 	if cfg.DesktopCloseBehavior() == "background" {
 		if !a.backgroundCloseHasRestorePath() {
@@ -691,17 +692,11 @@ func (a *App) restoreOrBuildTabs() {
 	ctx := a.ctx
 	ensureWorkspace()
 
-	// Run legacy config migration before the first config load so the
-	// freshly written config (including the user's default_model) is
-	// picked up by Load instead of falling back to built-in defaults.
-	_, _ = config.MigrateLegacyIfNeeded()
 	if err := reconcileTopicArchiveMetadataPending(a.deleteTopic); err != nil {
 		slog.Warn("desktop: topic archive metadata reconciliation remains pending")
 	}
 	f := loadTabsFile()
 	_, _ = recoverLegacyProjectSidebarRoots(f)
-	_, _ = config.ApplyUserConfigUpgradesOnStartup(config.UserConfigPath())
-	_, _ = config.MigrateMCPToUserConfigOnUpgrade(desktopMCPMigrationRoots(f))
 
 	// Load i18n from the first available config.
 	// Prefer DesktopLanguage (desktop UI setting) over Language (CLI setting),
@@ -807,7 +802,14 @@ func (a *App) createTabEntry(scope, workspaceRoot, topicID string) *WorkspaceTab
 }
 
 func desktopNewSessionDefaults(scope, workspaceRoot string) (string, string) {
-	userCfg := config.LoadForEdit(config.UserConfigPath())
+	userCfg, err := config.LoadForEditReadOnlyStrict(config.UserConfigPath())
+	if err != nil {
+		// This path only supplies defaults for an already-created runtime. An
+		// unreadable config must not panic the Desktop or manufacture defaults
+		// that could later be persisted; leave the current model untouched and
+		// let normal startup diagnostics report the configuration failure.
+		return "", ""
+	}
 	modelCfg := userCfg
 	if strings.TrimSpace(scope) == "project" && strings.TrimSpace(workspaceRoot) != "" {
 		if cfg, err := config.LoadForRootReadOnly(workspaceRoot); err == nil {
@@ -2781,7 +2783,10 @@ func channelSessionRoutesForDir(dir string) map[string]channelSessionRoute {
 	if strings.TrimSpace(userPath) == "" {
 		return nil
 	}
-	cfg := config.LoadForEdit(userPath)
+	cfg, err := config.LoadForEditWithoutCredentialsReadOnlyStrict(userPath)
+	if err != nil {
+		return nil
+	}
 	out := map[string]channelSessionRoute{}
 	for _, conn := range cfg.Bot.Connections {
 		channel := strings.TrimSpace(conn.Provider)
@@ -4008,7 +4013,6 @@ func (a *App) buildSessionRebindCandidate(
 			root = wd
 		}
 	}
-	_ = config.MigrateLegacyCredentialsForRoot(root)
 	cfg, err := config.LoadForRoot(root)
 	if err != nil {
 		return nil, err
@@ -7801,7 +7805,10 @@ func (a *App) cachedSkillRootsView(workspaceRoots ...string) []SkillRootView {
 	}
 	workspaceRoot = normalizeWorkspaceRoot(workspaceRoot)
 	cfg, _ := config.LoadForRootReadOnly(workspaceRoot)
-	userCfg := config.LoadForEdit(config.UserConfigPath())
+	userCfg, err := config.LoadForEditWithoutCredentialsReadOnlyStrict(config.UserConfigPath())
+	if err != nil {
+		return nil
+	}
 	key := skillRootsCacheKey(workspaceRoot, cfg, userCfg)
 
 	now := time.Now()
