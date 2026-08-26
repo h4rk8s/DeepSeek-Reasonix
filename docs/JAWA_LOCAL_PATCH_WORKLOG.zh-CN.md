@@ -174,6 +174,7 @@ git format-patch --no-stat --output-directory .local-patches origin/main-v2..HEA
 - CLI 适配保留上游 multi-session bootstrap 与 `SessionTagSink`，同时让 `config.Load` 错误沿新 helper 返回，继续满足“配置无效必须明确失败、不能静默回退并覆盖”的本地契约。新 helper 中遗留的普通启动 MCP migration 调用已删除，保持 project-local discovery 和 user config read-only。
 - usage/event 适配同时保留上游 `SessionChanged`、带 code 的 background-job notice 和本地 `BackgroundJobLifecycle`；vision footer 适配同时保留上游 session routing/workspace 字段和本地 `phase=vision`、`ModelRef`，没有重复新增模型字段。
 - 上游 `[3/3]` 已把 remote session resume guard 移到 `remote_tab_pending_selection.go`，但前端 source-contract test 仍只读取旧 `remote_projects.go`，导致纯上游同样稳定失败。本地只修正测试读取路径，不改变远程会话运行逻辑；上游修复后应直接删除该测试适配。
+- 上游 `topic-activation` 测试只等待 history hydration 就立即断言异步 runtime reconciliation，连续单测可在通过/失败间切换。本地等待条件同时观察 history 与 `running`，固定原本要验证的最终状态；同样不改变运行时代码，上游稳定测试后应删除。
 - 已通过 TUI interaction regression、冲突相关 Go 包、`go vet ./...`、`golangci-lint`、根模块全量、Desktop Go 全量和 Node 24 前端 build/test。`repolint` 仍报告本地长期功能相对上游 ratchet 的既有结构债务，本轮不改 baseline，也不把历史债务伪装成通过。
 
 ### 2026-08-26 capability/MCP 跟进
