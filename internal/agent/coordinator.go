@@ -621,10 +621,13 @@ func boundedToolNames(names []string, max int) string {
 // use it so dual-model sessions surface the user's words, not the handoff
 // boilerplate (#3860).
 func HandoffTask(s string) string {
-	trimmed := strings.TrimSpace(s)
-	if !strings.HasPrefix(trimmed, "# "+executorHandoffMarker) {
+	trimmed := strings.TrimSpace(StripTransientUserBlocks(s))
+	marker := "# " + executorHandoffMarker
+	markerIdx := strings.Index(trimmed, marker)
+	if markerIdx < 0 {
 		return s
 	}
+	trimmed = trimmed[markerIdx:]
 	const header = "Original task:\n"
 	_, after, ok := strings.Cut(trimmed, header)
 	if !ok {
@@ -634,7 +637,7 @@ func HandoffTask(s string) string {
 	if j := strings.Index(rest, "\n\nPlanner output:"); j >= 0 {
 		rest = rest[:j]
 	}
-	if task := strings.TrimSpace(rest); task != "" {
+	if task := strings.TrimSpace(StripTransientUserBlocks(rest)); task != "" {
 		return task
 	}
 	return s
