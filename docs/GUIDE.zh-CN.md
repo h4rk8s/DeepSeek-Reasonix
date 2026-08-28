@@ -405,6 +405,13 @@ CLI/TUI 文本输入可通过 `[ui].cursor_shape` 设置光标形状，支持 `u
 想使用传统终端块状光标可设为 `block`，偏好更弱的下划线光标可设为 `underline`。
 该设置不影响桌面端或 Web 输入框。
 
+如果希望 thinking 默认不占 scrollback，但结束后仍能按需查看，可以设置
+`[ui].lazy_reasoning = true`。CLI 会保留已完成的 thinking 原文，并保持
+`▎ thought for Ns` 折叠；用鼠标点击这行可展开，再点展开内容可收起。这个开关只影响本地
+TUI 展示，不会把额外内容写入下一轮模型输入，也不改变 prompt cache 前缀。
+也可以用 `reasonix config lazy-reasoning on|off|status` 管理这个全局偏好；临时试用可用
+`REASONIX_LAZY_REASONING=1 reasonix`，不会写配置文件。
+
 ### 桌面端 GUI
 
 桌面端 Todo 面板会同时依据 `todo_write` 和所属标签页的运行态显示状态：真实执行时为「进行中」，

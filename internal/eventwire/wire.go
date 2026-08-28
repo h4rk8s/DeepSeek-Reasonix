@@ -249,13 +249,6 @@ func toWireUsage(e event.Event) *Usage {
 	return wire
 }
 
-func usageModelRef(e event.Event) string {
-	if modelRef := strings.TrimSpace(e.ModelRef); modelRef != "" {
-		return modelRef
-	}
-	return strings.TrimSpace(e.UsageModel)
-}
-
 // DecisionReceipt is the JSON form of a provider-excluded user decision.
 type DecisionReceipt struct {
 	ID      string `json:"id"`

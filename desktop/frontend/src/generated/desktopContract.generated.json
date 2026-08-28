@@ -4755,7 +4755,7 @@
       "result": {
         "elem": {
           "kind": "object",
-          "ref": "main.HistoryMessage"
+          "ref": "transcript.Entry"
         },
         "kind": "array"
       },
@@ -4842,7 +4842,7 @@
       "result": {
         "elem": {
           "kind": "object",
-          "ref": "main.HistoryMessage"
+          "ref": "transcript.Entry"
         },
         "kind": "array"
       },
@@ -6654,7 +6654,7 @@
       "result": {
         "elem": {
           "kind": "object",
-          "ref": "main.HistoryMessage"
+          "ref": "transcript.Entry"
         },
         "kind": "array"
       },
@@ -7489,7 +7489,7 @@
       "result": {
         "elem": {
           "kind": "object",
-          "ref": "main.HistoryMessage"
+          "ref": "transcript.Entry"
         },
         "kind": "array"
       },
@@ -9816,7 +9816,7 @@
       "result": {
         "elem": {
           "kind": "object",
-          "ref": "main.HistoryMessage"
+          "ref": "transcript.Entry"
         },
         "kind": "array"
       },
@@ -9848,7 +9848,7 @@
       "result": {
         "elem": {
           "kind": "object",
-          "ref": "main.HistoryMessage"
+          "ref": "transcript.Entry"
         },
         "kind": "array"
       },
@@ -17220,6 +17220,35 @@
         }
       ]
     },
+    "eventwire.BackgroundJob": {
+      "fields": [
+        {
+          "name": "id",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "kind",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "status",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "sessionId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        }
+      ]
+    },
     "eventwire.CacheDiagnostics": {
       "fields": [
         {
@@ -17992,12 +18021,30 @@
           }
         },
         {
+          "name": "modelRef",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
           "name": "completion",
           "optional": true,
           "type": {
             "elem": {
               "kind": "object",
               "ref": "eventwire.CompletionSummary"
+            },
+            "kind": "nullable"
+          }
+        },
+        {
+          "name": "backgroundJob",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "eventwire.BackgroundJob"
             },
             "kind": "nullable"
           }
@@ -19276,6 +19323,13 @@
         },
         {
           "name": "source",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "model",
           "optional": true,
           "type": {
             "kind": "string"
@@ -22843,7 +22897,7 @@
           "name": "message",
           "type": {
             "kind": "object",
-            "ref": "main.HistoryMessage"
+            "ref": "transcript.Entry"
           }
         },
         {
@@ -22858,283 +22912,6 @@
         }
       ]
     },
-    "main.HistoryMessage": {
-      "fields": [
-        {
-          "name": "completionReceipt",
-          "optional": true,
-          "type": {
-            "elem": {
-              "kind": "object",
-              "ref": "eventwire.CompletionReceipt"
-            },
-            "kind": "nullable"
-          }
-        },
-        {
-          "name": "completionSummary",
-          "optional": true,
-          "type": {
-            "elem": {
-              "kind": "object",
-              "ref": "eventwire.CompletionSummary"
-            },
-            "kind": "nullable"
-          }
-        },
-        {
-          "name": "turnId",
-          "optional": true,
-          "type": {
-            "kind": "string"
-          }
-        },
-        {
-          "name": "role",
-          "type": {
-            "kind": "string"
-          }
-        },
-        {
-          "name": "content",
-          "type": {
-            "kind": "string"
-          }
-        },
-        {
-          "name": "detail",
-          "optional": true,
-          "type": {
-            "kind": "string"
-          }
-        },
-        {
-          "name": "code",
-          "optional": true,
-          "type": {
-            "kind": "string"
-          }
-        },
-        {
-          "name": "submitText",
-          "optional": true,
-          "type": {
-            "kind": "string"
-          }
-        },
-        {
-          "name": "checkpointTurn",
-          "optional": true,
-          "type": {
-            "elem": {
-              "kind": "integer"
-            },
-            "kind": "nullable"
-          }
-        },
-        {
-          "name": "createdAt",
-          "optional": true,
-          "type": {
-            "kind": "integer"
-          }
-        },
-        {
-          "name": "reasoning",
-          "optional": true,
-          "type": {
-            "kind": "string"
-          }
-        },
-        {
-          "name": "memoryCitations",
-          "optional": true,
-          "type": {
-            "elem": {
-              "kind": "object",
-              "ref": "provider.MemoryCitation"
-            },
-            "kind": "array"
-          }
-        },
-        {
-          "name": "workDurationMs",
-          "optional": true,
-          "type": {
-            "kind": "integer"
-          }
-        },
-        {
-          "name": "level",
-          "optional": true,
-          "type": {
-            "kind": "string"
-          }
-        },
-        {
-          "name": "toolCalls",
-          "optional": true,
-          "type": {
-            "elem": {
-              "kind": "object",
-              "ref": "main.HistoryToolCall"
-            },
-            "kind": "array"
-          }
-        },
-        {
-          "name": "toolCallId",
-          "optional": true,
-          "type": {
-            "kind": "string"
-          }
-        },
-        {
-          "name": "toolName",
-          "optional": true,
-          "type": {
-            "kind": "string"
-          }
-        },
-        {
-          "name": "toolResultArchived",
-          "optional": true,
-          "type": {
-            "kind": "boolean"
-          }
-        },
-        {
-          "name": "toolResultError",
-          "optional": true,
-          "type": {
-            "kind": "string"
-          }
-        },
-        {
-          "name": "execution",
-          "optional": true,
-          "type": {
-            "elem": {
-              "kind": "object",
-              "ref": "provider.ToolExecution"
-            },
-            "kind": "nullable"
-          }
-        },
-        {
-          "name": "pending",
-          "optional": true,
-          "type": {
-            "kind": "boolean"
-          }
-        },
-        {
-          "name": "trigger",
-          "optional": true,
-          "type": {
-            "kind": "string"
-          }
-        },
-        {
-          "name": "messages",
-          "optional": true,
-          "type": {
-            "kind": "integer"
-          }
-        },
-        {
-          "name": "summary",
-          "optional": true,
-          "type": {
-            "kind": "string"
-          }
-        },
-        {
-          "name": "archive",
-          "optional": true,
-          "type": {
-            "kind": "string"
-          }
-        },
-        {
-          "name": "decisionReceipt",
-          "optional": true,
-          "type": {
-            "elem": {
-              "kind": "object",
-              "ref": "provider.DecisionReceipt"
-            },
-            "kind": "nullable"
-          }
-        },
-        {
-          "name": "readiness",
-          "optional": true,
-          "type": {
-            "elem": {
-              "kind": "object",
-              "ref": "event.FinalReadiness"
-            },
-            "kind": "nullable"
-          }
-        },
-        {
-          "name": "readPause",
-          "optional": true,
-          "type": {
-            "elem": {
-              "kind": "object",
-              "ref": "provider.ReadPause"
-            },
-            "kind": "nullable"
-          }
-        },
-        {
-          "name": "readCompletion",
-          "optional": true,
-          "type": {
-            "elem": {
-              "kind": "object",
-              "ref": "provider.ReadCompletion"
-            },
-            "kind": "nullable"
-          }
-        },
-        {
-          "name": "protocolRecovery",
-          "optional": true,
-          "type": {
-            "elem": {
-              "kind": "object",
-              "ref": "provider.ProtocolRecoveryAction"
-            },
-            "kind": "nullable"
-          }
-        },
-        {
-          "name": "diagnostic",
-          "optional": true,
-          "type": {
-            "elem": {
-              "kind": "object",
-              "ref": "provider.FailureDiagnostic"
-            },
-            "kind": "nullable"
-          }
-        },
-        {
-          "name": "serverSearch",
-          "optional": true,
-          "type": {
-            "elem": {
-              "kind": "object",
-              "ref": "provider.ServerSearchCall"
-            },
-            "kind": "array"
-          }
-        }
-      ]
-    },
     "main.HistoryPage": {
       "fields": [
         {
@@ -23142,7 +22919,7 @@
           "type": {
             "elem": {
               "kind": "object",
-              "ref": "main.HistoryMessage"
+              "ref": "transcript.Entry"
             },
             "kind": "array"
           }
@@ -23641,94 +23418,6 @@
           "name": "bytes",
           "type": {
             "kind": "integer"
-          }
-        }
-      ]
-    },
-    "main.HistoryToolCall": {
-      "fields": [
-        {
-          "name": "id",
-          "type": {
-            "kind": "string"
-          }
-        },
-        {
-          "name": "name",
-          "type": {
-            "kind": "string"
-          }
-        },
-        {
-          "name": "arguments",
-          "type": {
-            "kind": "string"
-          }
-        },
-        {
-          "name": "resolvedName",
-          "optional": true,
-          "type": {
-            "kind": "string"
-          }
-        },
-        {
-          "name": "capabilityId",
-          "optional": true,
-          "type": {
-            "kind": "string"
-          }
-        },
-        {
-          "name": "resolvedReadOnly",
-          "optional": true,
-          "type": {
-            "elem": {
-              "kind": "boolean"
-            },
-            "kind": "nullable"
-          }
-        },
-        {
-          "name": "subject",
-          "optional": true,
-          "type": {
-            "kind": "string"
-          }
-        },
-        {
-          "name": "summary",
-          "optional": true,
-          "type": {
-            "kind": "string"
-          }
-        },
-        {
-          "name": "diff",
-          "optional": true,
-          "type": {
-            "kind": "string"
-          }
-        },
-        {
-          "name": "added",
-          "optional": true,
-          "type": {
-            "kind": "integer"
-          }
-        },
-        {
-          "name": "removed",
-          "optional": true,
-          "type": {
-            "kind": "integer"
-          }
-        },
-        {
-          "name": "argumentsArchived",
-          "optional": true,
-          "type": {
-            "kind": "boolean"
           }
         }
       ]
@@ -34456,6 +34145,388 @@
           "optional": true,
           "type": {
             "kind": "string"
+          }
+        }
+      ]
+    },
+    "transcript.Entry": {
+      "fields": [
+        {
+          "name": "completionReceipt",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "eventwire.CompletionReceipt"
+            },
+            "kind": "nullable"
+          }
+        },
+        {
+          "name": "completionSummary",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "eventwire.CompletionSummary"
+            },
+            "kind": "nullable"
+          }
+        },
+        {
+          "name": "turnId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "kind",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "role",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "content",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "detail",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "code",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "submitText",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "checkpointTurn",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "integer"
+            },
+            "kind": "nullable"
+          }
+        },
+        {
+          "name": "createdAt",
+          "optional": true,
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "reasoning",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "memoryCitations",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "provider.MemoryCitation"
+            },
+            "kind": "array"
+          }
+        },
+        {
+          "name": "workDurationMs",
+          "optional": true,
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "level",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "toolCalls",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "transcript.ToolCall"
+            },
+            "kind": "array"
+          }
+        },
+        {
+          "name": "toolCallId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "toolName",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "toolResultArchived",
+          "optional": true,
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
+          "name": "toolResultError",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "execution",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "provider.ToolExecution"
+            },
+            "kind": "nullable"
+          }
+        },
+        {
+          "name": "pending",
+          "optional": true,
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
+          "name": "trigger",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "messages",
+          "optional": true,
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "summary",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "archive",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "decisionReceipt",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "provider.DecisionReceipt"
+            },
+            "kind": "nullable"
+          }
+        },
+        {
+          "name": "readiness",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "event.FinalReadiness"
+            },
+            "kind": "nullable"
+          }
+        },
+        {
+          "name": "readPause",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "provider.ReadPause"
+            },
+            "kind": "nullable"
+          }
+        },
+        {
+          "name": "readCompletion",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "provider.ReadCompletion"
+            },
+            "kind": "nullable"
+          }
+        },
+        {
+          "name": "protocolRecovery",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "provider.ProtocolRecoveryAction"
+            },
+            "kind": "nullable"
+          }
+        },
+        {
+          "name": "diagnostic",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "provider.FailureDiagnostic"
+            },
+            "kind": "nullable"
+          }
+        },
+        {
+          "name": "missing",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "string"
+            },
+            "kind": "array"
+          }
+        },
+        {
+          "name": "serverSearch",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "provider.ServerSearchCall"
+            },
+            "kind": "array"
+          }
+        }
+      ]
+    },
+    "transcript.ToolCall": {
+      "fields": [
+        {
+          "name": "id",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "name",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "arguments",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "resolvedName",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "capabilityId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "resolvedReadOnly",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "boolean"
+            },
+            "kind": "nullable"
+          }
+        },
+        {
+          "name": "subject",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "summary",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "diff",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "added",
+          "optional": true,
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "removed",
+          "optional": true,
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "argumentsArchived",
+          "optional": true,
+          "type": {
+            "kind": "boolean"
           }
         }
       ]

@@ -1039,25 +1039,6 @@ func batchCmds(cmds ...tea.Cmd) tea.Cmd {
 	}
 }
 
-func padWrappedForYOffset(wrapped string, lineMap []int, desiredYOffset, viewportHeight int) (string, []int) {
-	if desiredYOffset <= 0 || viewportHeight <= 0 {
-		return wrapped, lineMap
-	}
-	lines := strings.Split(wrapped, "\n")
-	neededLines := viewportHeight + desiredYOffset
-	if len(lines) >= neededLines {
-		return wrapped, lineMap
-	}
-	pad := neededLines - len(lines)
-	for i := 0; i < pad; i++ {
-		lines = append(lines, "")
-		if lineMap != nil {
-			lineMap = append(lineMap, -1)
-		}
-	}
-	return strings.Join(lines, "\n"), lineMap
-}
-
 // update runs the model's message handling. Update wraps it to keep the
 // transcript viewport sized, fed, and tail-following after every message.
 func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -2638,12 +2619,6 @@ func (m *chatTUI) deleteTranscriptLine(at int) bool {
 	return true
 }
 
-func shiftTranscriptRefAfterInsert(ref *int, at int) {
-	if ref != nil && *ref >= at {
-		*ref = *ref + 1
-	}
-}
-
 func shiftTranscriptRefAfterDelete(ref *int, at int) {
 	if ref == nil {
 		return
@@ -2707,12 +2682,9 @@ func (m *chatTUI) renderShellOutputBlock(id string, hover bool) string {
 		show = shellPreviewLines
 		hint = fmt.Sprintf("… %d more lines (Ctrl+B)", total-shellPreviewLines)
 	}
-	innerW := transcriptEntryWidth(m.width) - len([]rune(connector))
-	if innerW < 10 {
-		innerW = 10
-	}
+	innerW := max(transcriptEntryWidth(m.width)-len([]rune(connector)), 10)
 	rendered := make([]string, 0, show+1)
-	for i := 0; i < show; i++ {
+	for i := range show {
 		rendered = append(rendered, clampPlain(lines[i], innerW))
 	}
 	if hint != "" {
@@ -3597,11 +3569,10 @@ func freshApprovalAllowsSession(toolName string) bool {
 var (
 	// Input box: only top + bottom borders, no sides. The concrete colors are
 	// refreshed from the active CLI theme during startup.
-	inputBoxStyle       lipgloss.Style
-	approvalBannerStyle lipgloss.Style
-	todoPanelStyle      lipgloss.Style
-	statusBlockStyle    lipgloss.Style
-	workingStyle        lipgloss.Style
+	inputBoxStyle    lipgloss.Style
+	todoPanelStyle   lipgloss.Style
+	statusBlockStyle lipgloss.Style
+	workingStyle     lipgloss.Style
 )
 
 func (m chatTUI) cancelRequested() bool {
@@ -3702,13 +3673,6 @@ func compactStatusText(s string) string {
 		return "tools skipped"
 	}
 	return s
-}
-
-func statusDataGlyph(glyph string, color cliColor) string {
-	return lipgloss.NewStyle().
-		Foreground(lipgloss.Color(color.hex)).
-		Bold(true).
-		Render(glyph)
 }
 
 func (m chatTUI) View() tea.View {
@@ -4114,14 +4078,6 @@ func plannerModelRefFromConfig(cfg *config.Config) string {
 	return ref
 }
 
-func (m chatTUI) workspaceTag() string {
-	label := m.workspaceLabel()
-	if label == "" {
-		return ""
-	}
-	return dim(label)
-}
-
 func (m chatTUI) workspaceLabel() string {
 	if m.ctrl == nil {
 		return ""
@@ -4521,57 +4477,6 @@ func compactStatusLine(s string, width int) string {
 		return s
 	}
 	return ansi.Truncate(s, width, "…")
-}
-
-func statusDataLine(width int, resourceData []string, workspace, git string) string {
-	line := joinStatusDataParts(statusDataParts(resourceData, workspace, git))
-	if width <= 0 || visibleWidth(line) <= width {
-		return line
-	}
-
-	// Git identity is useful, but less important than live cache/context/cost and
-	// the current workspace. Drop it before truncating a still-readable path.
-	if git != "" {
-		line = joinStatusDataParts(statusDataParts(resourceData, workspace, ""))
-		if visibleWidth(line) <= width {
-			return line
-		}
-	}
-
-	if workspace != "" {
-		prefixParts := append([]string{}, resourceData...)
-		prefix := "  "
-		if len(prefixParts) > 0 {
-			prefix += strings.Join(prefixParts, " · ") + " · "
-		}
-		available := width - visibleWidth(prefix)
-		if available > 1 {
-			line = joinStatusDataParts(statusDataParts(resourceData, compactMiddle(workspace, available), ""))
-			if visibleWidth(line) <= width {
-				return line
-			}
-		}
-	}
-
-	return compactStatusLine(line, width)
-}
-
-func statusDataParts(resourceData []string, workspace, git string) []string {
-	parts := append([]string{}, resourceData...)
-	if strings.TrimSpace(workspace) != "" {
-		parts = append(parts, dim(workspace))
-	}
-	if strings.TrimSpace(git) != "" {
-		parts = append(parts, git)
-	}
-	return parts
-}
-
-func joinStatusDataParts(parts []string) string {
-	if len(parts) == 0 {
-		return "  "
-	}
-	return "  " + strings.Join(parts, " · ")
 }
 
 // computeStatusLineCount returns the number of terminal rows the status block
@@ -5816,10 +5721,7 @@ func replayToolResultBlock(content string, width int) string {
 		return ""
 	}
 	lines := strings.Split(content, "\n")
-	innerW := width - len([]rune(connector))
-	if innerW < 10 {
-		innerW = 10
-	}
+	innerW := max(width-len([]rune(connector)), 10)
 	first := strings.TrimSpace(lines[0])
 	lower := strings.ToLower(first)
 	if strings.HasPrefix(lower, "error:") || strings.Contains(lower, "blocked") || strings.Contains(lower, "permission") {
@@ -5924,10 +5826,7 @@ func visibleAssistantHistoryReasoning(reasoning string, hasVisibleContinuation b
 }
 
 func buildConversationRecap(history []provider.Message, focus string, width int) string {
-	budget := viewBudget(width, 14)
-	if budget < 56 {
-		budget = 56
-	}
+	budget := max(viewBudget(width, 14), 56)
 	var entries []string
 	if focus != "" {
 		entries = append(entries, "焦点: "+viewCompactText(recapOneLine(focus), budget))

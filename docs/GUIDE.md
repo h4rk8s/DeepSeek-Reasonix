@@ -509,6 +509,14 @@ double-width CJK characters in mixed-language input. Set it to `block` for a
 traditional terminal cursor or `underline` for a lower-profile cursor. This
 setting does not change desktop or web text fields.
 
+For completed thinking that should stay out of the transcript until inspected,
+set `[ui].lazy_reasoning = true`. The CLI keeps the final `▎ thought for Ns`
+line folded; click that line to expand the saved thinking text, then click the
+expanded body to fold it again. This is local display state only: it does not add
+extra content to the next model request or change prompt-cache prefixes. You can
+also use `reasonix config lazy-reasoning on|off|status` for the global setting.
+For a one-off run without editing config, use `REASONIX_LAZY_REASONING=1 reasonix`.
+
 ### Desktop GUI
 
 The Desktop Todo shelf derives its label from both `todo_write` and the owning

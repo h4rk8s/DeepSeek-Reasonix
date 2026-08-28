@@ -493,7 +493,7 @@ func (m chatTUI) layoutBoundedStatusDataRow(modelOverflow string, width int) str
 	}
 
 	values := make([]string, 0, len(selected))
-	for order := 0; order <= 6; order++ {
+	for order := range 7 {
 		if value := selected[order]; value != "" {
 			values = append(values, value)
 		}

@@ -50,6 +50,15 @@ func setupCLIMultiSessionProfile(ctx context.Context, model string, maxSteps int
 	return ctrl, opts, err
 }
 
+func setupResolvedCLIMultiSessionProfile(ctx context.Context, model string, maxSteps int, preset string, tag *serve.SessionTagSink, leases *control.SessionLeaseKeeper) (string, *control.Controller, boot.Options, error) {
+	resolved, err := resolveServeModel(model)
+	if err != nil {
+		return "", nil, boot.Options{}, err
+	}
+	ctrl, opts, err := setupCLIMultiSessionProfile(ctx, resolved, maxSteps, preset, tag, leases)
+	return resolved, ctrl, opts, err
+}
+
 func newCLIMultiSessionServer(ctrl *control.Controller, bc *serve.Broadcaster, tag *serve.SessionTagSink, cfg config.ServeConfig, leases *control.SessionLeaseKeeper, buildOpts boot.Options) *serve.Server {
 	tag.SetPath(ctrl.SessionPath())
 	srv := serve.New(ctrl, bc, cfg)

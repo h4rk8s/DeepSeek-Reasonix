@@ -426,7 +426,7 @@ func (m *chatTUI) deleteComposerSelection() bool {
 	if !m.deleteComposerSelectionUntracked() {
 		return false
 	}
-	m.composerModel.reconcileEdit(before.beforeValue, m.input.Value())
+	m.reconcileEdit(before.beforeValue, m.input.Value())
 	m.recordComposerAttachmentEdit(before)
 	return true
 }

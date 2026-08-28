@@ -136,10 +136,7 @@ func (m chatTUI) terminalTitleContext() string {
 	pct := used * 100 / window
 	if ratio := m.ctrl.CompactRatio(); ratio > 0 && ratio < 1 {
 		threshold := int(ratio * 100)
-		left := threshold - pct
-		if left < 0 {
-			left = 0
-		}
+		left := max(threshold-pct, 0)
 		if pct >= threshold {
 			return fmt.Sprintf("%s ctx %d%% compacting soon", shortTokens(used), pct)
 		}
@@ -218,8 +215,8 @@ func terminalTitleCurrentDir() string {
 			return "~"
 		}
 		prefix := strings.TrimRight(home, string(os.PathSeparator)) + string(os.PathSeparator)
-		if strings.HasPrefix(cwd, prefix) {
-			return "~" + string(os.PathSeparator) + strings.TrimPrefix(cwd, prefix)
+		if after, ok := strings.CutPrefix(cwd, prefix); ok {
+			return "~" + string(os.PathSeparator) + after
 		}
 	}
 	return cwd

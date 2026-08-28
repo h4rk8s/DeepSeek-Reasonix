@@ -1394,16 +1394,11 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 				isolationResource = worktreeResourceFromSubagentMeta(meta)
 			}
 		} else if isolation == agent.SubagentIsolationWorktree {
-			res, err := worktreeManager.Create(sctx, root, worktree.CreatePolicy{
-				Kind:        worktree.KindSubagent,
-				TaskName:    sk.Name,
-				DirtyPolicy: worktree.DirtyPolicyReject,
-			})
+			var err error
+			workspaceRoot, isolationResource, err = createSkillSubagentWorkspace(sctx, worktreeManager, root, sk.Name)
 			if err != nil {
 				return "", err
 			}
-			workspaceRoot = res.WorkspaceRoot
-			isolationResource = res
 		}
 
 		// A read-only skill (builtin review/security-review, or frontmatter

@@ -126,8 +126,8 @@ func TestStartControllerTurnQueuesThroughSessionPort(t *testing.T) {
 	ctrl := &runningQueueController{SessionAPI: control.New(control.Options{})}
 	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 80)
 	m.input.SetValue("next paste")
-	m.composerModel.value = "next paste"
-	m.composerModel.pendingValue = "old paste"
+	m.value = "next paste"
+	m.pendingValue = "old paste"
 	m.pendingPartIDs = []composerPartID{1}
 	m.pastedBlocks = []pastedBlock{
 		{id: 1, label: "old paste", payload: "old", state: composerPartPending, span: composerAttachmentRange{partID: 1, start: 0, end: 9}},

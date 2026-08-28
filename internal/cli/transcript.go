@@ -234,12 +234,6 @@ func renderAssistantMarkdownWithPresentation(raw string, contentWidth int, p con
 	return header + gap + body
 }
 
-// renderAssistantMarkdownCopy mirrors renderAssistantMarkdown's visible output
-// and adds zero-width copy spans for math reconstruction and generated gutters.
-func renderAssistantMarkdownCopy(raw string, contentWidth int, prefix string) string {
-	return renderAssistantMarkdownCopyWithPresentation(raw, contentWidth, prefix, config.Default().UIPresentation())
-}
-
 func renderAssistantMarkdownCopyWithPresentation(raw string, contentWidth int, prefix string, p config.UIPresentation) string {
 	contentWidth = max(contentWidth, 1)
 	renderer := newMarkdownRenderer(contentWidth)

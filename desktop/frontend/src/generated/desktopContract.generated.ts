@@ -3,7 +3,7 @@
 
 export const DESKTOP_PROTOCOL_VERSION = 1;
 
-export const DESKTOP_CONTRACT_DIGEST = "sha256:7b9f66d0fe65b706ad0e4fff9c4abd53f48802ed54dc38da1c4b9da2b2a7d9a7";
+export const DESKTOP_CONTRACT_DIGEST = "sha256:5b78becd4c693a777dd233ff7cc3b9f5008e1ef459448404fef6c638302ca0ed";
 
 export const DESKTOP_COMMANDS = [
   "AIRenameSession",
@@ -968,6 +968,13 @@ export interface AskQuestion {
   multi?: boolean;
 }
 
+export interface BackgroundJob {
+  id: string;
+  kind: string;
+  status: string;
+  sessionId?: string;
+}
+
 export interface CacheDiagnostics {
   prefixHash: string;
   prefixChanged: boolean;
@@ -1080,7 +1087,9 @@ export interface Event {
   sessionReset?: boolean;
   workspace?: WorkspaceChanged | null;
   phase?: string;
+  modelRef?: string;
   completion?: CompletionSummary | null;
+  backgroundJob?: BackgroundJob | null;
 }
 
 export interface ExtensionActionRef {
@@ -1317,6 +1326,7 @@ export interface Usage {
   reasoningTokens?: number;
   estimated?: boolean;
   source?: string;
+  model?: string;
   cacheDiagnostics?: CacheDiagnostics | null;
   sessionCacheHitTokens: number;
   sessionCacheMissTokens: number;
@@ -1975,47 +1985,12 @@ export interface HistoryEntry {
   entryId: string;
   turn: number;
   order: number;
-  message: HistoryMessage;
+  message: Entry;
   refs: HistoryContentRef[];
 }
 
-export interface HistoryMessage {
-  completionReceipt?: CompletionReceipt | null;
-  completionSummary?: CompletionSummary | null;
-  turnId?: string;
-  role: string;
-  content: string;
-  detail?: string;
-  code?: string;
-  submitText?: string;
-  checkpointTurn?: number | null;
-  createdAt?: number;
-  reasoning?: string;
-  memoryCitations?: provider_MemoryCitation[];
-  workDurationMs?: number;
-  level?: string;
-  toolCalls?: HistoryToolCall[];
-  toolCallId?: string;
-  toolName?: string;
-  toolResultArchived?: boolean;
-  toolResultError?: string;
-  execution?: ToolExecution | null;
-  pending?: boolean;
-  trigger?: string;
-  messages?: number;
-  summary?: string;
-  archive?: string;
-  decisionReceipt?: provider_DecisionReceipt | null;
-  readiness?: event_FinalReadiness | null;
-  readPause?: ReadPause | null;
-  readCompletion?: ReadCompletion | null;
-  protocolRecovery?: ProtocolRecoveryAction | null;
-  diagnostic?: FailureDiagnostic | null;
-  serverSearch?: ServerSearchCall[];
-}
-
 export interface HistoryPage {
-  messages: HistoryMessage[];
+  messages: Entry[];
   startTurn: number;
   endTurn: number;
   totalTurns: number;
@@ -2115,21 +2090,6 @@ export interface HistorySliceRequest {
   turns: number;
   entries: number;
   bytes: number;
-}
-
-export interface HistoryToolCall {
-  id: string;
-  name: string;
-  arguments: string;
-  resolvedName?: string;
-  capabilityId?: string;
-  resolvedReadOnly?: boolean | null;
-  subject?: string;
-  summary?: string;
-  diff?: string;
-  added?: number;
-  removed?: number;
-  argumentsArchived?: boolean;
 }
 
 export interface HookConfigView {
@@ -4155,6 +4115,58 @@ export interface TaskSnapshot {
   error_summary?: string;
 }
 
+export interface Entry {
+  completionReceipt?: CompletionReceipt | null;
+  completionSummary?: CompletionSummary | null;
+  turnId?: string;
+  kind?: string;
+  role: string;
+  content: string;
+  detail?: string;
+  code?: string;
+  submitText?: string;
+  checkpointTurn?: number | null;
+  createdAt?: number;
+  reasoning?: string;
+  memoryCitations?: provider_MemoryCitation[];
+  workDurationMs?: number;
+  level?: string;
+  toolCalls?: ToolCall[];
+  toolCallId?: string;
+  toolName?: string;
+  toolResultArchived?: boolean;
+  toolResultError?: string;
+  execution?: ToolExecution | null;
+  pending?: boolean;
+  trigger?: string;
+  messages?: number;
+  summary?: string;
+  archive?: string;
+  decisionReceipt?: provider_DecisionReceipt | null;
+  readiness?: event_FinalReadiness | null;
+  readPause?: ReadPause | null;
+  readCompletion?: ReadCompletion | null;
+  protocolRecovery?: ProtocolRecoveryAction | null;
+  diagnostic?: FailureDiagnostic | null;
+  missing?: string[];
+  serverSearch?: ServerSearchCall[];
+}
+
+export interface ToolCall {
+  id: string;
+  name: string;
+  arguments: string;
+  resolvedName?: string;
+  capabilityId?: string;
+  resolvedReadOnly?: boolean | null;
+  subject?: string;
+  summary?: string;
+  diff?: string;
+  added?: number;
+  removed?: number;
+  argumentsArchived?: boolean;
+}
+
 export interface Envelope {
   schemaVersion: number;
   sessionId: string;
@@ -4431,10 +4443,10 @@ export interface GeneratedDesktopCommands {
   HeartbeatSaveConfig(arg0: HeartbeatConfigUpdate): Promise<HeartbeatConfigView>;
   HeartbeatSaveTasks(arg0: HeartbeatTask[]): Promise<void>;
   HeartbeatTriggerNow(arg0: string): Promise<void>;
-  History(): Promise<HistoryMessage[]>;
+  History(): Promise<Entry[]>;
   HistoryCheckpointTurnsForTab(arg0: string): Promise<number[]>;
   HistoryContentForTab(arg0: string, arg1: HistoryContentRef, arg2: number): Promise<HistoryContentChunk>;
-  HistoryForTab(arg0: string): Promise<HistoryMessage[]>;
+  HistoryForTab(arg0: string): Promise<Entry[]>;
   HistoryPage(arg0: number, arg1: number): Promise<HistoryPage>;
   HistoryPageForTab(arg0: string, arg1: number, arg2: number): Promise<HistoryPage>;
   HistorySliceForTab(arg0: string, arg1: HistorySliceRequest): Promise<HistorySlice>;
@@ -4502,7 +4514,7 @@ export interface GeneratedDesktopCommands {
   NeedsOnboarding(): Promise<boolean>;
   NewSession(): Promise<void>;
   NewSessionForTab(arg0: string): Promise<void>;
-  OpenChannelSessionForTab(arg0: string, arg1: string): Promise<HistoryMessage[]>;
+  OpenChannelSessionForTab(arg0: string, arg1: string): Promise<Entry[]>;
   OpenChannelSessionPageForTab(arg0: string, arg1: string, arg2: number): Promise<HistoryPage>;
   OpenDownloadPage(): Promise<void>;
   OpenGlobalTab(arg0: string): Promise<TabMeta>;
@@ -4535,7 +4547,7 @@ export interface GeneratedDesktopCommands {
   PollBotConnectionInstall(arg0: string): Promise<BotInstallPollResult>;
   PrepareWorktreeMerge(arg0: string): Promise<MergeInspection>;
   PreviewRewindForTab(arg0: string, arg1: number, arg2: string): Promise<RewindPlanView>;
-  PreviewSession(arg0: string): Promise<HistoryMessage[]>;
+  PreviewSession(arg0: string): Promise<Entry[]>;
   PreviewWorkspaceFileRevertForTab(arg0: string, arg1: string): Promise<RewindPlanView>;
   PurgeRecoveryCopy(arg0: string): Promise<void>;
   PurgeTrashedSession(arg0: string): Promise<void>;
@@ -4625,8 +4637,8 @@ export interface GeneratedDesktopCommands {
   RestoreSession(arg0: string): Promise<void>;
   ResumeGoalForTab(arg0: string): Promise<boolean>;
   ResumeRemoteTabGoal(arg0: string): Promise<void>;
-  ResumeSession(arg0: string): Promise<HistoryMessage[]>;
-  ResumeSessionForTab(arg0: string, arg1: string): Promise<HistoryMessage[]>;
+  ResumeSession(arg0: string): Promise<Entry[]>;
+  ResumeSessionForTab(arg0: string, arg1: string): Promise<Entry[]>;
   ResumeSessionPage(arg0: string, arg1: number): Promise<HistoryPage>;
   ResumeSessionPageForTab(arg0: string, arg1: string, arg2: number): Promise<HistoryPage>;
   RetryInboxItem(arg0: string, arg1: string): Promise<void>;

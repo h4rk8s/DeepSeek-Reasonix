@@ -754,10 +754,7 @@ func (m *chatTUI) acceptCompletion() {
 	// "see @foobar.md and more" (not "@foobar.mdand" or "@foobar.mdfoo").
 	newVal := val[:rf] + it.insert + val[rt:]
 	insertEnd := rf + len(it.insert)
-	edit := m.newComposerAttachmentEdit()
-	m.input.SetValue(newVal)
-	m.composerModel.reconcileEdit(val, newVal)
-	m.recordComposerAttachmentEdit(edit)
+	m.setComposerValueTracked(val, newVal)
 	// Place caret at the end of the inserted completion only. Fall back to
 	// CursorEnd when the layout has no width yet (unit tests).
 	if m.width > 0 {

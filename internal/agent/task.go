@@ -795,19 +795,10 @@ func (t *TaskTool) RunProfileSpec(ctx context.Context, spec ProfileExecSpec) (re
 	if err != nil {
 		return "", err
 	}
-	isolation, err := normalizeSubagentIsolation(spec.Grant.Isolation)
+	isolation, childWorkspaceRoot, isolationResource, err := t.resolveProfileIsolation(ctx, spec)
 	if err != nil {
 		return "", err
 	}
-	if spec.Grant.ReadOnly && isolation != SubagentIsolationNone {
-		return "", fmt.Errorf("isolation is not valid for read-only tasks")
-	}
-	isolationName := firstNonEmpty(spec.Task.Description, spec.Worker.Name, "task")
-	childWorkspaceRoot, isolationResource, err := t.resolveSubagentWorkspace(ctx, isolation, spec.Context.ContinueFrom, spec.Context.ForkFrom, isolationName)
-	if err != nil {
-		return "", err
-	}
-	isolation = subagentIsolationFromResource(isolation, isolationResource)
 
 	toolNames, err := IntersectToolLists(t.parentReg, spec.Grant.ProfileTools, spec.Grant.CallTools)
 	if err != nil {

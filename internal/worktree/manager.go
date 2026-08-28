@@ -559,7 +559,7 @@ func resourceMetadataPath(managedRoot, repoKey, id string) string {
 
 func parsePorcelainPaths(out string) []string {
 	var paths []string
-	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.TrimRight(out, "\n"), "\n") {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}

@@ -164,7 +164,10 @@ func RunWithBuildInfo(args []string, info BuildInfo) int {
 		}
 		return mcpCommand(rest)
 	case "remote":
-		configureCLIThemeFromConfig()
+		if err := configureCLIThemeFromConfig(); err != nil {
+			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+			return 1
+		}
 		return remoteCommand(rest, version)
 	case "plugin":
 		if err := configureCLIThemeFromConfigNoProbe(); err != nil {
@@ -173,7 +176,10 @@ func RunWithBuildInfo(args []string, info BuildInfo) int {
 		}
 		return pluginCommand(rest)
 	case "subagent":
-		configureCLIThemeFromConfigForTTYOutput()
+		if err := configureCLIThemeFromConfigForTTYOutput(); err != nil {
+			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+			return 1
+		}
 		return subagentCommand(rest)
 	case "doctor":
 		if !doctorConfigSafe {
@@ -184,15 +190,24 @@ func RunWithBuildInfo(args []string, info BuildInfo) int {
 		}
 		return doctorCommand(rest, version)
 	case "report":
-		configureCLIThemeFromConfig()
+		if err := configureCLIThemeFromConfig(); err != nil {
+			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+			return 1
+		}
 		return reportCommand(rest)
 	case "session", "sessions", "catalogs":
 		return runSessionOrCatalogCommand(cmd, rest)
 	case "hook", "hooks":
-		configureCLIThemeFromConfig()
+		if err := configureCLIThemeFromConfig(); err != nil {
+			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+			return 1
+		}
 		return hookCommand(rest)
 	case "task":
-		configureCLIThemeFromConfig()
+		if err := configureCLIThemeFromConfig(); err != nil {
+			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+			return 1
+		}
 		return taskCommand(rest)
 	case "review":
 		if err := configureCLIThemeFromConfigNoProbe(); err != nil {
@@ -961,19 +976,15 @@ func runServeWithOptions(args []string, opts serveRunOptions) int {
 	// Serve always resolves an implicit model from the user-global config,
 	// ignoring project-level default_model overrides. Explicit flags and
 	// resumable session models remain strict and are preserved verbatim.
-	*model, err = resolveServeModel(*model)
+	resolvedModel, ctrl, serveBuildOpts, err := setupResolvedCLIMultiSessionProfile(ctx, *model, *maxSteps, deprecatedMode, sessionTag, leases)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 1
 	}
+	*model = resolvedModel
 	// Keep the browser reachable when the selected provider has no saved key.
 	// The loopback-only provider setup surface stores the missing credential and
 	// rebuilds this controller in place before the normal web UI is exposed.
-	ctrl, serveBuildOpts, err := setupCLIMultiSessionProfile(ctx, *model, *maxSteps, deprecatedMode, sessionTag, leases)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
-		return 1
-	}
 	defer ctrl.Close()
 	SetTaskJobKiller(ctrlKillerAdapter{ctrl})
 
@@ -2411,60 +2422,6 @@ func configCommand(args []string) int {
 		configUsage()
 		return 2
 	}
-}
-
-func configCurrencyCommand(args []string) int {
-	fs := flag.NewFlagSet("config currency", flag.ContinueOnError)
-	local := fs.Bool("local", false, "unsupported; pricing currency is user-level only")
-	if code, ok := parseCommandFlags(fs, args); !ok {
-		return code
-	}
-	if *local {
-		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, "currency is user-level only; --local is not supported")
-		return 2
-	}
-	rest := fs.Args()
-	if len(rest) > 1 {
-		configCurrencyUsage()
-		return 2
-	}
-	if len(rest) == 0 {
-		cfg, err := config.LoadForRootReadOnly(".")
-		if err != nil {
-			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
-			return 1
-		}
-		fmt.Printf("currency = %q (display: %s)\n", pricingCurrencyDisplay(cfg.DisplayCurrencyPref()), cfg.ResolveDisplayCurrency())
-		return 0
-	}
-	mode, err := parseCLIPricingCurrency(rest[0])
-	if err != nil {
-		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
-		return 2
-	}
-	path := config.UserConfigPath()
-	if path == "" {
-		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, "cannot resolve user config path")
-		return 1
-	}
-	unlock := config.LockUserConfigEdits()
-	defer unlock()
-	cfg, err := config.LoadForEditReadOnlyStrict(path)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
-		return 1
-	}
-	if err := cfg.SetDisplayCurrency(mode); err != nil {
-		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
-		return 2
-	}
-	resolved := cfg.ResolveDisplayCurrency()
-	if err := cfg.SaveTo(path); err != nil {
-		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
-		return 1
-	}
-	fmt.Printf("currency = %q (display: %s, %s)\n", pricingCurrencyDisplay(mode), resolved, displayPath(path))
-	return 0
 }
 
 var (

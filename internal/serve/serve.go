@@ -499,23 +499,7 @@ func (s *Server) switchEffortExpected(ctx context.Context, level, expectedPath s
 	if editPath == "" {
 		return fmt.Errorf("no config file found")
 	}
-	// Lock only the load-modify-save cycle; switchModel below rebuilds the
-	// controller and must not hold the config edit lock.
-	if err := func() error {
-		unlock := config.LockUserConfigEdits()
-		defer unlock()
-		edit, err := config.LoadForEditReadOnlyStrict(editPath)
-		if err != nil {
-			return fmt.Errorf("load config for effort edit: %w", err)
-		}
-		if err := applyEffortEdit(edit, entry, effort); err != nil {
-			return err
-		}
-		if err := edit.SaveTo(editPath); err != nil {
-			return fmt.Errorf("save config: %w", err)
-		}
-		return nil
-	}(); err != nil {
+	if err := saveEffortEdit(editPath, entry, effort); err != nil {
 		return err
 	}
 	return s.switchModelLocked(ctx, entry.Name+"/"+entry.Model)
