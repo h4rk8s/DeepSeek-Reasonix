@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"html"
 	"math"
 	"os"
 	"os/exec"
@@ -336,7 +337,7 @@ func (m *chatTUI) applyComposerPasteOnce(msg tea.PasteMsg) []tea.Cmd {
 	m.followComposerCursor()
 	pasteBefore := m.input.Value()
 	var cmds []tea.Cmd
-	if m.state != tuiRunning && m.attachPastedImages(msg.Content) {
+	if m.attachPastedImages(msg.Content) {
 		if shouldClearWideInputChange(pasteBefore, m.input.Value()) {
 			cmds = append(cmds, tea.ClearScreen)
 		}
@@ -560,7 +561,53 @@ func (m *chatTUI) attachPastedImages(text string) bool {
 	return attached
 }
 
-var markdownImageSourceRe = regexp.MustCompile(`!\[[^\]]*\]\(([^)]+)\)`)
+func (m *chatTUI) normalizeTypedImagePath() bool {
+	if !m.canNormalizeTypedImagePath() {
+		return false
+	}
+	text := strings.TrimSpace(m.input.Value())
+	if text == "" {
+		return false
+	}
+	sources, ok := pastedImageSources(text)
+	if !ok {
+		return false
+	}
+	paths := make([]string, 0, len(sources))
+	for _, src := range sources {
+		path, err := savePastedImageSource(src)
+		if err != nil {
+			return false
+		}
+		paths = append(paths, path)
+	}
+	m.input.Reset()
+	for _, path := range paths {
+		m.insertImageRef(path)
+	}
+	m.growInputToFit()
+	m.updateCompletion()
+	return true
+}
+
+func (m *chatTUI) canNormalizeTypedImagePath() bool {
+	return m.state != tuiRunning &&
+		!m.chooserTyping() &&
+		m.pendingApproval == nil &&
+		m.rewind == nil &&
+		m.resumePick == nil &&
+		m.mcp == nil &&
+		m.clearConfirm == nil &&
+		m.mcpImport == nil &&
+		m.skillPick == nil &&
+		m.copyPick == nil
+}
+
+var (
+	markdownImageSourceRe = regexp.MustCompile(`!\[[^\]]*\]\(([^)]+)\)`)
+	markdownLinkSourceRe  = regexp.MustCompile(`!?\[[^\]]*\]\(([^)]+)\)`)
+	htmlImageSourceRe     = regexp.MustCompile(`(?is)<img\b[^>]*\bsrc\s*=\s*(?:"([^"]+)"|'([^']+)'|([^'"\s>]+))[^>]*>`)
+)
 
 type pastedImageSource struct {
 	value        string
@@ -576,40 +623,234 @@ func pastedImageSourcesForOS(text, goos string) ([]pastedImageSource, bool) {
 	if trimmed == "" {
 		return nil, false
 	}
-	if isDataImage(trimmed) {
-		return []pastedImageSource{{value: trimmed}}, true
-	}
-	if matches := markdownImageSourceRe.FindAllStringSubmatch(trimmed, -1); len(matches) > 0 {
-		rest := strings.TrimSpace(markdownImageSourceRe.ReplaceAllString(trimmed, ""))
-		if rest == "" {
-			sources := make([]pastedImageSource, 0, len(matches))
-			for _, m := range matches {
-				sources = append(sources, pastedImageSource{value: m[1]})
-			}
+	for _, candidate := range pastedImageSourceTextCandidates(trimmed) {
+		if sources, ok := pastedImageSourcesFromNormalizedText(candidate, goos); ok {
 			return sources, true
 		}
 	}
+	return nil, false
+}
 
-	lines := nonEmptyPasteLines(trimmed)
-	lineSources := rawPastedImageSources(lines)
-	if len(lines) > 0 && allImageSources(lineSources, goos) {
-		return lineSources, true
+func pastedImageSourceTextCandidates(text string) []string {
+	out := []string{text}
+	if stripped := stripPromptPrefixesFromPasteLines(text); stripped != text {
+		out = append(out, stripped)
+	}
+	return out
+}
+
+func pastedImageSourcesFromNormalizedText(text, goos string) ([]pastedImageSource, bool) {
+	trimmed := strings.TrimSpace(text)
+	if sources, ok := structuredImageSources(trimmed, goos); ok {
+		return sources, true
+	}
+	if src, ok := imageSourceCandidate(pastedImageSource{value: trimmed}, goos); ok {
+		return []pastedImageSource{src}, true
+	}
+
+	lines := nonEmptyPasteLines(text)
+	if len(lines) > 1 {
+		if sources, ok := imageSourcesFromItems(rawPastedImageSources(lines), goos); ok {
+			return sources, true
+		}
+		for _, joined := range []string{strings.Join(lines, " "), strings.Join(lines, "")} {
+			if src, ok := existingImageSourceCandidate(pastedImageSource{value: joined}, goos); ok {
+				return []pastedImageSource{src}, true
+			}
+		}
 	}
 	fields := splitPastePathTokens(trimmed)
-	fieldSources := rawPastedImageSources(fields)
-	if len(fields) > 1 && allImageSources(fieldSources, goos) {
-		return fieldSources, true
+	if len(fields) > 1 {
+		if sources, ok := imageSourcesFromItems(rawPastedImageSources(fields), goos); ok {
+			return sources, true
+		}
 	}
 	if staticFields, malformed := shellparse.StaticFields(trimmed); malformed == "" && len(staticFields) > 1 {
 		sources := make([]pastedImageSource, 0, len(staticFields))
 		for _, field := range staticFields {
 			sources = append(sources, pastedImageSource{value: field, shellDecoded: true})
 		}
-		if allImageSources(sources, goos) {
+		if sources, ok := imageSourcesFromItems(sources, goos); ok {
 			return sources, true
 		}
 	}
 	return nil, false
+}
+
+func stripPromptPrefixesFromPasteLines(text string) string {
+	normalized := strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
+	lines := strings.Split(normalized, "\n")
+	shouldStrip := false
+	for _, line := range lines {
+		rest, ok := promptPrefixedPasteLine(line)
+		if ok && looksLikeImagePasteStart(rest) {
+			shouldStrip = true
+			break
+		}
+	}
+	if !shouldStrip {
+		return text
+	}
+	changed := false
+	for i, line := range lines {
+		if rest, ok := promptPrefixedPasteLine(line); ok {
+			lines[i] = rest
+			changed = true
+		}
+	}
+	if !changed {
+		return text
+	}
+	return strings.Join(lines, "\n")
+}
+
+func promptPrefixedPasteLine(line string) (string, bool) {
+	s := strings.TrimLeft(line, " \t")
+	for _, marker := range []string{"›", ">"} {
+		if after, ok := strings.CutPrefix(s, marker); ok {
+			return strings.TrimLeft(after, " \t"), true
+		}
+	}
+	return "", false
+}
+
+func looksLikeImagePasteStart(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
+	}
+	for _, prefix := range []string{"@", "/", "~/", "file://", "<file://", `"file://`, `'file://`, `"~/`, `"/`, "'~/", "'/"} {
+		if strings.HasPrefix(s, prefix) {
+			return true
+		}
+	}
+	return strings.HasPrefix(s, "![") || strings.HasPrefix(s, "[Image")
+}
+
+func structuredImageSources(text, goos string) ([]pastedImageSource, bool) {
+	if isDataImage(text) {
+		return []pastedImageSource{{value: text}}, true
+	}
+	if sources, ok := imageSourcesFromMarkdown(text, markdownImageSourceRe, goos); ok {
+		return sources, true
+	}
+	if sources, ok := imageSourcesFromMarkdown(text, markdownLinkSourceRe, goos); ok {
+		return sources, true
+	}
+	if sources, ok := imageSourcesFromHTML(text, goos); ok {
+		return sources, true
+	}
+	return nil, false
+}
+
+func imageSourcesFromMarkdown(text string, re *regexp.Regexp, goos string) ([]pastedImageSource, bool) {
+	matches := re.FindAllStringSubmatch(text, -1)
+	if len(matches) == 0 {
+		return nil, false
+	}
+	if rest := strings.TrimSpace(re.ReplaceAllString(text, "")); rest != "" {
+		return nil, false
+	}
+	items := make([]pastedImageSource, 0, len(matches))
+	for _, m := range matches {
+		if len(m) > 1 {
+			items = append(items, pastedImageSource{value: strings.TrimSpace(m[1])})
+		}
+	}
+	return imageSourcesFromItems(items, goos)
+}
+
+func imageSourcesFromHTML(text, goos string) ([]pastedImageSource, bool) {
+	matches := htmlImageSourceRe.FindAllStringSubmatch(text, -1)
+	if len(matches) == 0 {
+		return nil, false
+	}
+	if rest := strings.TrimSpace(htmlImageSourceRe.ReplaceAllString(text, "")); rest != "" {
+		return nil, false
+	}
+	items := make([]pastedImageSource, 0, len(matches))
+	for _, m := range matches {
+		src := ""
+		for _, group := range m[1:] {
+			if group != "" {
+				src = html.UnescapeString(strings.TrimSpace(group))
+				break
+			}
+		}
+		if src != "" {
+			items = append(items, pastedImageSource{value: src})
+		}
+	}
+	return imageSourcesFromItems(items, goos)
+}
+
+func imageSourcesFromItems(items []pastedImageSource, goos string) ([]pastedImageSource, bool) {
+	if len(items) == 0 {
+		return nil, false
+	}
+	sources := make([]pastedImageSource, 0, len(items))
+	for _, item := range items {
+		src, ok := imageSourceCandidate(item, goos)
+		if !ok {
+			return nil, false
+		}
+		sources = append(sources, src)
+	}
+	return sources, true
+}
+
+func imageSourceCandidate(src pastedImageSource, goos string) (pastedImageSource, bool) {
+	for _, candidate := range imageSourceCandidates(src) {
+		if looksLikeImageSource(candidate, goos) {
+			return candidate, true
+		}
+	}
+	return pastedImageSource{}, false
+}
+
+func existingImageSourceCandidate(src pastedImageSource, goos string) (pastedImageSource, bool) {
+	for _, candidate := range imageSourceCandidates(src) {
+		if looksLikeExistingImageSource(candidate, goos) {
+			return candidate, true
+		}
+	}
+	return pastedImageSource{}, false
+}
+
+func imageSourceCandidates(src pastedImageSource) []pastedImageSource {
+	var out []pastedImageSource
+	seen := map[string]bool{}
+	add := func(candidate pastedImageSource) {
+		candidate.value = strings.TrimSpace(candidate.value)
+		if candidate.value == "" || seen[candidate.value] {
+			return
+		}
+		seen[candidate.value] = true
+		out = append(out, candidate)
+	}
+
+	cur := src
+	add(cur)
+	for {
+		next, ok := unwrapImageSourceCandidate(cur.value)
+		if !ok {
+			break
+		}
+		cur.value = next
+		add(cur)
+	}
+	return out
+}
+
+func unwrapImageSourceCandidate(src string) (string, bool) {
+	src = strings.TrimSpace(src)
+	if after, ok := strings.CutPrefix(src, "@"); ok {
+		return strings.TrimSpace(after), true
+	}
+	if isQuotedImageSource(src) || isAngleWrappedImageSource(src) {
+		return strings.TrimSpace(src[1 : len(src)-1]), true
+	}
+	return "", false
 }
 
 func rawPastedImageSources(values []string) []pastedImageSource {
@@ -676,25 +917,19 @@ func nonEmptyPasteLines(text string) []string {
 	return out
 }
 
-func allImageSources(sources []pastedImageSource, goos string) bool {
-	if len(sources) == 0 {
-		return false
-	}
-	for _, src := range sources {
-		if !looksLikeImageSource(src, goos) {
-			return false
-		}
-	}
-	return true
-}
-
 func looksLikeImageSource(src pastedImageSource, goos string) bool {
 	if isDataImage(strings.TrimSpace(src.value)) {
 		return true
 	}
+	return slices.ContainsFunc(pastedPathCandidates(src.value, goos, src.shellDecoded), hasImageExtension)
+}
+
+func looksLikeExistingImageSource(src pastedImageSource, goos string) bool {
+	if isDataImage(strings.TrimSpace(src.value)) {
+		return true
+	}
 	for _, path := range pastedPathCandidates(src.value, goos, src.shellDecoded) {
-		switch strings.ToLower(filepath.Ext(path)) {
-		case ".png", ".jpg", ".jpeg", ".gif", ".webp":
+		if hasImageExtension(path) && pastedPathExists(path) {
 			return true
 		}
 	}
@@ -702,20 +937,22 @@ func looksLikeImageSource(src pastedImageSource, goos string) bool {
 }
 
 func savePastedImageSource(src pastedImageSource) (string, error) {
-	value := strings.TrimSpace(src.value)
-	if isDataImage(value) {
-		return control.SaveImageDataURL(value)
-	}
 	var lastErr error
-	for _, path := range pastedPathCandidates(value, runtime.GOOS, src.shellDecoded) {
-		if !looksLikeImagePath(path) {
-			continue
+	for _, candidate := range imageSourceCandidates(src) {
+		value := strings.TrimSpace(candidate.value)
+		if isDataImage(value) {
+			return control.SaveImageDataURL(value)
 		}
-		saved, err := control.SaveImageFile(path)
-		if err == nil {
-			return saved, nil
+		for _, path := range pastedPathCandidates(value, runtime.GOOS, candidate.shellDecoded) {
+			if !hasImageExtension(path) {
+				continue
+			}
+			saved, err := control.SaveImageFile(path)
+			if err == nil {
+				return saved, nil
+			}
+			lastErr = err
 		}
-		lastErr = err
 	}
 	if lastErr != nil {
 		return "", lastErr
@@ -723,7 +960,7 @@ func savePastedImageSource(src pastedImageSource) (string, error) {
 	return "", fmt.Errorf("unsupported pasted image source")
 }
 
-func looksLikeImagePath(path string) bool {
+func hasImageExtension(path string) bool {
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".png", ".jpg", ".jpeg", ".gif", ".webp":
 		return true
@@ -734,6 +971,16 @@ func looksLikeImagePath(path string) bool {
 
 func isDataImage(src string) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(src)), "data:image/")
+}
+
+func isQuotedImageSource(src string) bool {
+	return len(src) >= 2 &&
+		((strings.HasPrefix(src, `"`) && strings.HasSuffix(src, `"`)) ||
+			(strings.HasPrefix(src, `'`) && strings.HasSuffix(src, `'`)))
+}
+
+func isAngleWrappedImageSource(src string) bool {
+	return len(src) >= 2 && strings.HasPrefix(src, "<") && strings.HasSuffix(src, ">")
 }
 
 // pastedImagePathForOS returns the preferred syntactic candidate with the OS
