@@ -294,7 +294,7 @@ func renderDisclosureConnectorBlock(lines []string, width int, fg cliColor, hove
 }
 
 func (m *chatTUI) resetTranscriptDisclosures() {
-	m.disclosureModel.reset()
+	m.reset()
 	m.hoverTranscriptIdx = -1
 	m.hoverKind = transcriptHoverNone
 }
@@ -314,19 +314,19 @@ func (m *chatTUI) rememberImageUnderstanding(summaryIdx int, summary, raw string
 }
 
 func (m *chatTUI) rememberTranscriptDisclosure(summaryIdx int, summary, raw string, expanded bool, kind transcriptDisclosureKind) {
-	m.disclosureModel.remember(summaryIdx, summary, raw, expanded, kind, len(m.transcript))
+	m.remember(summaryIdx, summary, raw, expanded, kind, len(m.transcript))
 }
 
 func (m *chatTUI) rebuildDisclosureIndex() {
-	m.disclosureModel.rebuildIndex(len(m.transcript))
+	m.rebuildIndex(len(m.transcript))
 }
 
 func (m *chatTUI) shiftTranscriptDisclosures(start, delta int) {
-	m.disclosureModel.shift(start, delta, len(m.transcript))
+	m.shift(start, delta, len(m.transcript))
 }
 
 func (m *chatTUI) truncateTranscriptDisclosures(n int) {
-	m.disclosureModel.truncate(n)
+	m.truncate(n)
 	if m.hoverTranscriptIdx >= n {
 		m.hoverTranscriptIdx = -1
 		m.hoverKind = transcriptHoverNone
@@ -341,7 +341,7 @@ func (m *chatTUI) clickableAtWrappedLine(lineIdx int) (int, transcriptHoverKind,
 	if idx < 0 {
 		return -1, transcriptHoverNone, false
 	}
-	if _, ok := m.disclosureModel.entryAt(idx); ok {
+	if _, ok := m.entryAt(idx); ok {
 		return idx, transcriptHoverDisclosure, true
 	}
 	if _, ok := m.shellOutputIDAtTranscriptIdx(idx); ok {
@@ -367,7 +367,7 @@ func (m *chatTUI) collapsedDisclosureWidth(idx int) int {
 	if idx < 0 || idx >= len(m.transcript) {
 		return 0
 	}
-	entry, ok := m.disclosureModel.entryAt(idx)
+	entry, ok := m.entryAt(idx)
 	if !ok || entry.expanded {
 		return ansi.StringWidth(ansi.Strip(m.transcript[idx].rendered))
 	}
@@ -384,7 +384,7 @@ func (m *chatTUI) clearPendingTranscriptToggle() {
 }
 
 func (m *chatTUI) disclosureExpandedAtTranscriptIdx(idx int) bool {
-	entry, ok := m.disclosureModel.entryAt(idx)
+	entry, ok := m.entryAt(idx)
 	return ok && entry.expanded
 }
 
@@ -428,7 +428,7 @@ func (m *chatTUI) renderTranscriptHover(idx int, kind transcriptHoverKind, hover
 	before := m.transcript[idx].rendered
 	switch kind {
 	case transcriptHoverDisclosure:
-		entry, ok := m.disclosureModel.entryAt(idx)
+		entry, ok := m.entryAt(idx)
 		if !ok || entry.expanded {
 			return false
 		}
@@ -475,7 +475,7 @@ func (m *chatTUI) renderTranscriptDisclosureBody(entry *disclosureEntry, hover b
 }
 
 func (m *chatTUI) toggleTranscriptDisclosureAt(transcriptIdx int) bool {
-	entry, ok := m.disclosureModel.entryAt(transcriptIdx)
+	entry, ok := m.entryAt(transcriptIdx)
 	if !ok || entry.summaryIdx < 0 || entry.summaryIdx >= len(m.transcript) {
 		return false
 	}

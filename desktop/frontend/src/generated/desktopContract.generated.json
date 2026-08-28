@@ -24730,6 +24730,35 @@
         }
       ]
     },
+    "eventwire.BackgroundJob": {
+      "fields": [
+        {
+          "name": "id",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "kind",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "status",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "sessionId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        }
+      ]
+    },
     "eventwire.CacheDiagnostics": {
       "fields": [
         {
@@ -25573,12 +25602,30 @@
           }
         },
         {
+          "name": "modelRef",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
           "name": "completion",
           "optional": true,
           "type": {
             "elem": {
               "kind": "object",
               "ref": "eventwire.CompletionSummary"
+            },
+            "kind": "nullable"
+          }
+        },
+        {
+          "name": "backgroundJob",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "eventwire.BackgroundJob"
             },
             "kind": "nullable"
           }
@@ -26892,6 +26939,13 @@
         },
         {
           "name": "source",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "model",
           "optional": true,
           "type": {
             "kind": "string"
@@ -47464,6 +47518,13 @@
           }
         },
         {
+          "name": "kind",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
           "name": "role",
           "type": {
             "kind": "string"
@@ -47800,6 +47861,16 @@
               "ref": "provider.FailureDiagnostic"
             },
             "kind": "nullable"
+          }
+        },
+        {
+          "name": "missing",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "string"
+            },
+            "kind": "array"
           }
         },
         {

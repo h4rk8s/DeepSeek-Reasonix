@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -69,10 +70,8 @@ func (c *Config) UIPresentation() UIPresentation {
 
 func normalizeChoice(value string, allowed ...string) string {
 	v := strings.ToLower(strings.TrimSpace(value))
-	for _, candidate := range allowed {
-		if v == candidate {
-			return v
-		}
+	if slices.Contains(allowed, v) {
+		return v
 	}
 	return allowed[0]
 }

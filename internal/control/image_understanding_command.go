@@ -109,7 +109,6 @@ func (u *CommandImageUnderstanding) DescribeImages(ctx context.Context, userInpu
 	ch := make(chan imageResult, len(misses))
 	sem := make(chan struct{}, imageUnderstandingCommandMaxConcurrency)
 	for _, idx := range misses {
-		idx := idx
 		go func() {
 			sem <- struct{}{}
 			defer func() { <-sem }()
@@ -261,7 +260,7 @@ func imageUnderstandingCacheKey(commandSignature, sha string) string {
 	if sha == "" {
 		return ""
 	}
-	sum := sha256.Sum256([]byte(fmt.Sprintf("v%d\x00%s\x00%s", imageUnderstandingCacheVersion, commandSignature, sha)))
+	sum := sha256.Sum256(fmt.Appendf(nil, "v%d\x00%s\x00%s", imageUnderstandingCacheVersion, commandSignature, sha))
 	return hex.EncodeToString(sum[:])
 }
 

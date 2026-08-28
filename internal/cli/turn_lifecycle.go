@@ -196,5 +196,5 @@ func (m *chatTUI) clearQueuedPastes(restore string) {
 	}
 	m.pastedBlocks = kept
 	m.pendingPartIDs = nil
-	m.composerModel.pendingValue = ""
+	m.pendingValue = ""
 }
