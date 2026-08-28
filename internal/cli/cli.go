@@ -101,13 +101,19 @@ func RunWithBuildInfo(args []string, info BuildInfo) int {
 	}
 	doctorRepair := isDoctorRepairCommand(args)
 	if shouldMigrateLegacyConfigForCLI(cmd) && !doctorRepair {
-		migrateLegacyConfigForCLI()
+		if err := migrateLegacyConfigForCLI(); err != nil {
+			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+			return 1
+		}
 	}
-	if !doctorRepair {
-		if cfg, err := config.Load(); err == nil {
-			if cfg.Language != "" {
-				i18n.DetectLanguage(cfg.Language)
-			}
+	if shouldMigrateLegacyConfigForCLI(cmd) && !doctorRepair {
+		cfg, err := config.Load()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+			return 1
+		}
+		if cfg.Language != "" {
+			i18n.DetectLanguage(cfg.Language)
 		}
 	}
 
@@ -115,7 +121,10 @@ func RunWithBuildInfo(args []string, info BuildInfo) int {
 		return runInteractiveSession(nil, version)
 	}
 	if len(args) == 0 {
-		configureCLIThemeFromConfigForTTYOutput()
+		if err := configureCLIThemeFromConfigForTTYOutput(); err != nil {
+			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+			return 1
+		}
 		usage()
 		return 0
 	}
@@ -134,35 +143,56 @@ func RunWithBuildInfo(args []string, info BuildInfo) int {
 	case "web":
 		return runWebCommand(rest)
 	case "setup":
-		configureCLIThemeFromConfigForTTYOutput()
+		if err := configureCLIThemeFromConfigForTTYOutput(); err != nil {
+			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+			return 1
+		}
 		return setupConfig(rest)
 	case "config":
-		configureCLIThemeFromConfig()
+		if err := configureCLIThemeFromConfigNoProbe(); err != nil {
+			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+			return 1
+		}
 		return configCommand(rest)
 	case "init":
 		// Project memory (AGENTS.md) is model-generated in-session — `/init` runs
 		// the codebase analysis. This CLI entry just points there (and to `setup`
 		// for config), so `reasonix init` isn't a dead end.
-		configureCLIThemeFromConfig()
+		if err := configureCLIThemeFromConfigNoProbe(); err != nil {
+			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+			return 1
+		}
 		return initHint()
 	case "acp":
-		configureCLIThemeFromConfig()
+		if err := configureCLIThemeFromConfigNoProbe(); err != nil {
+			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+			return 1
+		}
 		return acpCommand(rest, version)
 	case "mcp":
-		configureCLIThemeFromConfig()
+		if err := configureCLIThemeFromConfigNoProbe(); err != nil {
+			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+			return 1
+		}
 		return mcpCommand(rest)
 	case "remote":
 		configureCLIThemeFromConfig()
 		return remoteCommand(rest, version)
 	case "plugin":
-		configureCLIThemeFromConfig()
+		if err := configureCLIThemeFromConfigNoProbe(); err != nil {
+			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+			return 1
+		}
 		return pluginCommand(rest)
 	case "subagent":
 		configureCLIThemeFromConfigForTTYOutput()
 		return subagentCommand(rest)
 	case "doctor":
 		if !doctorRepair {
-			configureCLIThemeFromConfig()
+			if err := configureCLIThemeFromConfigNoProbe(); err != nil {
+				fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+				return 1
+			}
 		}
 		return doctorCommand(rest, version)
 	case "report":
@@ -177,13 +207,22 @@ func RunWithBuildInfo(args []string, info BuildInfo) int {
 		configureCLIThemeFromConfig()
 		return taskCommand(rest)
 	case "review":
-		configureCLIThemeFromConfig()
+		if err := configureCLIThemeFromConfigNoProbe(); err != nil {
+			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+			return 1
+		}
 		return reviewCommand(rest)
 	case "bot":
-		configureCLIThemeFromConfig()
+		if err := configureCLIThemeFromConfigNoProbe(); err != nil {
+			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+			return 1
+		}
 		return botCommand(rest, version)
 	case "upgrade", "update":
-		configureCLIThemeFromConfig()
+		if err := configureCLIThemeFromConfigNoProbe(); err != nil {
+			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+			return 1
+		}
 		return upgradeCommand(rest, version)
 	case "version":
 		// Detailed identity: version --verbose / --json. Top-level --version/-v
@@ -237,22 +276,29 @@ func migrateMCPConfigForCLIWorkspace() {
 	}
 }
 
-func configureCLIThemeFromConfig() {
-	if cfg, err := config.Load(); err == nil {
-		configureCLIThemeWithStyle(cfg.UITheme(), cfg.UIThemeStyle())
-		cliCursorShape = cfg.UICursorShape()
-	} else {
-		configureCLITheme("auto")
-		cliCursorShape = "bar"
+func configureCLIThemeFromConfig() error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
 	}
+	configureCLIThemeWithStyle(cfg.UITheme(), cfg.UIThemeStyle())
+	cliCursorShape = cfg.UICursorShape()
+	return nil
 }
 
-func configureCLIThemeFromConfigForTTYOutput() {
+func configureCLIThemeFromConfigForTTYOutput() error {
 	if isTTY(os.Stdout) {
-		withTerminalProbe(configureCLIThemeFromConfig)
-		return
+		var loadErr error
+		withTerminalProbe(func() {
+			loadErr = configureCLIThemeFromConfig()
+		})
+		return loadErr
 	}
-	configureCLIThemeFromConfig()
+	return configureCLIThemeFromConfigNoProbe()
+}
+
+func configureCLIThemeFromConfigNoProbe() error {
+	return configureCLIThemeFromConfig()
 }
 
 // setupProfile builds a ready-to-drive Controller from config via boot.Build.
@@ -562,8 +608,15 @@ func runAgent(args []string, version string) int {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 1
 	}
-	cfg, _ := config.Load()
-	configureCLIThemeFromConfigForTTYOutput()
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+		return 1
+	}
+	if err := configureCLIThemeFromConfigForTTYOutput(); err != nil {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+		return 1
+	}
 
 	prompt := strings.TrimSpace(strings.Join(fs.Args(), " "))
 	if prompt == "" {
@@ -847,7 +900,11 @@ func runServeWithOptions(args []string, opts serveRunOptions) int {
 	}
 
 	ctx := context.Background()
-	bc, sessionTag, cfg := newServeBootstrap()
+	bc, sessionTag, cfg, err := newServeBootstrap()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+		return 1
+	}
 
 	// Build serve config, merging CLI flags over config file.
 	serveCfg := serveConfigWithCommandDefaults(opts.command, authExplicit, cfg.Serve)
@@ -1206,9 +1263,18 @@ func chatREPL(args []string, version string) int {
 		m.outputStyle = cfg.Agent.OutputStyle    // shown as the active entry in /output-style
 		m.statuslineCmd = cfg.Statusline.Command // custom status-line command, "" = built-in row
 		m.showReasoning = cfg.UI.ShowReasoning   // /verbose persistence: start with config default
-		m.showTurnUsage = cfg.UI.ShowTurnUsage   // retain usage accounting even when transcript receipts are hidden
+		m.showTurnUsage = cfg.UIShowUsage()      // accept the local show_usage alias without losing upstream semantics
+		setChatTextareaPrompt(&m.input, cfg.UIInputPrompt())
+		m.input.SetWidth(termW - 4)
+		m.lazyReasoning = cfg.UI.LazyReasoning && !m.nativeScrollback
+		if on, ok := parseCLIOnOff(os.Getenv("REASONIX_LAZY_REASONING")); ok {
+			m.lazyReasoning = on && !m.nativeScrollback
+		}
+		m.plannerModelRef = plannerModelRefFromConfig(cfg)
+		m.terminalTitleItems = cfg.TerminalTitleItems()
 		m.cfg = cfg
 	}
+	m.syncWindowTitle()
 
 	// /model support: a pure builder the TUI calls to rebuild on a different
 	// model (carrying the conversation). It must NOT touch the running model —
@@ -1262,6 +1328,9 @@ func chatREPL(args []string, version string) int {
 	m.bindRuntimeRebuilder(*maxSteps, sink, false, &overrides, cliProfileBuildOptions)
 	if effortOverride != nil {
 		m.effortLevel = *effortOverride
+	}
+	if cfg, e := config.Load(); e == nil && m.plannerModelRef == "" {
+		m.plannerModelRef = plannerModelRefFromConfig(cfg)
 	}
 	if effortOverride == nil {
 		m.refreshEffortStatus()
@@ -2148,7 +2217,6 @@ func providersWithMissingKeys(cfg *config.Config) []config.ProviderEntry {
 		cfg.DefaultModel,
 		cfg.Agent.PlannerModel,
 		cfg.Agent.SubagentModel,
-		cfg.Agent.ImageUnderstandingModel,
 	}
 	if len(cfg.Agent.SubagentModels) > 0 {
 		keys := make([]string, 0, len(cfg.Agent.SubagentModels))
@@ -2336,6 +2404,8 @@ func configCommand(args []string) int {
 		return configCurrencyCommand(args[1:])
 	case "telemetry":
 		return configTelemetryCommand(args[1:])
+	case "lazy-reasoning":
+		return configLazyReasoningCommand(args[1:])
 	case "image-understanding-log":
 		return configImageUnderstandingLogCommand(args[1:])
 	default:
@@ -2651,6 +2721,59 @@ func formatCompactRatioPercent(ratio float64) string {
 	return value + "%"
 }
 
+func configLazyReasoningCommand(args []string) int {
+	fs := flag.NewFlagSet("config lazy-reasoning", flag.ContinueOnError)
+	local := fs.Bool("local", false, "unsupported; lazy-reasoning is user-level only")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *local {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, "lazy-reasoning is user-level only; --local is not supported")
+		return 2
+	}
+	rest := fs.Args()
+	if len(rest) > 1 {
+		configLazyReasoningUsage()
+		return 2
+	}
+	if len(rest) == 0 || strings.EqualFold(rest[0], "status") {
+		cfg, err := config.Load()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+			return 1
+		}
+		fmt.Printf("ui.lazy_reasoning = %v\n", cfg.UI.LazyReasoning)
+		return 0
+	}
+	on, ok := parseCLIOnOff(rest[0])
+	if !ok {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, `lazy-reasoning must be "on", "off", "true", "false", or "status"`)
+		return 2
+	}
+	path := config.UserConfigPath()
+	if path == "" {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, "cannot resolve config path")
+		return 1
+	}
+	unlock := config.LockUserConfigEdits()
+	defer unlock()
+	cfg, err := config.LoadForEditReadOnlyStrict(path)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+		return 1
+	}
+	if err := cfg.SetLazyReasoning(on); err != nil {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+		return 2
+	}
+	if err := cfg.SaveTo(path); err != nil {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+		return 1
+	}
+	fmt.Printf("ui.lazy_reasoning = %v (%s)\n", cfg.UI.LazyReasoning, displayPath(path))
+	return 0
+}
+
 func configImageUnderstandingLogCommand(args []string) int {
 	fs := flag.NewFlagSet("config image-understanding-log", flag.ContinueOnError)
 	local := fs.Bool("local", false, "unsupported; image-understanding-log is user-level only")
@@ -2693,11 +2816,7 @@ func configImageUnderstandingLogCommand(args []string) int {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, "cannot resolve config path")
 		return 1
 	}
-	unlock, err := config.LockConfigFileEdits(path)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
-		return 1
-	}
+	unlock := config.LockUserConfigEdits()
 	defer unlock()
 	cfg, err := config.LoadForEditReadOnlyStrict(path)
 	if err != nil {
@@ -2716,12 +2835,24 @@ func configImageUnderstandingLogCommand(args []string) int {
 	return 0
 }
 
+func parseCLIOnOff(s string) (bool, bool) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "on", "true", "1", "yes", "enabled":
+		return true, true
+	case "off", "false", "0", "no", "disabled":
+		return false, true
+	default:
+		return false, false
+	}
+}
+
 func configUsage() {
 	fmt.Print(`Usage:
   reasonix config reasoning-language [--local] [auto|zh|en]
   reasonix config compact-ratio [--local] [30..85]
   reasonix config currency [auto|CNY|USD]
   reasonix config telemetry [auto|on|off]
+  reasonix config lazy-reasoning [off|on|status]
   reasonix config image-understanding-log [off|summary|detail|status]
 `)
 }
@@ -2813,6 +2944,12 @@ func configReasoningLanguageUsage() {
 func configCurrencyUsage() {
 	fmt.Print(`Usage:
   reasonix config currency [auto|CNY|USD]
+`)
+}
+
+func configLazyReasoningUsage() {
+	fmt.Print(`Usage:
+  reasonix config lazy-reasoning [off|on|status]
 `)
 }
 

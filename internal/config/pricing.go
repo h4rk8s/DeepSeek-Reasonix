@@ -320,7 +320,10 @@ func applyUserConfigUpgradesThroughV10Locked(path string) (bool, error) {
 	if header.ConfigVersion >= deepSeekScheduledPricingConfigVersion && header.ConfigVersion < openCodeGoUpgradeVersion {
 		return upgradeOpenCodeGoAndRepairProviderEndpoints(path)
 	}
-	cfg := LoadForEdit(path)
+	cfg, err := LoadForEditReadOnlyStrict(path)
+	if err != nil {
+		return false, err
+	}
 	changed := false
 	if classicDesktopLayout {
 		cfg.Desktop.LayoutStyle = "workbench"

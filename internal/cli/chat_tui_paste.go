@@ -609,6 +609,7 @@ func (m *chatTUI) canNormalizeTypedImagePath() bool {
 		m.clearConfirm == nil &&
 		m.mcpImport == nil &&
 		m.skillPick == nil &&
+		m.titlePick == nil &&
 		m.copyPick == nil
 }
 
