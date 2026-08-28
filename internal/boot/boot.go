@@ -1782,6 +1782,20 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 		imageEnabled = infoProvider.ModelInfo().SupportsInput(provider.ModalityImage)
 	}
 	imageSnapshot := config.ModelCapabilitySnapshot(cfg, modelCapabilities)
+	visionModel := strings.TrimSpace(cfg.Agent.VisionModel)
+	if visionModel == "" {
+		visionModel = strings.TrimSpace(cfg.Agent.ImageUnderstandingModel)
+	}
+	var imageUnderstanding control.ImageUnderstanding
+	if cmd := strings.TrimSpace(cfg.Agent.ImageUnderstandingCommand); cmd != "" {
+		iu, err := control.NewCommandImageUnderstandingForRoot(cmd, root)
+		if err != nil {
+			slog.Warn("image understanding command disabled", "command", cmd, "err", err)
+			sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: fmt.Sprintf("image_understanding_command disabled: %v", err)})
+		} else {
+			imageUnderstanding = iu
+		}
+	}
 	ctrlOpts := control.Options{
 		ModelSettingsRevision:          cfg.ModelRuntimeFingerprint(modelRef),
 		ModelSettingsCurrent:           runtimeModelSettingsReader(root, modelName, modelRef, opts.ModelSettings),
@@ -1798,7 +1812,7 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 		ModelRef:                       modelRef,
 		ModelIdentity:                  cfg.ModelSelectionIdentity(modelRef),
 		ResolveSessionModel:            cfg.ResolveSavedModel,
-		VisionModel:                    cfg.Agent.VisionModel,
+		VisionModel:                    visionModel,
 		VisionProviderResolver:         visionProviderResolver,
 		VisionModelSelector:            visionModelSelector,
 		ModelCapabilityResolver:        modelCapabilities.Resolve,
@@ -1852,6 +1866,8 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 		DisableColdResumePrune: !cfg.ColdResumePruneEnabled(),
 		FileBranchesOnly:       opts.FileBranchesOnly,
 		Shell:                  shell,
+		ImageUnderstanding:     imageUnderstanding,
+		ImageUnderstandingLog:  cfg.UIImageUnderstandingLog(),
 		ApprovalTimeout:        opts.ApprovalTimeout,
 		Ablation:               opts.Ablation,
 		WriteRoots:             writeRootSet,

@@ -80,6 +80,11 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 		} else {
 			b.WriteString("# cursor_shape = \"bar\"   # block|underline|bar; text input cursor shape\n")
 		}
+		if strings.TrimSpace(c.UI.ImageUnderstandingLog) != "" {
+			fmt.Fprintf(&b, "image_understanding_log = %q   # off|summary|detail; CLI visibility for image-understanding results\n", c.UIImageUnderstandingLog())
+		} else {
+			b.WriteString("# image_understanding_log = \"summary\"   # off|summary|detail; CLI visibility for image-understanding results\n")
+		}
 		if strings.TrimSpace(c.UI.CloseBehavior) != "" && scope == RenderScopeProject {
 			fmt.Fprintf(&b, "close_behavior = %q   # legacy desktop close behavior; prefer [desktop].close_behavior in user config\n", c.DesktopCloseBehavior())
 		}
@@ -828,6 +833,9 @@ func RenderTOMLProjectDelta(c *Config) string {
 		}
 		if strings.TrimSpace(c.UI.CursorShape) != "" {
 			fmt.Fprintf(&b, "cursor_shape = %q\n", c.UICursorShape())
+		}
+		if strings.TrimSpace(c.UI.ImageUnderstandingLog) != "" {
+			fmt.Fprintf(&b, "image_understanding_log = %q\n", c.UIImageUnderstandingLog())
 		}
 		if c.UI.CloseBehavior != d.UI.CloseBehavior {
 			fmt.Fprintf(&b, "close_behavior = %q\n", c.DesktopCloseBehavior())

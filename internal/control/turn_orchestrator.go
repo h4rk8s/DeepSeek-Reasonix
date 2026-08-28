@@ -288,7 +288,7 @@ func (o *turnOrchestrator) runOrchestratedTurn(ctx context.Context, turn orchest
 	if !turn.synthetic {
 		modelInput = c.withCapabilityRoute(ctx, input, turn.raw)
 	}
-	modelInput, ctx, err = c.prepareVisionTurn(ctx, modelInput, imageCandidates)
+	modelInput, ctx, err = c.prepareVisionTurn(ctx, modelInput, imageCandidates, turn.raw, turn.input)
 	if err != nil {
 		return err
 	}
