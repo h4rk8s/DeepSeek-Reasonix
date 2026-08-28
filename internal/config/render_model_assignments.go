@@ -20,6 +20,14 @@ func renderAgentModelAssignments(b *strings.Builder, c *Config) {
 	} else {
 		b.WriteString("# vision_model = \"auto\"   # optional: summarize images for text-only models\n")
 	}
+	if c.Agent.ImageUnderstandingModel != "" {
+		fmt.Fprintf(b, "image_understanding_model = %q   # deprecated alias for vision_model\n", c.Agent.ImageUnderstandingModel)
+	}
+	if c.Agent.ImageUnderstandingCommand != "" {
+		fmt.Fprintf(b, "image_understanding_command = %q   # optional local fallback when model vision is unavailable\n", c.Agent.ImageUnderstandingCommand)
+	} else {
+		b.WriteString("# image_understanding_command = \"reasonix-vision-ocr\"   # optional local fallback\n")
+	}
 	if c.Agent.SubagentModel != "" {
 		fmt.Fprintf(b, "subagent_model = %q   # default model for runAs=subagent skills\n", c.Agent.SubagentModel)
 	} else {
@@ -43,6 +51,14 @@ func renderAgentModelAssignmentDelta(b *strings.Builder, c, d *Config, anyAgent 
 	}
 	if c.Agent.VisionModel != d.Agent.VisionModel {
 		fmt.Fprintf(b, "vision_model = %q\n", c.Agent.VisionModel)
+		*anyAgent = true
+	}
+	if c.Agent.ImageUnderstandingModel != d.Agent.ImageUnderstandingModel {
+		fmt.Fprintf(b, "image_understanding_model = %q\n", c.Agent.ImageUnderstandingModel)
+		*anyAgent = true
+	}
+	if c.Agent.ImageUnderstandingCommand != d.Agent.ImageUnderstandingCommand {
+		fmt.Fprintf(b, "image_understanding_command = %q\n", c.Agent.ImageUnderstandingCommand)
 		*anyAgent = true
 	}
 	if c.Agent.SubagentModel != "" && c.Agent.SubagentModel != d.Agent.SubagentModel {
