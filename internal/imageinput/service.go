@@ -51,6 +51,7 @@ func (s *Service) Understand(ctx context.Context, current string, images []strin
 	if cached != nil {
 		return cached, nil
 	}
+	sink.Emit(event.Event{Kind: event.TurnPhase, PhaseName: event.TurnPhaseVision, Text: string(event.TurnPhaseVision), ModelRef: target})
 	sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: "正在分析图片…"})
 	summary, err := s.summarizeImages(ctx, target, images, digests, sink)
 	if err != nil {

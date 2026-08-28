@@ -155,12 +155,19 @@ func TestCachedSummaryDoesNotEmitAdditionalUsage(t *testing.T) {
 	p := &fakeProvider{}
 	s := service(p)
 	var usage atomic.Int32
+	var phases atomic.Int32
 	sink := event.FuncSink(func(e event.Event) {
-		if e.Kind == event.Usage {
+		switch e.Kind {
+		case event.Usage:
 			if e.ModelRef != "vision/model" || e.UsageSource != event.UsageSourceVision {
 				t.Errorf("usage attribution: %+v", e)
 			}
 			usage.Add(1)
+		case event.TurnPhase:
+			if e.PhaseName != event.TurnPhaseVision || e.ModelRef != "vision/model" {
+				t.Errorf("vision phase: %+v", e)
+			}
+			phases.Add(1)
 		}
 	})
 	for range 2 {
@@ -170,6 +177,9 @@ func TestCachedSummaryDoesNotEmitAdditionalUsage(t *testing.T) {
 	}
 	if usage.Load() != 1 {
 		t.Fatalf("usage events=%d", usage.Load())
+	}
+	if phases.Load() != 1 {
+		t.Fatalf("vision phase events=%d", phases.Load())
 	}
 }
 
