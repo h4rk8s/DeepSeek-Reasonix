@@ -6,12 +6,12 @@ import (
 	"reasonix/internal/config"
 )
 
-func migrateLegacyConfigForCLI() {
+func migrateLegacyConfigForCLI() error {
 	if _, err := config.MigrateLegacyIfNeeded(); err != nil {
-		fmt.Fprintln(os.Stderr, "warning: config migration failed:", err)
+		return fmt.Errorf("refusing to run with invalid config: config migration failed: %w", err)
 	}
 	if changed, err := config.ApplyUserConfigUpgradesOnStartup(config.UserConfigPath()); err != nil {
-		fmt.Fprintln(os.Stderr, "warning: config upgrade failed:", err)
+		return fmt.Errorf("refusing to run with invalid config: config upgrade failed: %w", err)
 	} else if changed {
 		if cfg, err := config.LoadUserConfigReadOnly(); err == nil {
 			if summary := cfg.OpenCodeGoUpgradeSummary(); summary != "" {
@@ -19,4 +19,5 @@ func migrateLegacyConfigForCLI() {
 			}
 		}
 	}
+	return nil
 }

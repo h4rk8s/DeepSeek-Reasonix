@@ -13,6 +13,7 @@ theme = "auto"   # auto|dark|light; controls CLI colors only; REASONIX_THEME can
 # shortcut_layout = "desktop"   # classic|desktop; compatibility setting; Shift+Tab toggles Plan, Ctrl+Y toggles YOLO
 # cursor_shape = "bar"   # block|underline|bar; text input cursor shape; slim default avoids covering CJK characters
 show_turn_usage = true   # CLI/TUI: show per-request token and cost receipts in transcript scrollback
+# lazy_reasoning = true   # keep completed thinking folded; REASONIX_LAZY_REASONING can override per run
 
 [desktop]
 # language = "auto"   # auto|en|zh; auto follows the browser/OS locale
