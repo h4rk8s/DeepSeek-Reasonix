@@ -164,6 +164,25 @@ func (m *chatTUI) runQueueCommand(args []string) string {
 			return "delete: " + err.Error()
 		}
 		return "deleted #" + shortID(id)
+	case "clear", "empty":
+		result, err := m.ctrl.ClearInbox()
+		if err != nil {
+			return "clear: " + err.Error()
+		}
+		if result.Cleared == 0 && result.Retained == 0 {
+			return "inbox already empty"
+		}
+		message := fmt.Sprintf("cleared %d queued item", result.Cleared)
+		if result.Cleared != 1 {
+			message += "s"
+		}
+		if result.Retained > 0 {
+			message += fmt.Sprintf("; kept %d active item", result.Retained)
+			if result.Retained != 1 {
+				message += "s"
+			}
+		}
+		return message
 	case "move":
 		return m.moveQueueItem(rest)
 	case "pause":
@@ -195,7 +214,7 @@ func (m *chatTUI) runQueueCommand(args []string) string {
 		}
 		return "refs refreshed #" + shortID(id)
 	default:
-		return "usage: /queue list|show|edit|delete|move|pause|resume|retry|refresh"
+		return "usage: /queue list|show|edit|delete|clear|move|pause|resume|retry|refresh"
 	}
 }
 
