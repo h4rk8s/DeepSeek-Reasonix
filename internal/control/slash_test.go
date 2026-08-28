@@ -205,6 +205,20 @@ func TestSlashArgItems(t *testing.T) {
 	if !has(items, "/tmp/memory archive/cache-first.md") {
 		t.Errorf("/memory recover should offer archive paths; got %v", labelsOf(items))
 	}
+	// /queue exposes every executable inbox management subcommand.
+	items, _ = SlashArgItems("/queue ", data)
+	for _, want := range []string{"list", "show", "edit", "delete", "clear", "move", "pause", "resume", "retry", "refresh"} {
+		if !has(items, want) {
+			t.Errorf("/queue missing subcommand %q; got %v", want, labelsOf(items))
+		}
+	}
+	items, _ = SlashArgItems("/queue cl", data)
+	if len(items) != 1 || items[0].Label != "clear" {
+		t.Errorf("/queue cl should filter to clear; got %v", labelsOf(items))
+	}
+	if items, _ := SlashArgItems("/queue clear", data); len(items) != 0 {
+		t.Errorf("/queue clear should be terminal; got %v", labelsOf(items))
+	}
 }
 
 func TestSlashArgItemsEffortUsesProvidedSnapshot(t *testing.T) {

@@ -348,6 +348,7 @@ var Chinese = Messages{
 	CmdHelp:             "查看命令列表",
 	CmdWeb:              "在 Web UI 中继续当前会话",
 	CmdTodo:             "清除任务清单",
+	CmdQueue:            "管理排队指令",
 	CmdQuit:             "退出会话",
 	CmdCopy:             "选择回复复制到剪贴板",
 	CmdExport:           "将会话导出为 Markdown",
