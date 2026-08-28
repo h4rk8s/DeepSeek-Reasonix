@@ -282,6 +282,7 @@ type Messages struct {
 	CmdHelp             string // /help
 	CmdWeb              string // /web
 	CmdTodo             string // /todo
+	CmdQueue            string // /queue
 	CmdQuit             string // /quit (also accepts /exit as hidden alias)
 	CmdCopy             string // /copy
 	CmdExport           string // /export

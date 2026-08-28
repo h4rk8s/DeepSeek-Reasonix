@@ -55,6 +55,24 @@ func TestInterjectLeavesQueueOnTurnDoneForControllerDispatch(t *testing.T) {
 	}
 }
 
+func TestQueueClearRemovesPausedItemsInOneCommand(t *testing.T) {
+	m := newInboxTestChatTUI(t)
+	m.seedInbox("first", "second", "third")
+	if err := m.ctrl.SetInboxPaused(true); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := m.runQueueCommand([]string{"clear"}); got != "cleared 3 queued items" {
+		t.Fatalf("/queue clear = %q", got)
+	}
+	if snap := m.ctrl.InboxSnapshot(); snap.Paused || len(snap.Items) != 0 {
+		t.Fatalf("queue after clear = %+v", snap)
+	}
+	if got := m.runQueueCommand([]string{"clear"}); got != "inbox already empty" {
+		t.Fatalf("empty /queue clear = %q", got)
+	}
+}
+
 func newInboxTestChatTUI(t *testing.T) chatTUI {
 	t.Helper()
 	dir := t.TempDir()

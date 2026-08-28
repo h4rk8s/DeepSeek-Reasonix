@@ -672,9 +672,11 @@ Chat and transcript shortcuts:
 | A line starting with `!` | Runs a shell command directly | The command runs locally without asking the model. |
 
 `/queue list` shows bounded previews without loading full bodies. Use `/queue
-show|edit|delete|move`, `/queue pause|resume`, and `/queue retry|refresh` to
-inspect or manage pending work. After crash recovery the inbox is paused, so
-review it and run `/queue resume` before dispatch continues. Each item is
+show|edit|delete|clear|move`, `/queue pause|resume`, and `/queue retry|refresh`
+to inspect or manage pending work. `/queue clear` atomically removes all queued
+items and unpauses an empty recovered inbox; an already active item is retained.
+After crash recovery the inbox is paused, so review it and run `/queue resume`
+before dispatch continues. Each item is
 limited to 4 MiB; a session accepts at most 64 items and 64 MiB total.
 
 Mode and display shortcuts:

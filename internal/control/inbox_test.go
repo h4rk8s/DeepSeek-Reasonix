@@ -160,6 +160,81 @@ func TestDeleteInboxItemWithdrawsUnconsumedSteer(t *testing.T) {
 	}
 }
 
+func TestClearInboxAtomicallyRemovesRecoveredQueueAndUnpauses(t *testing.T) {
+	dir := t.TempDir()
+	session := filepath.Join(dir, "s.jsonl")
+	c := New(Options{SessionPath: session, SessionDir: dir, Sink: event.Discard})
+	var ids []string
+	for _, text := range []string{"first", "second", "third"} {
+		rec, err := c.EnqueueInbox(InboxRequest{Intent: sessioninbox.IntentSteer, Submit: text})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, rec.ItemID)
+	}
+	st, err := c.ensureInbox()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range ids {
+		if err := st.SetState(id, sessioninbox.StateSteerAccepted, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if snap := c.InboxSnapshot(); !snap.Paused || !snap.Recovered || snap.RecoveredN != 3 {
+		t.Fatalf("orphan recovery did not reproduce paused inbox: %+v", snap)
+	}
+
+	result, err := c.ClearInbox()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Cleared != 3 || result.Retained != 0 {
+		t.Fatalf("clear result = %+v", result)
+	}
+	if snap := c.InboxSnapshot(); snap.Paused || snap.Recovered || snap.RecoveredN != 0 || len(snap.Items) != 0 {
+		t.Fatalf("cleared recovered inbox = %+v", snap)
+	}
+}
+
+func TestClearInboxRetainsActivelyOwnedSteer(t *testing.T) {
+	dir := t.TempDir()
+	c := New(Options{SessionPath: filepath.Join(dir, "s.jsonl"), SessionDir: dir, Sink: event.Discard})
+	queued, err := c.EnqueueInbox(InboxRequest{Submit: "clear me"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, err := c.EnqueueInbox(InboxRequest{Intent: sessioninbox.IntentSteer, Submit: "already active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := c.ensureInbox()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetState(active.ItemID, sessioninbox.StateSteerAccepted, ""); err != nil {
+		t.Fatal(err)
+	}
+	c.inbox.mu.Lock()
+	c.inbox.trackActive(active.ItemID)
+	c.inbox.mu.Unlock()
+
+	result, err := c.ClearInbox()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Cleared != 1 || result.Retained != 1 {
+		t.Fatalf("clear result = %+v", result)
+	}
+	if _, _, err := c.ReadInboxItem(queued.ItemID); !errors.Is(err, sessioninbox.ErrNotFound) {
+		t.Fatalf("queued item was retained: %v", err)
+	}
+	meta, _, err := c.ReadInboxItem(active.ItemID)
+	if err != nil || meta.State != sessioninbox.StateSteerAccepted {
+		t.Fatalf("active item = %+v, err=%v", meta, err)
+	}
+}
+
 func TestTrySteerRejectedBecomesFollowup(t *testing.T) {
 	dir := t.TempDir()
 	session := filepath.Join(dir, "s.jsonl")
