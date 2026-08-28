@@ -153,6 +153,7 @@ printf '%s\n' '{"visible_text":"button text","confidence":"high"}'
 	if got, used, err := c.tryLocalImageUnderstanding(context.Background(), "see @shot.png"); err != nil || used || got != "see @shot.png" {
 		t.Fatalf("vision model should receive direct image input without sidecar, got:\n%s", got)
 	}
+
 }
 
 func TestControllerImageUnderstandingNoticeCarriesDisclosureDetail(t *testing.T) {

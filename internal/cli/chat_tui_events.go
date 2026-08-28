@@ -111,6 +111,9 @@ func (m *chatTUI) ingestMessage(e event.Event) {
 }
 
 func (m *chatTUI) ingestToolDispatch(e event.Event) {
+	if !m.presentation.ShowActivity {
+		return
+	}
 	// The early (partial) dispatch only carries the name — the full dispatch
 	// with args prints the line. Same-ID preview refreshes are ignored because
 	// native scrollback cannot replace an already-printed diff card.
@@ -132,14 +135,21 @@ func (m *chatTUI) ingestToolDispatch(e event.Event) {
 			}
 			return
 		}
+		cardIdx := len(m.transcript)
 		m.commitTranscriptSource(transcriptSource{
 			kind: transcriptSourceToolCard, raw: e.Tool.Name, aux: e.Tool.Args,
 		})
+		if e.Tool.ID != "" {
+			m.toolCardIdx[e.Tool.ID] = cardIdx
+		}
 		m.beginToolRunning(e.Tool.ID)
 	}
 }
 
 func (m *chatTUI) ingestToolProgress(e event.Event) {
+	if !m.presentation.ShowActivity {
+		return
+	}
 	if event.IsSubagentProgressName(e.Tool.Name) {
 		m.streamSubagentProgress(e.Tool)
 		return
@@ -157,12 +167,15 @@ func (m *chatTUI) ingestToolResult(e event.Event) {
 	// A successful result is silent (it only feeds the model); a blocked/failed
 	// call surfaces a red card. Pass the final output so collapseToolOutput has
 	// a last-resort line count when live state was already reset.
-	m.collapseFinalToolOutput(e.Tool)
+	if m.presentation.ShowActivity {
+		m.collapseFinalToolOutput(e.Tool)
+		m.finishToolCard(e.Tool)
+	}
 	if e.Tool.Name == "todo_write" && e.Tool.Err == "" {
 		m.todoArgs = e.Tool.Args
 	}
 	m.rememberSearchResult(e.Tool)
-	if e.Tool.Err != "" {
+	if e.Tool.Err != "" && m.presentation.ShowActivity {
 		m.finalizeStreamed()
 		label := shellToolDisplayName(e.Tool.Name, e.Tool.Execution)
 		detail := shellFailureDetail(e.Tool.Execution)
@@ -199,6 +212,11 @@ func (m *chatTUI) ingestTurnPhase(e event.Event) {
 	} else if phase := strings.TrimSpace(e.Text); phase != "" {
 		m.turnPhase = phase
 	}
+	if m.turnPhase == string(event.TurnPhaseVision) {
+		m.visionModelRef = strings.TrimSpace(e.ModelRef)
+	} else {
+		m.visionModelRef = ""
+	}
 }
 
 func (m *chatTUI) ingestCompletionSummary(e event.Event) {
@@ -216,6 +234,9 @@ func (m *chatTUI) ingestCompletionSummary(e event.Event) {
 
 func (m *chatTUI) ingestNotice(e event.Event) {
 	if isImageUnderstandingNotice(e) {
+		if !m.presentation.ShowImageUnderstanding {
+			return
+		}
 		m.finalizeStreamed()
 		summary := imageUnderstandingSummaryFromNotice(e.Text)
 		idx := len(m.transcript)
@@ -350,6 +371,7 @@ func (m *chatTUI) ingestTurnDone(e event.Event) {
 	m.confirmBubbleSent()
 	m.state = tuiIdle
 	m.turnPhase = ""
+	m.visionModelRef = ""
 	m.noteWatchdogIdle()
 	m.jumpToBottomTurnNoted = false
 	m.queueEditCursor = -1

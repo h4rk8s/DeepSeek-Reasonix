@@ -442,8 +442,9 @@ export interface WireEvent extends RecoveryEventFields {
   itemId?: string;
   sessionPath?: string; // Serve multi-session routing tag; absent locally.
   workspace?: WireWorkspaceChanged;
-  /** turn_phase: working | checking | verifying | reviewing */
+  /** turn_phase: vision | working | checking | verifying | reviewing */
   phase?: string;
+  modelRef?: string;
   /** completion_summary: content-free quality summary for role settings */
   completion?: WireCompletionSummary;
   backgroundJob?: WireBackgroundJob;

@@ -92,6 +92,7 @@ var Chinese = Messages{
 	ReadStatusDoneFmt:                      "已读取 %s · %s 行",
 	ReadStatusPausedFmt:                    "读取已暂停：%s",
 	ReadStatusRecovery:                     "未能在读取预算内验证剩余内容；可缩小读取范围或继续独立工作，全文审查尚未完成",
+	TurnPhaseVision:                        "分析图片中",
 	TurnPhaseChecking:                      "检查中",
 	TurnPhaseVerifying:                     "验证中",
 	TurnPhaseReviewing:                     "复审中",

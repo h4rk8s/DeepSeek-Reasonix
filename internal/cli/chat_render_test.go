@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi"
 
+	"reasonix/internal/config"
 	"reasonix/internal/control"
 	"reasonix/internal/event"
 	"reasonix/internal/provider"
@@ -66,8 +67,11 @@ func newTestChatTUI() chatTUI {
 		shellExpanded:        shellExp,
 		shellTranscriptIdx:   shellIdx,
 		toolLineCountByID:    map[string]int{},
+		toolCardIdx:          map[string]int{},
 		subagentProgressIdx:  map[string]int{},
 		subagentProgress:     map[string]*cliSubagentProgress{},
+		disclosureModel:      newDisclosureModel(),
+		presentation:         config.Default().UIPresentation(),
 		showTurnUsage:        true,
 	}
 }
@@ -96,7 +100,7 @@ func TestNativeReasoningCommitRegistersLazyDisclosure(t *testing.T) {
 	if idx < 0 {
 		t.Fatalf("native reasoning summary missing: %q", renderedTranscriptBlocks(m.transcript))
 	}
-	if !m.toggleReasoningAtTranscriptIdx(idx) {
+	if !m.toggleTranscriptDisclosureAt(idx) {
 		t.Fatal("native reasoning summary is not registered as a disclosure")
 	}
 	expanded := ansi.Strip(m.transcript[idx].rendered)
@@ -106,7 +110,7 @@ func TestNativeReasoningCommitRegistersLazyDisclosure(t *testing.T) {
 	if strings.Contains(expanded, "Thought for") {
 		t.Fatalf("expanded native reasoning should replace its summary: %q", expanded)
 	}
-	if !m.toggleReasoningAtTranscriptIdx(idx) {
+	if !m.toggleTranscriptDisclosureAt(idx) {
 		t.Fatal("native reasoning disclosure did not collapse")
 	}
 	if !hasThoughtFor(m.transcript[idx].rendered) {
@@ -128,7 +132,7 @@ func TestNativeReasoningCommitKeepsExpandedDisclosureInteractive(t *testing.T) {
 	if idx < 0 {
 		t.Fatalf("expanded native reasoning missing: %q", renderedTranscriptBlocks(m.transcript))
 	}
-	if !m.toggleReasoningAtTranscriptIdx(idx) {
+	if !m.toggleTranscriptDisclosureAt(idx) {
 		t.Fatal("expanded native reasoning is not registered as a disclosure")
 	}
 	collapsed := ansi.Strip(m.transcript[idx].rendered)
@@ -276,7 +280,7 @@ func TestLazyReasoningTogglesCompletedThinking(t *testing.T) {
 	if len(m.transcript) != 1 || strings.Contains(strings.Join(renderedTranscriptBlocks(m.transcript), "\n"), "step one") {
 		t.Fatalf("lazy reasoning should start collapsed, transcript=%v", m.transcript)
 	}
-	if !m.toggleReasoningAtTranscriptIdx(0) {
+	if !m.toggleTranscriptDisclosureAt(0) {
 		t.Fatalf("expected summary click to expand reasoning")
 	}
 	if len(m.transcript) != 1 {
@@ -304,7 +308,7 @@ func TestLazyReasoningTogglesCompletedThinking(t *testing.T) {
 	if strings.Contains(ansi.Strip(m.transcript[0].rendered), "⎿") {
 		t.Fatalf("expanded lazy reasoning should render as its own block, not a tool-output gutter: %q", m.transcript[0].rendered)
 	}
-	if !m.toggleReasoningAtTranscriptIdx(0) {
+	if !m.toggleTranscriptDisclosureAt(0) {
 		t.Fatalf("expected body click to collapse reasoning")
 	}
 	if len(m.transcript) != 1 || strings.Contains(strings.Join(renderedTranscriptBlocks(m.transcript), "\n"), "step one") {
@@ -337,10 +341,10 @@ confidence: medium
 	if strings.Contains(joined, "first screenshot") || strings.Contains(joined, "<image-understanding") {
 		t.Fatalf("image detail should start collapsed:\n%s", joined)
 	}
-	if len(m.reasoningIndex) != 1 {
-		t.Fatalf("image disclosure should be clickable, index=%v", m.reasoningIndex)
+	if len(m.disclosureModel.index) != 1 {
+		t.Fatalf("image disclosure should be clickable, index=%v", m.disclosureModel.index)
 	}
-	if !m.toggleReasoningAtTranscriptIdx(0) {
+	if !m.toggleTranscriptDisclosureAt(0) {
 		t.Fatalf("expected image disclosure click to expand")
 	}
 	expanded := ansi.Strip(strings.Join(renderedTranscriptBlocks(m.transcript), "\n"))
@@ -350,7 +354,7 @@ confidence: medium
 	if !strings.Contains(expanded, "first screenshot") || !strings.Contains(expanded, "second screenshot") {
 		t.Fatalf("expanded image detail missing body:\n%s", expanded)
 	}
-	if !m.toggleReasoningAtTranscriptIdx(0) {
+	if !m.toggleTranscriptDisclosureAt(0) {
 		t.Fatalf("expected image disclosure click to collapse")
 	}
 	collapsed := ansi.Strip(strings.Join(renderedTranscriptBlocks(m.transcript), "\n"))
@@ -378,7 +382,7 @@ confidence: medium
 </image-understanding>`,
 	})
 
-	if !m.toggleReasoningAtTranscriptIdx(0) {
+	if !m.toggleTranscriptDisclosureAt(0) {
 		t.Fatalf("expected image disclosure click to expand")
 	}
 	expanded := ansi.Strip(strings.Join(renderedTranscriptBlocks(m.transcript), "\n"))
@@ -416,21 +420,21 @@ func TestReplayHistoryCollapsesReasoningContent(t *testing.T) {
 	if !strings.Contains(joined, "visible answer") {
 		t.Fatalf("replayed assistant answer missing:\n%s", joined)
 	}
-	if len(m.reasoningIndex) != 1 {
-		t.Fatalf("replayed reasoning should be clickable, index=%v", m.reasoningIndex)
+	if len(m.disclosureModel.index) != 1 {
+		t.Fatalf("replayed reasoning should be clickable, index=%v", m.disclosureModel.index)
 	}
 
 	idx := -1
-	for k := range m.reasoningIndex {
+	for k := range m.disclosureModel.index {
 		idx = k
 	}
-	if !m.toggleReasoningAtTranscriptIdx(idx) {
+	if !m.toggleTranscriptDisclosureAt(idx) {
 		t.Fatalf("expected replayed reasoning summary to expand")
 	}
 	if got := strings.Join(renderedTranscriptBlocks(m.transcript), "\n"); !strings.Contains(got, "private step one") {
 		t.Fatalf("expanded replayed reasoning missing body:\n%s", got)
 	}
-	if !m.toggleReasoningAtTranscriptIdx(idx) {
+	if !m.toggleTranscriptDisclosureAt(idx) {
 		t.Fatalf("expected replayed reasoning body to collapse")
 	}
 	if got := strings.Join(renderedTranscriptBlocks(m.transcript), "\n"); strings.Contains(got, "private step one") {
@@ -594,11 +598,11 @@ ui_state: internal UI state
 	if summaryIdx < 0 {
 		t.Fatalf("image understanding summary index missing:\n%s", joined)
 	}
-	id, ok := m.reasoningIndex[summaryIdx]
+	id, ok := m.disclosureModel.index[summaryIdx]
 	if !ok {
 		t.Fatalf("image understanding summary is not clickable")
 	}
-	block := m.completedReasoning[id]
+	block := m.disclosureModel.entries[id]
 	if block == nil || block.expanded {
 		t.Fatalf("image understanding should be remembered collapsed by default: %+v", block)
 	}
@@ -646,10 +650,10 @@ ui_state: same UI
 	if liveIdx < 0 || replayIdx < 0 {
 		t.Fatalf("missing disclosure indexes: live=%d replay=%d", liveIdx, replayIdx)
 	}
-	if !live.toggleReasoningAtTranscriptIdx(liveIdx) {
+	if !live.toggleTranscriptDisclosureAt(liveIdx) {
 		t.Fatalf("live disclosure did not expand")
 	}
-	if !replay.toggleReasoningAtTranscriptIdx(replayIdx) {
+	if !replay.toggleTranscriptDisclosureAt(replayIdx) {
 		t.Fatalf("replay disclosure did not expand")
 	}
 	liveExpanded := ansi.Strip(strings.Join(renderedTranscriptBlocks(live.transcript), "\n"))
@@ -696,8 +700,8 @@ func TestReplayHistoryLazyReasoningIgnoresShowReasoning(t *testing.T) {
 	if !strings.Contains(joined, "visible answer") {
 		t.Fatalf("assistant answer missing:\n%s", joined)
 	}
-	if len(m.reasoningIndex) != 1 {
-		t.Fatalf("replayed reasoning should remain clickable, index=%v", m.reasoningIndex)
+	if len(m.disclosureModel.index) != 1 {
+		t.Fatalf("replayed reasoning should remain clickable, index=%v", m.disclosureModel.index)
 	}
 }
 
@@ -906,7 +910,7 @@ func TestLazyReasoningToggleShiftsStreamingAnswer(t *testing.T) {
 	if m.answerIdx != 1 {
 		t.Fatalf("answerIdx = %d, want 1 before expanding reasoning; transcript=%v", m.answerIdx, m.transcript)
 	}
-	if !m.toggleReasoningAtTranscriptIdx(0) {
+	if !m.toggleTranscriptDisclosureAt(0) {
 		t.Fatalf("expected summary click to expand reasoning")
 	}
 	if m.answerIdx != 1 {
@@ -924,7 +928,7 @@ func TestLazyReasoningToggleShiftsStreamingAnswer(t *testing.T) {
 		t.Fatalf("streaming answer did not update answer block: idx=%d transcript=%v", m.answerIdx, m.transcript)
 	}
 
-	if !m.toggleReasoningAtTranscriptIdx(0) {
+	if !m.toggleTranscriptDisclosureAt(0) {
 		t.Fatalf("expected body click to collapse reasoning")
 	}
 	if m.answerIdx != 1 {
@@ -948,7 +952,7 @@ func TestLazyReasoningToggleRecordsViewportAnchorDelta(t *testing.T) {
 	if len(m.transcript) != 1 {
 		t.Fatalf("collapsed lazy reasoning should be one entry, transcript=%v", m.transcript)
 	}
-	if !m.toggleReasoningAtTranscriptIdx(0) {
+	if !m.toggleTranscriptDisclosureAt(0) {
 		t.Fatal("expected summary click to expand reasoning")
 	}
 	if len(m.transcript) != 1 {
@@ -958,7 +962,7 @@ func TestLazyReasoningToggleRecordsViewportAnchorDelta(t *testing.T) {
 		t.Fatalf("expansion should record a positive viewport anchor delta, got %d", m.viewportAnchorDelta)
 	}
 	m.viewportAnchorDelta = 0
-	if !m.toggleReasoningAtTranscriptIdx(0) {
+	if !m.toggleTranscriptDisclosureAt(0) {
 		t.Fatal("expected body click to collapse reasoning")
 	}
 	if m.viewportAnchorDelta >= 0 {
@@ -977,7 +981,7 @@ func TestLazyReasoningHoverRestylesSummaryButNotExpandedBody(t *testing.T) {
 	m.ingestEvent(event.Event{Kind: event.Reasoning, Text: "step one\nstep two"})
 	m.ingestEvent(event.Event{Kind: event.Text, Text: "Answer"})
 	collapsed := m.transcript[0].rendered
-	if !m.setTranscriptHover(0, transcriptHoverReasoning) {
+	if !m.setTranscriptHover(0, transcriptHoverDisclosure) {
 		t.Fatal("expected hover to restyle the collapsed reasoning summary")
 	}
 	if m.transcript[0].rendered == collapsed {
@@ -989,11 +993,11 @@ func TestLazyReasoningHoverRestylesSummaryButNotExpandedBody(t *testing.T) {
 	if strings.Contains(ansi.Strip(m.transcript[0].rendered), "\n") {
 		t.Fatalf("hovered summary should stay a single-line clickable target: %q", m.transcript[0].rendered)
 	}
-	if !m.toggleReasoningAtTranscriptIdx(0) {
+	if !m.toggleTranscriptDisclosureAt(0) {
 		t.Fatal("expected reasoning to expand")
 	}
 	body := m.transcript[0].rendered
-	if m.setTranscriptHover(0, transcriptHoverReasoning) {
+	if m.setTranscriptHover(0, transcriptHoverDisclosure) {
 		t.Fatal("hover over expanded reasoning body should not re-render")
 	}
 	if m.transcript[0].rendered != body {
@@ -1012,7 +1016,7 @@ func TestLazyReasoningExpandedPlainClickCollapsesButDragSelectionDoesNot(t *test
 		m.lazyReasoning = true
 		m.ingestEvent(event.Event{Kind: event.Reasoning, Text: "step one\nstep two\nstep three"})
 		m.ingestEvent(event.Event{Kind: event.Text, Text: "Answer"})
-		if !m.toggleReasoningAtTranscriptIdx(0) {
+		if !m.toggleTranscriptDisclosureAt(0) {
 			t.Fatal("expected reasoning to expand")
 		}
 		wrapped, lineMap := wrapTranscriptEntries(m.transcript, 80)
@@ -1040,7 +1044,7 @@ func TestLazyReasoningExpandedPlainClickCollapsesButDragSelectionDoesNot(t *test
 	click = next.(chatTUI)
 	next, _ = click.update(tea.MouseReleaseMsg{Button: tea.MouseLeft, X: 6, Y: row})
 	click = next.(chatTUI)
-	if click.reasoningExpandedAtTranscriptIdx(0) {
+	if click.disclosureExpandedAtTranscriptIdx(0) {
 		t.Fatal("plain click release should collapse expanded reasoning")
 	}
 
@@ -1052,7 +1056,7 @@ func TestLazyReasoningExpandedPlainClickCollapsesButDragSelectionDoesNot(t *test
 	drag = next.(chatTUI)
 	next, _ = drag.update(tea.MouseReleaseMsg{Button: tea.MouseLeft, X: 15, Y: row})
 	drag = next.(chatTUI)
-	if !drag.reasoningExpandedAtTranscriptIdx(0) {
+	if !drag.disclosureExpandedAtTranscriptIdx(0) {
 		t.Fatal("drag selection over expanded reasoning should not collapse it")
 	}
 	if !strings.Contains(ansi.Strip(drag.transcript[0].rendered), "step two") {

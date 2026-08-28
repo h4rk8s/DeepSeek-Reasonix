@@ -192,6 +192,7 @@ func ToWire(e event.Event) Event {
 		}
 	case event.TurnPhase:
 		w.Phase = string(e.PhaseName)
+		w.ModelRef = e.ModelRef
 		if w.Phase == "" {
 			w.Phase = e.Text
 		}

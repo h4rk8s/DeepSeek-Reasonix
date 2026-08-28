@@ -28,13 +28,14 @@ func (visionSummaryTestProvider) Stream(ctx context.Context, _ provider.Request)
 }
 
 func TestPrepareVisionTurnSummarizesTextOnlyInputAndKeepsRawPrompt(t *testing.T) {
+	var events []event.Event
 	c := &Controller{
 		selection:   modelSelection{ref: "text/text-model"},
 		visionModel: "vision/vision-model",
 		visionProviderResolver: func(string) (provider.Provider, error) {
 			return visionSummaryTestProvider{}, nil
 		},
-		sink: event.Discard,
+		sink: event.FuncSink(func(e event.Event) { events = append(events, e) }),
 	}
 	ctx := context.Background()
 	got, ctx, err := c.prepareVisionTurn(ctx, "请看这张图", []string{"data:image/png;base64,AA=="})
@@ -46,6 +47,9 @@ func TestPrepareVisionTurnSummarizesTextOnlyInputAndKeepsRawPrompt(t *testing.T)
 	}
 	if summary := agent.VisionSummaryFromContext(ctx); summary == nil || summary.ModelRef != "vision/vision-model" {
 		t.Fatalf("summary context = %+v", summary)
+	}
+	if len(events) < 2 || events[0].Kind != event.TurnPhase || events[0].PhaseName != event.TurnPhaseVision || events[0].ModelRef != "vision/vision-model" {
+		t.Fatalf("vision prepass phase = %+v", events)
 	}
 }
 

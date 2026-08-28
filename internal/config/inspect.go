@@ -142,6 +142,9 @@ func inspectConfigSource(scope, path string) inspectedConfigSource {
 	}
 	var decoded Config
 	meta, err := decodeTOMLFile(path, &decoded)
+	if err == nil {
+		err = validateUIPresentationConfig(decoded.UI)
+	}
 	if err != nil {
 		source.report.Status = ConfigSourceInvalid
 		source.report.Error = fmt.Sprintf("config %s: %v", path, err)
@@ -250,6 +253,7 @@ type configSettingSpec struct {
 }
 
 func effectiveConfigSettings(cfg *Config, user, project inspectedConfigSource) []ConfigSetting {
+	presentation := cfg.UIPresentation()
 	permissionMode := strings.TrimSpace(cfg.Permissions.Mode)
 	if permissionMode == "" {
 		permissionMode = "ask"
@@ -277,6 +281,22 @@ func effectiveConfigSettings(cfg *Config, user, project inspectedConfigSource) [
 		settingSpec("ui.lazy_reasoning", cfg.UI.LazyReasoning),
 		settingSpec("ui.image_understanding_log", cfg.UIImageUnderstandingLog()),
 		settingSpec("ui.show_usage", cfg.UIShowUsage()),
+		settingSpec("ui.transcript.profile", presentation.Profile),
+		derivedSettingSpec("ui.transcript.density", presentation.Density, "ui.transcript.profile"),
+		derivedSettingSpec("ui.transcript.turn_separator", presentation.TurnSeparator, "ui.transcript.profile"),
+		derivedSettingSpec("ui.transcript.user_prompt", presentation.UserPrompt, "ui.transcript.profile"),
+		derivedSettingSpec("ui.transcript.assistant_marker", presentation.AssistantMarker, "ui.transcript.profile"),
+		derivedSettingSpec("ui.transcript.show.role", presentation.ShowRole, "ui.transcript.profile"),
+		derivedSettingSpec("ui.transcript.show.activity", presentation.ShowActivity, "ui.transcript.profile"),
+		derivedSettingSpec("ui.transcript.show.image_understanding", presentation.ShowImageUnderstanding, "ui.transcript.profile"),
+		derivedSettingSpec("ui.transcript.show.recap", presentation.ShowRecap, "ui.transcript.profile"),
+		derivedSettingSpec("ui.transcript.show.turn_metrics", presentation.ShowTurnMetrics, "ui.show_usage"),
+		derivedSettingSpec("ui.composer.prefix", presentation.ComposerPrefix, "ui.input_prompt", "ui.transcript.profile"),
+		derivedSettingSpec("ui.composer.frame", presentation.ComposerFrame, "ui.transcript.profile"),
+		derivedSettingSpec("ui.status.layout", presentation.StatusLayout, "ui.transcript.profile"),
+		derivedSettingSpec("ui.status.cache", presentation.StatusCache, "ui.transcript.profile"),
+		derivedSettingSpec("ui.status.path", presentation.StatusPath, "ui.transcript.profile"),
+		derivedSettingSpec("ui.status.cost", presentation.StatusCost, "ui.transcript.profile"),
 		settingSpec("permissions.mode", permissionMode),
 		settingSpec("sandbox.bash", cfg.BashMode()),
 		settingSpec("sandbox.network", cfg.Sandbox.Network),

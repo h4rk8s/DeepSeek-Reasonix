@@ -14,8 +14,9 @@ import (
 )
 
 const (
-	statusFooterIndent   = "  "
-	statusFooterGroupGap = 2
+	statusFooterIndent         = "  "
+	statusFooterGroupGap       = 2
+	statusFooterInlineModelMin = 24
 )
 
 func footerLabel(label string) string {
@@ -193,6 +194,58 @@ func (m chatTUI) primaryStatusLine(modeTag string, shellMode, cancelRequested bo
 	return status
 }
 
+// statusProjection is the single footer layout result consumed by both View
+// and viewport sizing, so rendered rows and reserved rows cannot diverge.
+type statusProjection struct {
+	primary string
+	working string
+	block   string
+	rows    int
+}
+
+func (m chatTUI) projectStatus(width int, styled bool) statusProjection {
+	if m.ctrl == nil {
+		return statusProjection{rows: 3}
+	}
+	shellMode := strings.HasPrefix(strings.TrimSpace(m.input.Value()), "!")
+	cancelRequested := m.cancelRequested()
+	modeTag := m.projectStatusModeTag(shellMode, styled)
+	p := statusProjection{
+		primary: m.primaryStatusLine(modeTag, shellMode, cancelRequested),
+	}
+	if m.state == tuiRunning {
+		p.working = m.runningWorkingLine(cancelRequested, styled)
+	}
+	p.block = m.renderStatusBlock(p.primary, width)
+	if p.working != "" {
+		p.rows += strings.Count(wrapStatusLine(p.working, width), "\n") + 1
+	}
+	p.rows += strings.Count(p.block, "\n") + 1
+	return p
+}
+
+func (m chatTUI) projectStatusModeTag(shellMode, styled bool) string {
+	label := m.modeTagText()
+	background := statusAutoColor
+	foreground := modeTagDark
+	switch {
+	case shellMode:
+		label = "Shell"
+		background = statusShellColor
+		foreground = modeTagLight
+	case m.ctrl.AutoApproveTools():
+		background = statusYoloColor
+		foreground = modeTagLight
+	case m.planMode:
+		background = statusPlanColor
+		foreground = modeTagLight
+	}
+	if !styled {
+		return " " + label + " "
+	}
+	return modeTagStyle(background, foreground).Render(label)
+}
+
 // presetTag mirrors the desktop's preset chips in the status line: the default
 // standard posture stays quiet, delivery is always visible so a /preset switch
 // reads back from the UI.
@@ -214,8 +267,9 @@ func (m chatTUI) statusModelWorkGroup(maxWidth int) string {
 	if maxWidth <= 0 {
 		maxWidth = 1
 	}
+	model, effort, preset := m.modelComboTag(), m.effortTag(), m.presetTag()
 	fields := make([]string, 0, 3)
-	for _, field := range []string{m.modelComboTag(), m.effortTag(), m.presetTag()} {
+	for _, field := range []string{model, effort, preset} {
 		if field != "" {
 			fields = append(fields, field)
 		}
@@ -226,6 +280,14 @@ func (m chatTUI) statusModelWorkGroup(maxWidth int) string {
 	full := strings.Join(fields, " · ")
 	if visibleWidth(full) <= maxWidth {
 		return full
+	}
+	// Vision is a short-lived phase. Preserve executor, vision, planner and an
+	// explicit preset before spending a third footer row on default effort.
+	if m.visionTag() != "" {
+		essential := strings.Join(nonEmptyStrings([]string{model, preset}), " · ")
+		if visibleWidth(essential) <= maxWidth {
+			return essential
+		}
 	}
 	return footerHint(compactMiddle(ansi.Strip(full), maxWidth))
 }
@@ -289,7 +351,7 @@ func (m chatTUI) statusTelemetryGroups() []string {
 	}
 	var data []string
 	if m.ctrl != nil {
-		if body, rate, ok := m.cacheStatus(); ok {
+		if body, rate, ok := m.cacheStatus(); ok && m.presentation.StatusCache {
 			data = append(data, themeFg(cacheStatusColor(rate), body))
 		}
 		if context := m.contextTag(); context != "" {
@@ -299,7 +361,7 @@ func (m chatTUI) statusTelemetryGroups() []string {
 			data = append(data, jt)
 		}
 	}
-	if balance := m.balanceTag(); balance != "" {
+	if balance := m.balanceTag(); balance != "" && m.presentation.StatusCost {
 		data = append(data, balance)
 	}
 	if cost := m.sessionCostStatus(); cost != "" {
@@ -316,13 +378,211 @@ func (m chatTUI) renderStatusBlock(primary string, width int) string {
 		width = 1
 	}
 	primary = hideStatusHintWhenKeyNamesCannotFit(primary, width)
-	modelWork := m.statusModelWorkGroup(max(width-visibleWidth(statusFooterIndent), 1))
+	if m.presentation.StatusLayout == "two" {
+		first, modelOverflow := m.layoutBoundedPrimaryStatusRow(primary, width)
+		second := m.layoutBoundedStatusDataRow(modelOverflow, width)
+		if second == "" {
+			return first
+		}
+		if m.presentation.Profile == "hybrid" {
+			return statusFooterDivider(width) + "\n" + first + "\n" + second
+		}
+		return first + "\n" + statusFooterDivider(width) + "\n" + second
+	}
+
+	modelWidth := max(width-visibleWidth(statusFooterIndent), 1)
+	if inlineWidth := width - visibleWidth(primary) - statusFooterGroupGap; inlineWidth >= statusFooterInlineModelMin {
+		modelWidth = inlineWidth
+	}
+	modelWork := m.statusModelWorkGroup(modelWidth)
 	first := layoutStatusSides(primary, modelWork, width)
 	second := m.layoutGitTelemetry(width)
-	if second == "" {
-		return first
+	groups := []string{strings.TrimSpace(first), strings.TrimSpace(strings.ReplaceAll(second, "\n", " · "))}
+	return wrapStatusGroups(strings.Join(nonEmptyStrings(groups), " · "), width)
+}
+
+// layoutBoundedPrimaryStatusRow keeps the interaction and model groups on one
+// physical row whenever the model identity remains legible. Any model group
+// that cannot fit moves into the single data row owned by layout="two".
+func (m chatTUI) layoutBoundedPrimaryStatusRow(primary string, width int) (row, modelOverflow string) {
+	primary = singleStatusRow(primary, width)
+	available := width - visibleWidth(primary) - statusFooterGroupGap
+	if available >= 16 {
+		model := m.statusModelWorkGroup(available)
+		if model != "" && visibleWidth(model) <= available {
+			return primary + strings.Repeat(" ", width-visibleWidth(primary)-visibleWidth(model)) + model, ""
+		}
 	}
-	return first + "\n" + statusFooterDivider(width) + "\n" + second
+	return primary, m.statusModelWorkGroup(max(width-visibleWidth(statusFooterIndent), 1))
+}
+
+func singleStatusRow(value string, width int) string {
+	value = strings.ReplaceAll(value, "\n", " · ")
+	if visibleWidth(value) <= width {
+		return value
+	}
+	return ansi.Truncate(value, max(width, 1), "…")
+}
+
+// layoutBoundedStatusDataRow is the responsive priority policy for the second
+// content row. It never wraps. At narrower widths cumulative cost/rate and the
+// workspace identity yield before balance, compaction headroom, and cache.
+func (m chatTUI) layoutBoundedStatusDataRow(modelOverflow string, width int) string {
+	available := max(width-visibleWidth(statusFooterIndent), 1)
+	if m.statuslineCmd != "" && m.statuslineOut != "" {
+		custom := singleStatusRow(strings.TrimSpace(m.statuslineOut), available)
+		identityBudget := available - visibleWidth(custom) - statusFooterGroupGap
+		if identity := m.statusIdentitySingleRow(identityBudget); identity != "" {
+			padding := available - visibleWidth(identity) - visibleWidth(custom)
+			return statusFooterIndent + identity + strings.Repeat(" ", padding) + custom
+		}
+		return statusFooterIndent + custom
+	}
+
+	selected := make(map[int]string)
+	used := 0
+	add := func(order int, value string) bool {
+		if strings.TrimSpace(ansi.Strip(value)) == "" {
+			return false
+		}
+		gap := 0
+		if len(selected) > 0 {
+			gap = statusFooterGroupGap
+		}
+		if used+gap+visibleWidth(value) > available {
+			return false
+		}
+		selected[order] = value
+		used += gap + visibleWidth(value)
+		return true
+	}
+
+	// Priority order is intentionally different from display order.
+	add(0, modelOverflow)
+	if balance := m.balanceTag(); balance != "" && m.presentation.StatusCost {
+		add(5, balance)
+	}
+	if context := m.contextStatusForWidth(width); context != "" {
+		add(3, context)
+	}
+	if body, rate, ok := m.cacheStatus(); ok && m.presentation.StatusCache {
+		if width < 64 {
+			if _, avg, found := strings.Cut(body, " · "); found {
+				body = avg
+			}
+		}
+		add(2, themeFg(cacheStatusColor(rate), body))
+	}
+	if jobs := m.jobsTag(); jobs != "" {
+		add(4, jobs)
+	}
+
+	remaining := available - used
+	if len(selected) > 0 {
+		remaining -= statusFooterGroupGap
+	}
+	if remaining >= 8 {
+		if identity := m.statusIdentitySingleRow(remaining); identity != "" {
+			add(1, identity)
+		}
+	}
+	if m.presentation.StatusCost {
+		if cost := m.sessionCostStatus(); cost != "" {
+			add(6, footerMetric(i18n.M.ChatStatusCostLabel, footerValue(cost)))
+		}
+	}
+
+	values := make([]string, 0, len(selected))
+	for order := 0; order <= 6; order++ {
+		if value := selected[order]; value != "" {
+			values = append(values, value)
+		}
+	}
+	if len(values) == 0 {
+		return ""
+	}
+
+	// Keep identity/model spill on the left and telemetry on the right. Besides
+	// matching the primary row's model edge, this makes added vision identity
+	// consume horizontal space instead of creating another physical row.
+	left := nonEmptyStrings([]string{selected[0], selected[1]})
+	right := nonEmptyStrings([]string{selected[2], selected[3], selected[4], selected[5], selected[6]})
+	if len(left) > 0 && len(right) > 0 {
+		leftText := strings.Join(left, strings.Repeat(" ", statusFooterGroupGap))
+		rightText := strings.Join(right, strings.Repeat(" ", statusFooterGroupGap))
+		padding := available - visibleWidth(leftText) - visibleWidth(rightText)
+		if padding >= statusFooterGroupGap {
+			return statusFooterIndent + leftText + strings.Repeat(" ", padding) + rightText
+		}
+	}
+	return statusFooterIndent + strings.Join(values, strings.Repeat(" ", statusFooterGroupGap))
+}
+
+func (m chatTUI) contextStatusForWidth(width int) string {
+	if width >= 96 {
+		return m.contextTag()
+	}
+	if m.ctrl == nil {
+		return ""
+	}
+	used, window := m.ctrl.ContextSnapshot()
+	if used <= 0 || window <= 0 {
+		return ""
+	}
+	pct := used * 100 / window
+	ratio := m.ctrl.CompactRatio()
+	if ratio <= 0 || ratio >= 1 {
+		return dim(fmt.Sprintf("%s ctx · %d%%", shortTokens(used), pct))
+	}
+	threshold := int(ratio * 100)
+	left := max(threshold-pct, 0)
+	body := fmt.Sprintf("%s ctx · %d%% left", shortTokens(used), left)
+	color := activeCLITheme.muted
+	if pct >= threshold {
+		body = fmt.Sprintf("%s ctx · compact", shortTokens(used))
+		color = activeCLITheme.danger
+	} else if left <= 10 {
+		color = activeCLITheme.warn
+	}
+	return themeFg(color, body)
+}
+
+func (m chatTUI) statusIdentitySingleRow(maxWidth int) string {
+	if maxWidth < 8 || !m.presentation.StatusPath {
+		return ""
+	}
+	workspace := m.workspaceLabel()
+	hasGit := strings.TrimSpace(m.gitStatus.Repo) != "" && strings.TrimSpace(m.gitStatus.Branch) != ""
+	switch {
+	case workspace != "" && hasGit:
+		git := m.gitStatus.RenderWithin(maxWidth, activeCLITheme.warn)
+		if visibleWidth(workspace)+3+visibleWidth(git) <= maxWidth {
+			return dim(workspace) + " · " + git
+		}
+		gitBudget := max(maxWidth/2, 8)
+		git = m.gitStatus.RenderWithin(gitBudget, activeCLITheme.warn)
+		workspaceBudget := maxWidth - visibleWidth(git) - 3
+		if workspaceBudget >= 8 {
+			return dim(compactMiddle(workspace, workspaceBudget)) + " · " + git
+		}
+		return dim(compactMiddle(workspace, maxWidth))
+	case workspace != "":
+		return dim(compactMiddle(workspace, maxWidth))
+	case hasGit:
+		return m.gitStatus.RenderWithin(maxWidth, activeCLITheme.warn)
+	default:
+		return ""
+	}
+}
+
+func nonEmptyStrings(values []string) []string {
+	out := values[:0]
+	for _, value := range values {
+		if strings.TrimSpace(ansi.Strip(value)) != "" {
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 // hideStatusHintWhenKeyNamesCannotFit keeps the readable Shift+Tab/Ctrl+Y
@@ -406,8 +666,12 @@ func (m chatTUI) layoutGitTelemetry(width int) string {
 	telemetryGroups := m.statusTelemetryGroups()
 	telemetry := strings.Join(telemetryGroups, "  ")
 	available := max(width-visibleWidth(statusFooterIndent), 1)
-	workspace := m.workspaceLabel()
-	hasGit := strings.TrimSpace(m.gitStatus.Repo) != "" && strings.TrimSpace(m.gitStatus.Branch) != ""
+	workspace := ""
+	hasGit := false
+	if m.presentation.StatusPath {
+		workspace = m.workspaceLabel()
+		hasGit = strings.TrimSpace(m.gitStatus.Repo) != "" && strings.TrimSpace(m.gitStatus.Branch) != ""
+	}
 
 	var identityLines []string
 	switch {

@@ -17,15 +17,15 @@ import (
 )
 
 // TestEffectQualityFloorDoesNotTouchProviderPrefix pins the cache contract:
-// standard and delivery send identical system prompts and tool schemas. The
-// workspace line embeds the run's temp dir, so both sides normalize it.
+// standard and delivery send identical system prompts and tool schemas. Dynamic
+// workspace and environment data now lives in the per-turn session context.
 func TestEffectQualityFloorDoesNotTouchProviderPrefix(t *testing.T) {
 	standard := effectRun(t, "boot-effect-floor-standard", "", ablation.Set{})
 	delivery := effectRun(t, "boot-effect-floor-delivery", "delivery", ablation.Set{})
 
 	stdReq, delReq := standard[0], delivery[0]
-	stdPrompt := stripWorkspaceLine(systemMessage(stdReq.Messages))
-	delPrompt := stripWorkspaceLine(systemMessage(delReq.Messages))
+	stdPrompt := systemMessage(stdReq.Messages)
+	delPrompt := systemMessage(delReq.Messages)
 	if stdPrompt != delPrompt {
 		t.Fatalf("delivery floor changed the provider-visible system prompt\n%s", firstPromptDiff(stdPrompt, delPrompt))
 	}
@@ -52,16 +52,6 @@ func firstPromptDiff(want, got string) string {
 		}
 	}
 	return "no line differs (length mismatch only)"
-}
-
-func stripWorkspaceLine(s string) string {
-	lines := strings.Split(s, "\n")
-	for i, l := range lines {
-		if strings.HasPrefix(l, "Current workspace:") {
-			lines[i] = "Current workspace: <ROOT>"
-		}
-	}
-	return strings.Join(lines, "\n")
 }
 
 // TestEffectDeliveryFloorSetsSessionFloor asserts the role input reaches the
