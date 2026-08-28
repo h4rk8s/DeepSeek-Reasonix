@@ -163,7 +163,10 @@ func RunWithBuildInfo(args []string, info BuildInfo) int {
 		}
 		return mcpCommand(rest)
 	case "remote":
-		configureCLIThemeFromConfig()
+		if err := configureCLIThemeFromConfig(); err != nil {
+			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+			return 1
+		}
 		return remoteCommand(rest, version)
 	case "plugin":
 		if err := configureCLIThemeFromConfigNoProbe(); err != nil {
@@ -172,7 +175,10 @@ func RunWithBuildInfo(args []string, info BuildInfo) int {
 		}
 		return pluginCommand(rest)
 	case "subagent":
-		configureCLIThemeFromConfigForTTYOutput()
+		if err := configureCLIThemeFromConfigForTTYOutput(); err != nil {
+			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+			return 1
+		}
 		return subagentCommand(rest)
 	case "doctor":
 		if !doctorRepair {
@@ -183,15 +189,24 @@ func RunWithBuildInfo(args []string, info BuildInfo) int {
 		}
 		return doctorCommand(rest, version)
 	case "report":
-		configureCLIThemeFromConfig()
+		if err := configureCLIThemeFromConfig(); err != nil {
+			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+			return 1
+		}
 		return reportCommand(rest)
 	case "session", "sessions", "catalogs":
 		return runSessionOrCatalogCommand(cmd, rest)
 	case "hook", "hooks":
-		configureCLIThemeFromConfig()
+		if err := configureCLIThemeFromConfig(); err != nil {
+			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+			return 1
+		}
 		return hookCommand(rest)
 	case "task":
-		configureCLIThemeFromConfig()
+		if err := configureCLIThemeFromConfig(); err != nil {
+			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+			return 1
+		}
 		return taskCommand(rest)
 	case "review":
 		if err := configureCLIThemeFromConfigNoProbe(); err != nil {

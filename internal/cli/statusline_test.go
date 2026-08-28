@@ -490,17 +490,6 @@ func renderStatuslineViewWithPlanner(t *testing.T) string {
 	return next.(chatTUI).View().Content
 }
 
-func renderStatuslineViewWithBalance(t *testing.T) string {
-	t.Helper()
-
-	ctrl := control.New(control.Options{})
-	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 120)
-	m.modelRef = "deepseek-flash/deepseek-v4-flash"
-	m.balance = "¥96.30"
-	next, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
-	return next.(chatTUI).View().Content
-}
-
 func renderPlanStatuslineView(t *testing.T) string {
 	t.Helper()
 

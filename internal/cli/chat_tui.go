@@ -688,12 +688,6 @@ type clipboardImageMsg struct {
 	err  error
 }
 
-type clipboardPasteMsg struct {
-	path string
-	text string
-	err  error
-}
-
 type transcriptDisclosureKind int
 
 const (
@@ -1183,25 +1177,6 @@ func batchCmds(cmds ...tea.Cmd) tea.Cmd {
 	default:
 		return tea.Batch(out...)
 	}
-}
-
-func padWrappedForYOffset(wrapped string, lineMap []int, desiredYOffset, viewportHeight int) (string, []int) {
-	if desiredYOffset <= 0 || viewportHeight <= 0 {
-		return wrapped, lineMap
-	}
-	lines := strings.Split(wrapped, "\n")
-	neededLines := viewportHeight + desiredYOffset
-	if len(lines) >= neededLines {
-		return wrapped, lineMap
-	}
-	pad := neededLines - len(lines)
-	for i := 0; i < pad; i++ {
-		lines = append(lines, "")
-		if lineMap != nil {
-			lineMap = append(lineMap, -1)
-		}
-	}
-	return strings.Join(lines, "\n"), lineMap
 }
 
 // update runs the model's message handling. Update wraps it to keep the
@@ -2715,10 +2690,7 @@ func reasoningBlockStyled(raw string, width, maxLines int, background, hover boo
 	if background {
 		gutter = assistantContentGutter
 	}
-	w := contentW - len([]rune(gutter))
-	if w < 8 {
-		w = 8
-	}
+	w := max(contentW-len([]rune(gutter)), 8)
 	var lines []string
 	for ln := range strings.SplitSeq(strings.TrimRight(raw, "\n"), "\n") {
 		for wl := range strings.SplitSeq(ansi.Wrap(expandTabs(ln), w, ""), "\n") {
@@ -2822,10 +2794,7 @@ func imageUnderstandingSummaryFromNotice(text string) string {
 
 func imageUnderstandingBlockStyled(raw string, width int, hover bool) string {
 	contentW := transcriptEntryWidth(width)
-	innerW := contentW - len([]rune(assistantContentGutter))
-	if innerW < 8 {
-		innerW = 8
-	}
+	innerW := max(contentW-len([]rune(assistantContentGutter)), 8)
 	blocks := splitImageUnderstandingBlocks(raw)
 	if len(blocks) == 0 {
 		return ""
@@ -2893,7 +2862,7 @@ func wrapDisclosureBody(raw string, width int) []string {
 		width = 8
 	}
 	var lines []string
-	for _, ln := range strings.Split(strings.TrimRight(raw, "\n"), "\n") {
+	for ln := range strings.SplitSeq(strings.TrimRight(raw, "\n"), "\n") {
 		wrapped := ansi.Wrap(expandTabs(ln), width, "")
 		if wrapped == "" {
 			lines = append(lines, "")
@@ -3022,24 +2991,6 @@ func (m *chatTUI) shiftCompletedReasoning(start, delta int) {
 	m.rebuildReasoningIndex()
 }
 
-func (m *chatTUI) shiftLiveTranscriptRefsAfterInsert(at int) {
-	shiftTranscriptRefAfterInsert(&m.reasoningLineIdx, at)
-	shiftTranscriptRefAfterInsert(&m.reasoningTextIdx, at)
-	shiftTranscriptRefAfterInsert(&m.answerIdx, at)
-	shiftTranscriptRefAfterInsert(&m.toolStreamIdx, at)
-	shiftTranscriptRefAfterInsert(&m.hoverTranscriptIdx, at)
-	for id, idx := range m.shellTranscriptIdx {
-		if idx >= at {
-			m.shellTranscriptIdx[id] = idx + 1
-		}
-	}
-	for id, idx := range m.toolCardIdx {
-		if idx >= at {
-			m.toolCardIdx[id] = idx + 1
-		}
-	}
-}
-
 func (m *chatTUI) shiftLiveTranscriptRefsAfterDelete(at int) {
 	shiftTranscriptRefAfterDelete(&m.reasoningLineIdx, at)
 	shiftTranscriptRefAfterDelete(&m.reasoningTextIdx, at)
@@ -3077,12 +3028,6 @@ func (m *chatTUI) deleteTranscriptLine(at int) bool {
 	return true
 }
 
-func shiftTranscriptRefAfterInsert(ref *int, at int) {
-	if ref != nil && *ref >= at {
-		*ref = *ref + 1
-	}
-}
-
 func shiftTranscriptRefAfterDelete(ref *int, at int) {
 	if ref == nil {
 		return
@@ -3106,10 +3051,6 @@ func (m *chatTUI) truncateCompletedReasoning(n int) {
 		m.hoverKind = transcriptHoverNone
 	}
 	m.rebuildReasoningIndex()
-}
-
-func (m *chatTUI) hasClickableTranscriptEntries() bool {
-	return len(m.reasoningIndex) > 0 || len(m.shellTranscriptIdx) > 0
 }
 
 func (m *chatTUI) clickableAtWrappedLine(lineIdx int) (int, transcriptHoverKind, bool) {
@@ -3273,13 +3214,6 @@ func (m *chatTUI) renderTranscriptDisclosureBody(block *completedReasoningBlock,
 	}
 }
 
-func (m *chatTUI) toggleReasoningAtWrappedLine(lineIdx int) bool {
-	if lineIdx < 0 || lineIdx >= len(m.wrappedLineTranscriptIdx) {
-		return false
-	}
-	return m.toggleReasoningAtTranscriptIdx(m.wrappedLineTranscriptIdx[lineIdx])
-}
-
 func (m *chatTUI) toggleReasoningAtTranscriptIdx(transcriptIdx int) bool {
 	if transcriptIdx < 0 || m.reasoningIndex == nil {
 		return false
@@ -3373,12 +3307,9 @@ func (m *chatTUI) renderShellOutputBlock(id string, hover bool) string {
 		show = shellPreviewLines
 		hint = fmt.Sprintf("… %d more lines (Ctrl+B)", total-shellPreviewLines)
 	}
-	innerW := transcriptEntryWidth(m.width) - len([]rune(connector))
-	if innerW < 10 {
-		innerW = 10
-	}
+	innerW := max(transcriptEntryWidth(m.width)-len([]rune(connector)), 10)
 	rendered := make([]string, 0, show+1)
-	for i := 0; i < show; i++ {
+	for i := range show {
 		rendered = append(rendered, clampPlain(lines[i], innerW))
 	}
 	if hint != "" {
@@ -4264,11 +4195,10 @@ func freshApprovalAllowsSession(toolName string) bool {
 var (
 	// Input box: only top + bottom borders, no sides. The concrete colors are
 	// refreshed from the active CLI theme during startup.
-	inputBoxStyle       lipgloss.Style
-	approvalBannerStyle lipgloss.Style
-	todoPanelStyle      lipgloss.Style
-	statusBlockStyle    lipgloss.Style
-	workingStyle        lipgloss.Style
+	inputBoxStyle    lipgloss.Style
+	todoPanelStyle   lipgloss.Style
+	statusBlockStyle lipgloss.Style
+	workingStyle     lipgloss.Style
 )
 
 func (m chatTUI) cancelRequested() bool {
@@ -4362,13 +4292,6 @@ func compactStatusText(s string) string {
 		return "tools skipped"
 	}
 	return s
-}
-
-func statusDataGlyph(glyph string, color cliColor) string {
-	return lipgloss.NewStyle().
-		Foreground(lipgloss.Color(color.hex)).
-		Bold(true).
-		Render(glyph)
 }
 
 func (m chatTUI) View() tea.View {
@@ -4797,14 +4720,6 @@ func plannerModelRefFromConfig(cfg *config.Config) string {
 	return ref
 }
 
-func (m chatTUI) workspaceTag() string {
-	label := m.workspaceLabel()
-	if label == "" {
-		return ""
-	}
-	return dim(label)
-}
-
 func (m chatTUI) workspaceLabel() string {
 	if m.ctrl == nil {
 		return ""
@@ -5204,57 +5119,6 @@ func compactStatusLine(s string, width int) string {
 		return s
 	}
 	return ansi.Truncate(s, width, "…")
-}
-
-func statusDataLine(width int, resourceData []string, workspace, git string) string {
-	line := joinStatusDataParts(statusDataParts(resourceData, workspace, git))
-	if width <= 0 || visibleWidth(line) <= width {
-		return line
-	}
-
-	// Git identity is useful, but less important than live cache/context/cost and
-	// the current workspace. Drop it before truncating a still-readable path.
-	if git != "" {
-		line = joinStatusDataParts(statusDataParts(resourceData, workspace, ""))
-		if visibleWidth(line) <= width {
-			return line
-		}
-	}
-
-	if workspace != "" {
-		prefixParts := append([]string{}, resourceData...)
-		prefix := "  "
-		if len(prefixParts) > 0 {
-			prefix += strings.Join(prefixParts, " · ") + " · "
-		}
-		available := width - visibleWidth(prefix)
-		if available > 1 {
-			line = joinStatusDataParts(statusDataParts(resourceData, compactMiddle(workspace, available), ""))
-			if visibleWidth(line) <= width {
-				return line
-			}
-		}
-	}
-
-	return compactStatusLine(line, width)
-}
-
-func statusDataParts(resourceData []string, workspace, git string) []string {
-	parts := append([]string{}, resourceData...)
-	if strings.TrimSpace(workspace) != "" {
-		parts = append(parts, dim(workspace))
-	}
-	if strings.TrimSpace(git) != "" {
-		parts = append(parts, git)
-	}
-	return parts
-}
-
-func joinStatusDataParts(parts []string) string {
-	if len(parts) == 0 {
-		return "  "
-	}
-	return "  " + strings.Join(parts, " · ")
 }
 
 // computeStatusLineCount returns the number of terminal rows the status block
@@ -6934,10 +6798,7 @@ func replayToolResultBlock(content string, width int) string {
 		return ""
 	}
 	lines := strings.Split(content, "\n")
-	innerW := width - len([]rune(connector))
-	if innerW < 10 {
-		innerW = 10
-	}
+	innerW := max(width-len([]rune(connector)), 10)
 	first := strings.TrimSpace(lines[0])
 	lower := strings.ToLower(first)
 	if strings.HasPrefix(lower, "error:") || strings.Contains(lower, "blocked") || strings.Contains(lower, "permission") {
@@ -7042,10 +6903,7 @@ func visibleAssistantHistoryReasoning(reasoning string, hasVisibleContinuation b
 }
 
 func buildConversationRecap(history []provider.Message, focus string, width int) string {
-	budget := viewBudget(width, 14)
-	if budget < 56 {
-		budget = 56
-	}
+	budget := max(viewBudget(width, 14), 56)
 	var entries []string
 	if focus != "" {
 		entries = append(entries, "焦点: "+viewCompactText(recapOneLine(focus), budget))

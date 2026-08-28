@@ -220,7 +220,7 @@ func (m *Manager) Create(ctx context.Context, workspaceRoot string, policy Creat
 	}
 
 	now := time.Now().UTC()
-	for attempt := 0; attempt < 5; attempt++ {
+	for range 5 {
 		id, randomErr := randomID()
 		if randomErr != nil {
 			return Resource{}, randomErr
@@ -590,7 +590,7 @@ func resourceMetadataPath(managedRoot, repoKey, id string) string {
 
 func parsePorcelainPaths(out string) []string {
 	var paths []string
-	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.TrimRight(out, "\n"), "\n") {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
@@ -612,7 +612,7 @@ func parsePorcelainPaths(out string) []string {
 
 func untrackedPaths(porcelain string) []string {
 	var paths []string
-	for _, line := range strings.Split(strings.TrimRight(porcelain, "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.TrimRight(porcelain, "\n"), "\n") {
 		if strings.HasPrefix(line, "?? ") {
 			paths = append(paths, strings.TrimSpace(line[3:]))
 		}
