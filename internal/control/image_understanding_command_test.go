@@ -150,6 +150,12 @@ printf '%s\n' '{"visible_text":"button text","confidence":"high"}'
 	if got := c.withImageUnderstanding(context.Background(), "see @shot.png"); got != "see @shot.png" {
 		t.Fatalf("vision model should receive direct image input without sidecar, got:\n%s", got)
 	}
+
+	c.modelRef = "custom/text-only"
+	c.visionModel = "auto"
+	if got := c.withImageUnderstanding(context.Background(), "see @shot.png"); got != "see @shot.png" {
+		t.Fatalf("native vision summary should own the prepass when configured, got:\n%s", got)
+	}
 }
 
 func TestControllerImageUnderstandingNoticeCarriesDisclosureDetail(t *testing.T) {

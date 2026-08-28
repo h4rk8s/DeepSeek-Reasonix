@@ -57,8 +57,9 @@ type Event struct {
 	// durable session when a different client rotates the foreground.
 	SessionReset bool              `json:"sessionReset,omitempty"`
 	Workspace    *WorkspaceChanged `json:"workspace,omitempty"`
-	// Phase is set on turn_phase events: working | checking | verifying | reviewing.
-	Phase string `json:"phase,omitempty"`
+	// Phase is set on turn_phase events: vision | working | checking | verifying | reviewing.
+	Phase    string `json:"phase,omitempty"`
+	ModelRef string `json:"modelRef,omitempty"`
 	// Completion is set on completion_summary events (content-free quality summary).
 	Completion    *CompletionSummary `json:"completion,omitempty"`
 	BackgroundJob *BackgroundJob     `json:"backgroundJob,omitempty"`
@@ -212,6 +213,7 @@ func ToWire(e event.Event) Event {
 		}
 	case event.TurnPhase:
 		w.Phase = string(e.PhaseName)
+		w.ModelRef = e.ModelRef
 		if w.Phase == "" {
 			w.Phase = e.Text
 		}

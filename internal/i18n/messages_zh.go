@@ -49,6 +49,7 @@ var Chinese = Messages{
 	ChatThoughtForFmt:                      "思考了 %d 秒",
 	ChatStatusThinkingFmt:                  "%s 思考中… (%d 秒 · Esc 取消)",
 	TurnPhaseWorking:                       "工作中",
+	TurnPhaseVision:                        "分析图片中",
 	TurnPhaseChecking:                      "检查中",
 	TurnPhaseVerifying:                     "验证中",
 	TurnPhaseReviewing:                     "复审中",

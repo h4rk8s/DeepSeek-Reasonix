@@ -343,7 +343,8 @@ func TestStatusLineWrapAccounting(t *testing.T) {
 			m.transcriptHeight(), m.bottomRows(), got, m.height)
 	}
 
-	// When running, the working line should increase statusLineCount.
+	// Running may replace an idle footer row rather than grow the pinned region.
+	// The important contract is that it never shrinks the reserved status area.
 	idleCount := m.statusLineCount
 	m.state = tuiRunning
 	m.elapsed = 5
@@ -357,8 +358,8 @@ func TestStatusLineWrapAccounting(t *testing.T) {
 	m2.width = m.width
 	m2.statusLineCount = m2.computeStatusLineCount(m2.width)
 	runCount := m2.statusLineCount
-	if runCount <= idleCount {
-		t.Fatalf("statusLineCount when running (%d) should be > idle (%d)", runCount, idleCount)
+	if runCount < idleCount {
+		t.Fatalf("statusLineCount when running (%d) should be >= idle (%d)", runCount, idleCount)
 	}
 
 	// Reset and test that a custom statusline command is still fixed-height.
@@ -472,8 +473,8 @@ func TestRunningQueueAndTodoKeepComposerVisible(t *testing.T) {
 	if !strings.Contains(view, "保留输入框") {
 		t.Fatalf("composer draft was pushed out of the frame:\n%s", view)
 	}
-	if !strings.Contains(view, "[5]") {
-		t.Fatalf("queued feedback preview should still render above composer:\n%s", view)
+	if !strings.Contains(view, "[1]") || !strings.Contains(view, "… +2 more") {
+		t.Fatalf("bounded queued feedback preview should render above composer:\n%s", view)
 	}
 	if got, want := m.transcriptHeight()+m.bottomRows(), m.height; got != want {
 		t.Fatalf("transcriptHeight(%d) + bottomRows(%d) = %d, want %d",
@@ -671,8 +672,8 @@ func TestTranscriptResizeRerendersCommittedMarkdownAtNewWidth(t *testing.T) {
 			break
 		}
 	}
-	if got, want := ruleWidth, transcriptContentWidth(80, false)-visibleWidth(assistantTranscriptIndent); got != want {
-		t.Fatalf("resized thematic rule width = %d, want indented assistant body width %d", got, want)
+	if got, want := ruleWidth, transcriptContentWidth(80, false); got != want {
+		t.Fatalf("resized thematic rule width = %d, want assistant body width %d", got, want)
 	}
 	if newLines >= oldLines {
 		t.Fatalf("wider transcript kept old hard wrapping: old lines=%d new lines=%d\n%s", oldLines, newLines, newRendered)
@@ -775,6 +776,39 @@ func TestComposerPromptReservesWidthAndOffsetsCJKCursor(t *testing.T) {
 	}
 	if got, want := cursor.X, composerPromptWidth+4; got != want {
 		t.Fatalf("cursor X after two CJK runes = %d, want %d", got, want)
+	}
+}
+
+func TestFinalComposerCursorAlignsWithVisibleInput(t *testing.T) {
+	const input = "现在有一个问题就是"
+	wantX := ansi.StringWidth("❯ " + input)
+
+	for _, nativeScrollback := range []bool{false, true} {
+		t.Run(fmt.Sprintf("native_scrollback=%t", nativeScrollback), func(t *testing.T) {
+			ctrl := control.New(control.Options{})
+			m := newChatTUI(ctrl, "", make(chan event.Event, 1), 60)
+			m.nativeScrollback = nativeScrollback
+
+			m0, _ := m.Update(tea.WindowSizeMsg{Width: 60, Height: 12})
+			m = m0.(chatTUI)
+			m.input.SetValue(input)
+
+			view := m.View()
+			if view.Cursor == nil {
+				t.Fatal("visible composer should expose the final terminal cursor")
+			}
+			if got := view.Cursor.X; got != wantX {
+				t.Fatalf("final cursor X = %d, want %d immediately after visible input", got, wantX)
+			}
+
+			lines := strings.Split(ansi.Strip(view.Content), "\n")
+			if view.Cursor.Y < 0 || view.Cursor.Y >= len(lines) {
+				t.Fatalf("final cursor Y = %d outside rendered content with %d lines", view.Cursor.Y, len(lines))
+			}
+			if got := ansi.StringWidth(strings.TrimRight(lines[view.Cursor.Y], " ")); got != wantX {
+				t.Fatalf("composer row visible width = %d, want %d: %q", got, wantX, lines[view.Cursor.Y])
+			}
+		})
 	}
 }
 
@@ -2003,7 +2037,10 @@ func TestLazyReasoningExpandKeepsLowerViewportAnchor(t *testing.T) {
 	}
 
 	cur := adv(newChatTUI(ctrl, "", ch, 80), tea.WindowSizeMsg{Width: 80, Height: 16})
-	cur.lazyReasoning = true
+	cur.lazyReasoning = config.Default().UI.LazyReasoning
+	if !cur.lazyReasoning {
+		t.Fatal("completed reasoning disclosures must be mouse-interactive by default")
+	}
 	summary := formatReasoningSummary(1)
 	cur.transcript = cur.transcript[:0]
 	for i := 0; i < 10; i++ {
@@ -3249,6 +3286,7 @@ func TestLanguageCommandAutoClearsPinnedLanguage(t *testing.T) {
 	t.Cleanup(func() { i18n.DetectLanguage("en") })
 
 	m := newTestChatTUI()
+	m.ctrl = nil
 	m.runLanguageSubcommand("/language zh")
 	m.runLanguageSubcommand("/language auto")
 
@@ -4682,10 +4720,15 @@ func TestCtrlCCopySelection(t *testing.T) {
 	// Execute the command (copyToClipboard → OSC 52).
 	cmd()
 
-	// Second Ctrl+C should now arm quit (selection is gone). Rendering the
-	// changed model does not require a command.
+	// Second Ctrl+C should now arm quit (selection is gone). In alt-screen mode
+	// the hint is already part of the returned model, so no asynchronous command
+	// is required solely to repaint it.
 	out2, _ := m2.Update(ctrlC)
-	if out2.(chatTUI).lastCtrlCAt.IsZero() {
+	m3, ok := out2.(chatTUI)
+	if !ok {
+		t.Fatalf("Update returned %T, want chatTUI", out2)
+	}
+	if m3.lastCtrlCAt.IsZero() {
 		t.Error("Ctrl+C after copy should arm quit")
 	}
 }

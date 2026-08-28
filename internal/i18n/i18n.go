@@ -66,6 +66,7 @@ type Messages struct {
 	ChatThoughtForFmt                      string // collapsed reasoning summary, "%d" = elapsed s
 	ChatStatusThinkingFmt                  string // "%s thinking… (%ds · <cancel hint>)" — %s = spinner, %d = elapsed s
 	TurnPhaseWorking                       string // host turn_phase label: working
+	TurnPhaseVision                        string // host turn_phase label: vision
 	TurnPhaseChecking                      string // host turn_phase label: checking
 	TurnPhaseVerifying                     string // host turn_phase label: verifying
 	TurnPhaseReviewing                     string // host turn_phase label: reviewing

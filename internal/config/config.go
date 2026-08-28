@@ -265,17 +265,60 @@ const (
 // UIConfig controls CLI presentation-only settings. Desktop appearance is kept in
 // DesktopConfig so desktop preferences cannot alter terminal output or prompts.
 type UIConfig struct {
-	Theme                 string `toml:"theme"`                   // auto|dark|light; empty resolves to auto
-	ThemeStyle            string `toml:"theme_style"`             // graphite|aurora|slate|carbon|nocturne|amber and legacy aliases
-	ShortcutLayout        string `toml:"shortcut_layout"`         // classic|desktop; accepted for compatibility
-	CloseBehavior         string `toml:"close_behavior"`          // legacy desktop close behavior; prefer desktop.close_behavior
-	ShowReasoning         bool   `toml:"show_reasoning"`          // Ctrl+O / /verbose: show thinking text in CLI; false = collapsed
-	ShowTurnUsage         bool   `toml:"show_turn_usage"`         // upstream name for per-turn token/cost receipts
-	ShowUsage             *bool  `toml:"show_usage"`              // local compatibility alias; explicit value wins
-	LazyReasoning         bool   `toml:"lazy_reasoning"`          // keep collapsed completed thinking clickable
-	CursorShape           string `toml:"cursor_shape"`            // block|underline|bar; empty defaults to bar
-	InputPrompt           string `toml:"input_prompt"`            // CLI textarea prompt; empty preserves the promptless default
-	ImageUnderstandingLog string `toml:"image_understanding_log"` // off|summary|detail; CLI visibility for OCR/vision sidecar results
+	Theme                 string             `toml:"theme"`                   // auto|dark|light; empty resolves to auto
+	ThemeStyle            string             `toml:"theme_style"`             // graphite|aurora|slate|carbon|nocturne|amber and legacy aliases
+	ShortcutLayout        string             `toml:"shortcut_layout"`         // classic|desktop; accepted for compatibility
+	CloseBehavior         string             `toml:"close_behavior"`          // legacy desktop close behavior; prefer desktop.close_behavior
+	ShowReasoning         bool               `toml:"show_reasoning"`          // Ctrl+O / /verbose: show thinking text in CLI; false = collapsed
+	ShowTurnUsage         bool               `toml:"show_turn_usage"`         // upstream name for per-turn token/cost receipts
+	LazyReasoning         bool               `toml:"lazy_reasoning"`          // CLI: keep collapsed completed thinking clickable; false = discard from UI
+	CursorShape           string             `toml:"cursor_shape"`            // block|underline|bar; empty defaults to bar
+	InputPrompt           string             `toml:"input_prompt"`            // CLI textarea prompt; empty preserves the promptless default
+	ImageUnderstandingLog string             `toml:"image_understanding_log"` // off|summary|detail; CLI visibility for OCR/vision sidecar results
+	ShowUsage             *bool              `toml:"show_usage"`              // false hides per-turn token/cache/cost lines in CLI transcript
+	Transcript            UITranscriptConfig `toml:"transcript"`              // CLI transcript information architecture
+	Composer              UIComposerConfig   `toml:"composer"`                // CLI composer presentation
+	Status                UIStatusConfig     `toml:"status"`                  // CLI persistent footer presentation
+}
+
+// UITranscriptConfig controls semantic transcript structure rather than ANSI
+// paint. Empty values preserve the legacy Reasonix presentation.
+type UITranscriptConfig struct {
+	Profile         string                 `toml:"profile"`          // current|hybrid|claude|codex|grok
+	Density         string                 `toml:"density"`          // compact|balanced|comfortable
+	TurnSeparator   string                 `toml:"turn_separator"`   // none|space|rule
+	UserPrompt      string                 `toml:"user_prompt"`      // plain|band|boxed
+	AssistantMarker string                 `toml:"assistant_marker"` // none|dot|diamond|name
+	Show            UITranscriptShowConfig `toml:"show"`
+}
+
+type UITranscriptShowConfig struct {
+	Role               *bool `toml:"role"`
+	Activity           *bool `toml:"activity"`
+	ImageUnderstanding *bool `toml:"image_understanding"`
+	Recap              *bool `toml:"recap"`
+	TurnMetrics        *bool `toml:"turn_metrics"`
+}
+
+type UIComposerConfig struct {
+	Prefix string `toml:"prefix"`
+	Frame  *bool  `toml:"frame"`
+}
+
+type UIStatusConfig struct {
+	Layout string `toml:"layout"` // one|two
+	Cache  *bool  `toml:"cache"`
+	Path   *bool  `toml:"path"`
+	Cost   *bool  `toml:"cost"`
+}
+
+// UIPresentation is the fully resolved, render-ready CLI presentation.
+type UIPresentation struct {
+	Profile, Density, TurnSeparator, UserPrompt, AssistantMarker string
+	ShowRole, ShowActivity, ShowImageUnderstanding, ShowRecap    bool
+	ShowTurnMetrics, ComposerFrame                               bool
+	ComposerPrefix, StatusLayout                                 string
+	StatusCache, StatusPath, StatusCost                          bool
 }
 
 // CLIConfig controls user-global native CLI behavior. It is separate from
@@ -2076,10 +2119,14 @@ func Default() *Config {
 		ConfigVersion:    7,
 		DefaultModel:     "deepseek-flash",
 		CredentialsStore: CredentialsStoreAuto,
-		UI:               UIConfig{Theme: "auto", ShowTurnUsage: true},
-		Desktop:          DesktopConfig{DefaultToolApprovalMode: "auto", ConversationWidth: "standard"},
-		Billing:          BillingConfig{},
-		TerminalTitle:    TerminalTitleConfig{Items: DefaultTerminalTitleItems()},
+		UI: UIConfig{
+			Theme:         "auto",
+			ShowTurnUsage: true,
+			LazyReasoning: true,
+		},
+		Desktop:       DesktopConfig{DefaultToolApprovalMode: "auto", ConversationWidth: "standard"},
+		Billing:       BillingConfig{},
+		TerminalTitle: TerminalTitleConfig{Items: DefaultTerminalTitleItems()},
 		Notifications: NotificationsConfig{
 			Enabled:         false,
 			TurnDone:        true,

@@ -198,6 +198,7 @@ func (c *Controller) prepareVisionTurn(ctx context.Context, input string, images
 	if summary := c.cachedVisionSummary(digests, modelRef); summary != nil {
 		return appendVisionSummary(input, summary), agent.WithVisionSummary(ctx, summary), nil
 	}
+	c.sink.Emit(event.Event{Kind: event.TurnPhase, PhaseName: event.TurnPhaseVision, Text: string(event.TurnPhaseVision), ModelRef: modelRef})
 	c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: "正在分析图片…"})
 	summary, err := c.summarizeImages(ctx, modelRef, images, digests)
 	if err != nil {

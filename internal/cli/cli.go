@@ -1252,8 +1252,9 @@ func chatREPL(args []string, version string) int {
 		m.outputStyle = cfg.Agent.OutputStyle    // shown as the active entry in /output-style
 		m.statuslineCmd = cfg.Statusline.Command // custom status-line command, "" = built-in row
 		m.showReasoning = cfg.UI.ShowReasoning   // /verbose persistence: start with config default
-		m.showTurnUsage = cfg.UIShowUsage()      // accept the local show_usage alias without losing upstream semantics
-		setChatTextareaPrompt(&m.input, cfg.UIInputPrompt())
+		m.presentation = cfg.UIPresentation()
+		m.showTurnUsage = m.presentation.ShowTurnMetrics
+		setChatTextareaPrompt(&m.input, m.presentation.ComposerPrefix)
 		m.input.SetWidth(termW - 4)
 		m.lazyReasoning = cfg.UI.LazyReasoning && !m.nativeScrollback
 		if on, ok := parseCLIOnOff(os.Getenv("REASONIX_LAZY_REASONING")); ok {

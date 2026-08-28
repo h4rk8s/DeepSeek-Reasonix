@@ -5470,7 +5470,10 @@ func (c *Controller) imageInputEnabled() bool {
 func (c *Controller) ImageInputEnabled() bool { return c.imageInputEnabled() }
 
 func (c *Controller) withImageUnderstanding(ctx context.Context, input string, sourceInputs ...string) string {
-	if nilutil.IsNil(c.imageUnderstanding) || c.imageInputEnabled() {
+	// Native vision summaries own the provider-backed prepass. The local
+	// command sidecar remains a fallback for text-only setups, but must not run
+	// a second image analysis when vision_model is configured.
+	if nilutil.IsNil(c.imageUnderstanding) || c.imageInputEnabled() || c.visionModel != "" {
 		return input
 	}
 	source := input
