@@ -91,6 +91,7 @@ var English = Messages{
 	ReadStatusDoneFmt:                      "read %s · lines %s",
 	ReadStatusPausedFmt:                    "read paused: %s",
 	ReadStatusRecovery:                     "remaining content could not be verified within the reading budget; inspect a smaller range or continue independent work; full review is incomplete",
+	TurnPhaseVision:                        "analyzing image",
 	TurnPhaseChecking:                      "checking",
 	TurnPhaseVerifying:                     "verifying",
 	TurnPhaseReviewing:                     "reviewing",

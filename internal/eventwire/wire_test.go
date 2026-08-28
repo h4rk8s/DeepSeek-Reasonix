@@ -47,6 +47,23 @@ func TestToWireStreamAttemptJSON(t *testing.T) {
 	}
 }
 
+func TestToWireVisionTurnPhaseCarriesModelRef(t *testing.T) {
+	w := ToWire(event.Event{
+		Kind:      event.TurnPhase,
+		PhaseName: event.TurnPhaseVision,
+		ModelRef:  "deepseek-flash/deepseek-v4-flash-vision-exp",
+	})
+	b, err := json.Marshal(w)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	for _, want := range []string{`"kind":"turn_phase"`, `"phase":"vision"`, `"modelRef":"deepseek-flash/deepseek-v4-flash-vision-exp"`} {
+		if !strings.Contains(string(b), want) {
+			t.Fatalf("vision turn phase JSON = %s, want %s", b, want)
+		}
+	}
+}
+
 func TestToWireWorkspaceChangedKeepsBoundedEmptyArrays(t *testing.T) {
 	w := ToWire(event.Event{Kind: event.WorkspaceChanged, Workspace: &event.WorkspaceChangedPayload{
 		Revisions:  event.WorkspaceRevision{Content: 4, Tree: 2, WorkingTree: 3, GitMeta: 1, Session: 7},

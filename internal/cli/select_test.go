@@ -1,8 +1,24 @@
 package cli
 
 import (
+	"strings"
 	"testing"
 )
+
+func TestMenuScreenRedrawUsesAbsoluteCoordinates(t *testing.T) {
+	var out strings.Builder
+	restore := enterMenuScreen(&out)
+	resetMenuFrame(&out)
+	restore()
+
+	want := menuScreenEnter + menuScreenHome + menuScreenExit
+	if got := out.String(); got != want {
+		t.Fatalf("menu screen lifecycle = %q, want %q", got, want)
+	}
+	if strings.Contains(out.String(), "A") {
+		t.Fatalf("menu redraw must not use relative cursor-up sequences: %q", out.String())
+	}
+}
 
 func TestFrameLines(t *testing.T) {
 	tests := []struct {

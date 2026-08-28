@@ -25,7 +25,7 @@ func TestKindConstants(t *testing.T) {
 	if TurnPhase >= KindCount || CompletionSummary >= KindCount {
 		t.Fatal("new kinds must sit before KindCount")
 	}
-	if TurnPhaseName(TurnPhaseWorking) != "working" || TurnPhaseName(TurnPhaseReviewing) != "reviewing" {
+	if TurnPhaseName(TurnPhaseVision) != "vision" || TurnPhaseName(TurnPhaseWorking) != "working" || TurnPhaseName(TurnPhaseReviewing) != "reviewing" {
 		t.Fatal("turn phase names drifted")
 	}
 }

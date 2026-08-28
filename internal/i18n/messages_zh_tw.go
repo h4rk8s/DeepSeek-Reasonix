@@ -88,6 +88,7 @@ var ChineseTraditional = Messages{
 	ReadStatusDoneFmt:                      "已讀取 %s · %s 行",
 	ReadStatusPausedFmt:                    "讀取已暫停：%s",
 	ReadStatusRecovery:                     "未能在讀取預算內驗證剩餘內容；可縮小讀取範圍或繼續獨立工作，全文審查尚未完成",
+	TurnPhaseVision:                        "分析圖片中",
 	TurnPhaseChecking:                      "檢查中",
 	TurnPhaseVerifying:                     "驗證中",
 	TurnPhaseReviewing:                     "複審中",
