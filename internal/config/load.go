@@ -892,6 +892,9 @@ func mergeFileSnapshotWithRead(cfg *Config, path string, readFile func(string) (
 	if _, err := decodeTOMLBytes(data, &validated); err != nil {
 		return toml.MetaData{}, fmt.Errorf("config %s: %w", path, err)
 	}
+	if err := validateUIPresentationConfig(validated.UI); err != nil {
+		return toml.MetaData{}, fmt.Errorf("config %s: %w", path, err)
+	}
 	meta, err := decodeTOMLBytes(data, cfg)
 	if err != nil {
 		return toml.MetaData{}, fmt.Errorf("config %s: %w", path, err)

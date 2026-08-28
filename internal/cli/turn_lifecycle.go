@@ -92,7 +92,7 @@ func (m *chatTUI) prepareControllerTurn(intent controllerTurnIntent, settingsChe
 	m.pendingRestore = restore
 	m.pendingPastes = m.pasteLabelsIn(restore)
 	m.bubbleStartIdx = len(m.transcript)
-	m.commitLine("") // blank line separating turns
+	m.commitTurnSeparator()
 	m.commitTranscriptSource(transcriptSource{
 		kind: transcriptSourceUser, raw: displayed, planMode: m.planMode,
 	})

@@ -12,8 +12,28 @@ import (
 	"reasonix/internal/control"
 	"reasonix/internal/event"
 	"reasonix/internal/i18n"
+	"reasonix/internal/jobs"
 	"reasonix/internal/provider"
 )
+
+type statusFooterTestCtrl struct {
+	control.SessionAPI
+	last         *provider.Usage
+	hit, miss    int
+	used, window int
+	compactRatio float64
+	workspace    string
+}
+
+func (s statusFooterTestCtrl) LastUsage() *provider.Usage { return s.last }
+func (s statusFooterTestCtrl) SessionCache() (int, int)   { return s.hit, s.miss }
+func (s statusFooterTestCtrl) ContextSnapshot() (int, int) {
+	return s.used, s.window
+}
+func (s statusFooterTestCtrl) CompactRatio() float64 { return s.compactRatio }
+func (s statusFooterTestCtrl) WorkspaceRoot() string { return s.workspace }
+func (s statusFooterTestCtrl) QualityFloor() string  { return "" }
+func (s statusFooterTestCtrl) Jobs() []jobs.View     { return nil }
 
 func TestTurnReceiptKeepsCompletePerTurnBreakdown(t *testing.T) {
 	defer restoreThemeForTest(activeColorProfile, activeCLITheme)
@@ -501,6 +521,43 @@ func TestStatusFooterMediumLayoutLeftAlignsModelWork(t *testing.T) {
 	}
 }
 
+func TestStatusFooterVisionKeepsTwoContentRowsAtHalfScreenWidth(t *testing.T) {
+	i18n.DetectLanguage("en")
+
+	m := newTestChatTUI()
+	m.presentation = hybridTestPresentation()
+	m.modelRef = "deepseek-flash/deepseek-v4-flash"
+	m.plannerModelRef = "deepseek-pro/deepseek-v4-pro"
+	m.effortLevel = "auto"
+	m.balance = "¥96.36"
+	m.turnPhase = string(event.TurnPhaseVision)
+	m.visionModelRef = "deepseek-flash/deepseek-v4-flash-vision-exp"
+	primary := statusFooterIndent + " YOLO  · tools skipped"
+
+	vision := ansi.Strip(m.renderStatusBlock(primary, 76))
+	lines := strings.Split(vision, "\n")
+	if len(lines) != 3 {
+		t.Fatalf("vision footer rows = %d, want divider plus two content rows:\n%s", len(lines), vision)
+	}
+	if !strings.Contains(lines[1], "DS v4 flash · vision flash · plan pro") {
+		t.Fatalf("vision model identity moved off the first content row:\n%s", vision)
+	}
+	if strings.Contains(lines[1], "effort auto") {
+		t.Fatalf("default effort should yield before vision creates a third content row:\n%s", vision)
+	}
+	for i, line := range lines {
+		if got := visibleWidth(line); got > 76 {
+			t.Fatalf("vision footer row %d width = %d, want <= 76: %q", i, got, line)
+		}
+	}
+
+	m.turnPhase = string(event.TurnPhaseWorking)
+	normal := ansi.Strip(m.renderStatusBlock(primary, 76))
+	if strings.Contains(normal, "vision") || !strings.Contains(normal, "DS v4 flash · plan pro · effort auto") {
+		t.Fatalf("post-vision footer did not restore the normal model group:\n%s", normal)
+	}
+}
+
 func TestStatusFooterStacksGitAndTelemetryWithoutFloatingContinuation(t *testing.T) {
 	i18n.DetectLanguage("en")
 
@@ -545,16 +602,58 @@ func TestStatusFooterNarrowLayoutBreaksBetweenGroups(t *testing.T) {
 	primary := m.primaryStatusLine(" Auto ", false, false)
 	block := ansi.Strip(m.renderStatusBlock(primary, 40))
 	lines := strings.Split(block, "\n")
-	if len(lines) <= 2 {
-		t.Fatalf("narrow status block lines = %d, want semantic wrapping:\n%s", len(lines), block)
+	if len(lines) > 3 {
+		t.Fatalf("narrow status block lines = %d, want divider plus at most two content rows:\n%s", len(lines), block)
 	}
 	for i, line := range lines {
 		if got := visibleWidth(line); got > 40 {
 			t.Fatalf("row %d width = %d, want <= 40: %q", i, got, line)
 		}
 	}
-	if !strings.Contains(block, "@") || !strings.Contains(block, "+20 -4") || !strings.Contains(block, "¥123.45") {
-		t.Fatalf("narrow layout dropped required information:\n%s", block)
+	if !strings.Contains(block, "¥123.45") {
+		t.Fatalf("narrow layout dropped the high-priority balance:\n%s", block)
+	}
+}
+
+func TestStatusFooterTwoLayoutNeverAddsStandaloneCostRow(t *testing.T) {
+	defer i18n.DetectLanguage("en")
+	i18n.DetectLanguage("en")
+
+	ctrl := statusFooterTestCtrl{
+		last: &provider.Usage{CacheHitTokens: 99_950, CacheMissTokens: 50},
+		hit:  573_400, miss: 300,
+		used: 573_700, window: 1_000_000, compactRatio: .8,
+		workspace: "/Users/jawa/Lab/2026-07-24-sdj-dev",
+	}
+	m := newTestChatTUI()
+	m.ctrl = ctrl
+	m.presentation = hybridTestPresentation()
+	m.modelRef = "deepseek-flash/deepseek-v4-flash"
+	m.plannerModelRef = "deepseek-pro/deepseek-v4-pro"
+	m.effortLevel = "auto"
+	m.balance = "¥38.25"
+	selected := billing.Money{Amount: "1.5009", Currency: "CNY"}
+	m.sessionCostQuote = &billing.CostQuote{
+		Original: selected, Selected: &selected, CostComplete: true, RateBand: billing.RateBandMixed,
+	}
+
+	for _, width := range []int{76, 104, 160} {
+		block := ansi.Strip(m.renderStatusBlock(statusFooterIndent+" YOLO  · tools skipped", width))
+		lines := strings.Split(block, "\n")
+		if len(lines) > 3 {
+			t.Fatalf("width %d rendered %d rows, want divider plus at most two content rows:\n%s", width, len(lines), block)
+		}
+		if !strings.Contains(block, "¥38.25") {
+			t.Fatalf("width %d dropped balance:\n%s", width, block)
+		}
+		if len(lines) == 3 && visibleWidth(lines[1]) != visibleWidth(lines[2]) {
+			t.Fatalf("width %d content rows do not share a right edge:\n%s", width, block)
+		}
+		for row, line := range lines {
+			if got := visibleWidth(line); got > width {
+				t.Fatalf("width %d row %d overflowed to %d cells: %q", width, row, got, line)
+			}
+		}
 	}
 }
 

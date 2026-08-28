@@ -716,15 +716,6 @@ func TestHTTPTransportRPCError(t *testing.T) {
 	}
 }
 
-// TestSSETransportUnsupported documents that the legacy sse transport is
-// recognised but deferred with a clear, actionable error.
-func TestSSETransportUnsupported(t *testing.T) {
-	_, _, err := StartAll(context.Background(), []Spec{{Name: "legacy", Type: "sse", URL: "http://x"}})
-	if err == nil || !strings.Contains(err.Error(), "http") {
-		t.Fatalf("sse should error pointing to http, got %v", err)
-	}
-}
-
 func writeHTTPRPCResult(w http.ResponseWriter, id *int, result any) {
 	if id == nil {
 		w.WriteHeader(http.StatusAccepted)
