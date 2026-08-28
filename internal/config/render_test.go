@@ -980,6 +980,47 @@ func TestShowTurnUsageDefaultsOnAndRendersFalseOverride(t *testing.T) {
 	}
 }
 
+func TestProjectDeltaRendersUIShowUsage(t *testing.T) {
+	c := Default()
+	showUsage := false
+	c.UI.ShowUsage = &showUsage
+
+	delta := RenderTOMLProjectDelta(c)
+	for _, want := range []string{"[ui]", `show_usage = false`} {
+		if !strings.Contains(delta, want) {
+			t.Fatalf("project delta missing %q:\n%s", want, delta)
+		}
+	}
+
+	got := Default()
+	if _, err := toml.Decode(delta, got); err != nil {
+		t.Fatalf("decode project delta: %v\n%s", err, delta)
+	}
+	if got.UIShowUsage() {
+		t.Fatalf("ui.show_usage = true, want false")
+	}
+}
+
+func TestProjectDeltaRendersUILazyReasoning(t *testing.T) {
+	c := Default()
+	c.UI.LazyReasoning = true
+
+	delta := RenderTOMLProjectDelta(c)
+	for _, want := range []string{"[ui]", "lazy_reasoning = true"} {
+		if !strings.Contains(delta, want) {
+			t.Fatalf("project delta missing %q:\n%s", want, delta)
+		}
+	}
+
+	got := Default()
+	if _, err := toml.Decode(delta, got); err != nil {
+		t.Fatalf("decode project delta: %v\n%s", err, delta)
+	}
+	if !got.UI.LazyReasoning {
+		t.Fatalf("ui.lazy_reasoning = false, want true")
+	}
+}
+
 func TestProjectRenderPreservesNonDefaultLegacySections(t *testing.T) {
 	c := Default()
 	c.UI.Theme = "light"

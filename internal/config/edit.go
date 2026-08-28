@@ -121,23 +121,6 @@ func (c *Config) SetAutoPlan(mode string) error {
 	return fmt.Errorf("automatic plan mode has been retired; use Plan Mode explicitly")
 }
 
-// SetImageUnderstandingLog controls how much OCR/vision sidecar output the CLI
-// should display. The prompt injection itself is controlled by agent settings.
-func (c *Config) SetImageUnderstandingLog(mode string) error {
-	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "off", "none", "false", "0", "disabled":
-		c.UI.ImageUnderstandingLog = "off"
-	case "", "summary", "status":
-		c.UI.ImageUnderstandingLog = "summary"
-	case "detail", "details", "verbose", "full":
-		c.UI.ImageUnderstandingLog = "detail"
-	default:
-		c.UI.ImageUnderstandingLog = ""
-		return fmt.Errorf("image_understanding_log %q: must be off|summary|detail", mode)
-	}
-	return nil
-}
-
 // SetDesktopDefaultToolApprovalMode sets the Ask/Auto/YOLO posture used only
 // for newly-created desktop sessions.
 func (c *Config) SetDesktopDefaultToolApprovalMode(mode string) error {
@@ -513,6 +496,29 @@ func (c *Config) SetUICloseBehavior(mode string) error {
 // /verbose.
 func (c *Config) SetShowReasoning(on bool) error {
 	c.UI.ShowReasoning = on
+	return nil
+}
+
+// SetLazyReasoning keeps completed thinking collapsed but available for
+// click-to-expand. It only affects presentation.
+func (c *Config) SetLazyReasoning(on bool) error {
+	c.UI.LazyReasoning = on
+	return nil
+}
+
+// SetImageUnderstandingLog controls how much OCR/vision sidecar output is
+// committed to the transcript for image attachments.
+func (c *Config) SetImageUnderstandingLog(mode string) error {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "off", "none", "false", "0", "disabled":
+		c.UI.ImageUnderstandingLog = "off"
+	case "summary", "on", "true", "1", "enabled":
+		c.UI.ImageUnderstandingLog = "summary"
+	case "detail", "details", "verbose", "full":
+		c.UI.ImageUnderstandingLog = "detail"
+	default:
+		return fmt.Errorf("image_understanding_log must be off, summary, or detail")
+	}
 	return nil
 }
 

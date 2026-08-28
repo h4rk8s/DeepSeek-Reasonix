@@ -253,6 +253,7 @@ var ChineseTraditional = Messages{
 	CmdCompact:          "壓縮上下文",
 	CmdContinueChecks:   "繼續已暫停的任務收尾檢查",
 	CmdContext:          "檢視上下文視窗、閾值與上次維護結果",
+	CmdRecap:            "摘要目前對話",
 	CmdRewind:           "回滾到更早的一輪",
 	CmdTree:             "檢視對話分支樹",
 	CmdBranch:           "建立對話分支",
@@ -515,6 +516,8 @@ var ChineseTraditional = Messages{
   reasonix config compact-ratio [--local] [30..85]       設定自動壓縮閾值
   reasonix config telemetry [auto|on|off]                設定不含內容的 CLI 使用統計
   reasonix report [list|show|send|delete] [ID]           審閱並明確傳送本機 CLI 當機報告
+  reasonix config lazy-reasoning [off|on|status]         設定 thinking 折疊後點擊展開
+  reasonix config image-understanding-log [off|summary|detail|status]  設定圖片理解記錄詳情
   reasonix mcp <add|remove|list|import>                 管理 reasonix.toml 裡的 MCP 伺服器
   reasonix subagent <list|create|edit|delete|try|run>   管理和執行隔離子智慧體 profile
   reasonix init                                         查看如何產生專案記憶（AGENTS.md）

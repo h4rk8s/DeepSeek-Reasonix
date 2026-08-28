@@ -15,6 +15,7 @@ import "strings"
 //     cache — never for a routine transcriptDirty flag alone.
 func (m *chatTUI) clearWrapCache() {
 	m.wrappedLines = nil
+	m.wrappedLineTranscriptIdx = nil
 	m.wrapWidth = 0
 	m.wrapBlockCount = 0
 	m.wrapBlockLines = nil
@@ -40,6 +41,7 @@ func (m *chatTUI) syncWrappedLines(contentW int, forceFull bool) bool {
 			m.wrapBlockLines = m.wrapBlockLines[:m.wrapBlockCount]
 		}
 		m.wrappedLines = flattenBlockWraps(m.wrapBlockLines)
+		m.wrappedLineTranscriptIdx = flattenBlockTranscriptIndexes(m.wrapBlockLines)
 	}
 	if n == m.wrapBlockCount {
 		return false
@@ -52,6 +54,7 @@ func (m *chatTUI) syncWrappedLines(contentW int, forceFull bool) bool {
 	// Rebuild the flat list from the (prefix-stable + new suffix) block wraps
 	// into a fresh slice so the viewport never aliases a growing backing array.
 	m.wrappedLines = flattenBlockWraps(m.wrapBlockLines)
+	m.wrappedLineTranscriptIdx = flattenBlockTranscriptIndexes(m.wrapBlockLines)
 	m.wrapBlockCount = n
 	m.wrapWidth = contentW
 	return true
@@ -69,6 +72,7 @@ func (m *chatTUI) rebuildWrappedLinesFull(contentW int) bool {
 	// Prefer per-block flatten over join-then-wrap so streaming suffix rebuilds
 	// stay consistent with append-only updates (both use wrapBlockLines).
 	m.wrappedLines = flattenBlockWraps(m.wrapBlockLines)
+	m.wrappedLineTranscriptIdx = flattenBlockTranscriptIndexes(m.wrapBlockLines)
 	m.wrapBlockCount = n
 	m.wrapWidth = contentW
 	return true
@@ -85,6 +89,17 @@ func (m *chatTUI) feedViewportContent() {
 	lines := make([]string, len(m.wrappedLines))
 	copy(lines, m.wrappedLines)
 	m.viewport.SetContentLines(lines)
+}
+
+func (m *chatTUI) padWrappedCacheForYOffset(desiredYOffset, viewportHeight int) {
+	if desiredYOffset <= 0 || viewportHeight <= 0 {
+		return
+	}
+	needed := desiredYOffset + viewportHeight
+	for len(m.wrappedLines) < needed {
+		m.wrappedLines = append(m.wrappedLines, "")
+		m.wrappedLineTranscriptIdx = append(m.wrappedLineTranscriptIdx, -1)
+	}
 }
 
 // wrapBlockLines wraps one transcript block to width as a line slice.
@@ -114,6 +129,23 @@ func flattenBlockWraps(blocks [][]string) []string {
 	return out
 }
 
+func flattenBlockTranscriptIndexes(blocks [][]string) []int {
+	if len(blocks) == 0 {
+		return nil
+	}
+	n := 0
+	for _, block := range blocks {
+		n += len(block)
+	}
+	out := make([]int, 0, n)
+	for transcriptIdx, block := range blocks {
+		for range block {
+			out = append(out, transcriptIdx)
+		}
+	}
+	return out
+}
+
 // wrappedContentString returns the viewport payload for tests/debug.
 func (m chatTUI) wrappedContentString() string {
 	if len(m.wrappedLines) == 0 {
@@ -135,6 +167,7 @@ func (m *chatTUI) invalidateWrapFrom(index int) {
 	m.wrapBlockLines = m.wrapBlockLines[:index]
 	m.wrapBlockCount = index
 	m.wrappedLines = flattenBlockWraps(m.wrapBlockLines)
+	m.wrappedLineTranscriptIdx = flattenBlockTranscriptIndexes(m.wrapBlockLines)
 }
 
 // rewriteTranscriptBlock updates a block's rendered text and invalidates the

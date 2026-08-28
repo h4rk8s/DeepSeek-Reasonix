@@ -16,10 +16,13 @@ func registerServeCapabilityFlags(fs *flag.FlagSet) {
 	_ = fs.Bool("detached-heal", false, "retire background sessions after provider credential-channel repair")
 }
 
-func newServeBootstrap() (*serve.Broadcaster, *serve.SessionTagSink, *config.Config) {
+func newServeBootstrap() (*serve.Broadcaster, *serve.SessionTagSink, *config.Config, error) {
 	bc := serve.NewBroadcaster()
-	cfg, _ := config.Load()
-	return bc, serve.NewSessionTagSink(bc), cfg
+	cfg, err := config.Load()
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return bc, serve.NewSessionTagSink(bc), cfg, nil
 }
 
 func setupCLIMultiSessionProfile(ctx context.Context, model string, maxSteps int, preset string, tag *serve.SessionTagSink, leases *control.SessionLeaseKeeper) (*control.Controller, boot.Options, error) {

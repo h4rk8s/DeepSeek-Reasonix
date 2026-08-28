@@ -145,7 +145,10 @@ func (m *chatTUI) skillSaveEnabledChanges(changes map[string]bool) {
 	if failNotice := func() string {
 		unlock := config.LockUserConfigEdits()
 		defer unlock()
-		cfg := config.LoadForEdit(config.UserConfigPath())
+		cfg, err := config.LoadForEditReadOnlyStrict(config.UserConfigPath())
+		if err != nil {
+			return "skill toggle: " + err.Error()
+		}
 		for name, enabled := range changes {
 			key := config.SkillNameKey(name)
 			if key == "" {
@@ -279,7 +282,16 @@ func (m *chatTUI) skillStore() *skill.Store {
 	var pluginPaths map[string][]string
 	var pluginAgentPaths map[string][]string
 	maxDepth := 3
-	if cfg, err := config.Load(); err == nil {
+	cfg := m.cfg
+	if cfg == nil {
+		var err error
+		cfg, err = config.Load()
+		if err != nil {
+			m.notice("skills: config load failed: " + err.Error())
+			return skill.New(skill.Options{ProjectRoot: cwd, CustomPaths: custom, ExcludedPaths: excluded, MaxDepth: maxDepth})
+		}
+	}
+	if cfg != nil {
 		custom = cfg.SkillCustomPaths()
 		excluded = cfg.SkillExcludedPaths()
 		pluginPaths = cfg.PluginPackageSkillOwners()

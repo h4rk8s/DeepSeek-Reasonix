@@ -67,7 +67,7 @@ type chatTUI struct {
 	// the textarea and raise the soft keyboard.
 	nativeScrollback bool
 	// mouseCaptureOff releases mouse ownership back to the terminal (View() sets
-	// tea.MouseModeNone instead of MouseModeCellMotion) so its native
+	// tea.MouseModeNone instead of MouseModeAllMotion) so its native
 	// click-drag selection and right-click context menu work again. Toggled by
 	// "/mouse" or REASONIX_DISABLE_MOUSE at startup; trades away in-app
 	// drag-select, the transcript scrollbar, and wheel-scroll while it's on,
@@ -169,6 +169,7 @@ type chatTUI struct {
 	pending       *strings.Builder
 	pendingCommit *[]string
 	showReasoning bool // Ctrl+O / /verbose: show raw thinking text in the CLI
+	lazyReasoning bool // [ui].lazy_reasoning: keep completed thinking collapsed but clickable
 	cfg           *config.Config
 	// reasoningLineIdx is the transcript index of the live "▎ thinking…" marker
 	// while a reasoning block streams; it's rewritten to "▎ thought for Ns" when
@@ -186,6 +187,11 @@ type chatTUI struct {
 	// without a live transcript block, then appended once as a final summary.
 	reasoningNative bool
 	thinkStart      time.Time
+	// completedReasoning keeps collapsed thinking text available for on-demand
+	// transcript expansion without making it visible by default.
+	completedReasoning map[int]*completedReasoningBlock
+	reasoningIndex     map[int]int // transcript summary/body index -> completedReasoning id
+	nextReasoningID    int
 	// answerIdx is the transcript index of the streaming answer block (rewritten in
 	// place as completed paragraphs arrive); -1 when none is open. answerFlushed is
 	// how many bytes of pending have already been rendered into it, so a Text packet
@@ -253,6 +259,13 @@ type chatTUI struct {
 	wrapBlockLines [][]string
 	wrapWidth      int
 	wrapBlockCount int
+	// wrappedLineTranscriptIdx mirrors wrappedLines for semantic mouse hit-testing.
+	wrappedLineTranscriptIdx    []int
+	hoverTranscriptIdx          int
+	hoverKind                   transcriptHoverKind
+	pendingTranscriptToggleIdx  int
+	pendingTranscriptToggleKind transcriptHoverKind
+	viewportAnchorDelta         int
 	// lastMouseReenable rate-limits ConPTY mouse re-enable sequences (#7583).
 	// mouseReenablePending + timer cover trailing-edge fires after a resize storm.
 	lastMouseReenable       time.Time
@@ -264,6 +277,7 @@ type chatTUI struct {
 	wantMouseReenable bool
 	viewport          viewport.Model
 	sel               selection
+	selecting         bool
 	// autoScroll drives edge-drag scrolling: -1 up, +1 down, 0 off. dragX is the
 	// column the drag is held at, so the ticker can extend the selection head.
 	autoScroll int
@@ -291,6 +305,12 @@ type chatTUI struct {
 	// terminal that pastes text itself is never pasted into twice.
 	terminalPasteSeq               uint64
 	clipboardImageTerminalPasteSeq uint64
+
+	// jumpToBottomNewMessages backs the Claude-style bottom prompt shown when
+	// the user has scrolled away from the tail. With no unseen output it renders
+	// a plain jump affordance; off-screen output turns it into a new-message pill.
+	jumpToBottomNewMessages int
+	jumpToBottomTurnNoted   bool
 
 	// The user bubble is echoed to scrollback immediately on Enter (bubbleStartIdx
 	// marks where in the transcript it landed). It stays "un-sendable" until the
@@ -363,6 +383,9 @@ type chatTUI struct {
 	// in the slash menu as "/<name>" and managed via /skills.
 	skills []skill.Skill
 
+	// plannerModelRef is display-only metadata for the compact two-model label.
+	plannerModelRef string
+
 	// slashCatalog is an immutable completion list rebuilt only on explicit
 	// invalidation (model switch, skill rescan, /reload-cmd, …). Ordinary
 	// keystrokes only filter this snapshot — no fingerprint walk (#6417, #7090).
@@ -418,10 +441,9 @@ type chatTUI struct {
 	statuslineOut string
 	gitStatus     gitStatus
 
-	// statusLineCount is the number of terminal rows the status block occupies
-	// (wrapped working line + wrapped status line + wrapped data line). Updated
-	// each frame via computeStatusLineCount so bottomRows can reserve the correct
-	// height; starts at 2 (unwrapped) until first render.
+	// statusLineCount is the number of terminal rows the status block occupies:
+	// optional wrapped working line plus two fixed pinned rows. Updated each
+	// frame via computeStatusLineCount so bottomRows can reserve the correct height.
 	statusLineCount int
 
 	// modelSwitchPending is true while any async controller rebuild is in flight.
@@ -526,15 +548,38 @@ func (m chatTUI) runStatusline() tea.Cmd {
 	if cmd == "" {
 		return nil
 	}
-	used, window := m.ctrl.ContextSnapshot()
+	var used, window int
+	var compactRatio float64
+	if m.ctrl != nil {
+		used, window = m.ctrl.ContextSnapshot()
+		compactRatio = m.ctrl.CompactRatio()
+	}
 	cwd, _ := os.Getwd()
-	payload, _ := json.Marshal(map[string]any{
+	payload := map[string]any{
 		"model":         m.label,
 		"contextUsed":   used,
 		"contextWindow": window,
+		"compactRatio":  compactRatio,
 		"cwd":           cwd,
-	})
-	return func() tea.Msg { return statuslineMsg{out: runStatuslineCmd(cmd, string(payload))} }
+		"balance":       m.balance,
+	}
+	if m.ctrl != nil {
+		if u := m.ctrl.LastUsage(); u != nil {
+			payload["promptTokens"] = u.PromptTokens
+			payload["completionTokens"] = u.CompletionTokens
+			payload["totalTokens"] = u.TotalTokens
+			payload["cacheHitTokens"] = u.CacheHitTokens
+			payload["cacheMissTokens"] = u.CacheMissTokens
+		}
+	}
+	if m.ctrl != nil {
+		if hit, miss := m.ctrl.SessionCache(); hit+miss > 0 {
+			payload["sessionCacheHitTokens"] = hit
+			payload["sessionCacheMissTokens"] = miss
+		}
+	}
+	body, _ := json.Marshal(payload)
+	return func() tea.Msg { return statuslineMsg{out: runStatuslineCmd(cmd, string(body))} }
 }
 
 const statuslineCommandTimeout = 2 * time.Second
@@ -637,6 +682,35 @@ type clipboardImageMsg struct {
 	err  error
 }
 
+type clipboardPasteMsg struct {
+	path string
+	text string
+	err  error
+}
+
+type transcriptDisclosureKind int
+
+const (
+	transcriptDisclosureReasoning transcriptDisclosureKind = iota
+	transcriptDisclosureImageUnderstanding
+)
+
+type completedReasoningBlock struct {
+	raw        string
+	summary    string
+	summaryIdx int
+	expanded   bool
+	kind       transcriptDisclosureKind
+}
+
+type transcriptHoverKind int
+
+const (
+	transcriptHoverNone transcriptHoverKind = iota
+	transcriptHoverReasoning
+	transcriptHoverShell
+)
+
 // newChatTUI assembles the initial model. The controller has already been wired
 // with an event sink that feeds eventCh; the TUI issues commands to it and
 // renders the events it emits. Model identity, label, history, host, and commands
@@ -655,43 +729,46 @@ func newChatTUI(ctrl control.SessionAPI, missing string, eventCh chan event.Even
 	history := ctrl.History()
 	nextPasteID, usedPasteIDs := pasteIDStateForHistory(history)
 	m := chatTUI{
-		ctrl:                 ctrl,
-		label:                ctrl.Label(),
-		modelRef:             ctrl.ModelRef(),
-		missing:              missing,
-		terminalTitleItems:   config.DefaultTerminalTitleItems(),
-		nativeScrollback:     nativeScrollback,
-		legacyScrollClear:    useLegacyViewportScrollClear(runtime.GOOS, os.Environ()),
-		mouseCaptureOff:      mouseCaptureOffByDefault(),
-		input:                ti,
-		spinner:              sp,
-		submittedInputCursor: -1,
-		queueEditCursor:      -1,
-		nextPasteID:          nextPasteID,
-		usedPasteIDs:         usedPasteIDs,
-		reasoningLineIdx:     -1,
-		reasoningTextIdx:     -1,
-		answerIdx:            -1,
-		toolStreamIdx:        -1,
-		reasoning:            &strings.Builder{},
-		pending:              &strings.Builder{},
-		pendingCommit:        &commitBuf,
-		diffMaxLines:         diffFoldLimit,
-		showReasoning:        nativeScrollback,
-		showTurnUsage:        true,
-		shellOutputs:         make(map[string]string),
-		shellExpanded:        make(map[string]bool),
-		shellTranscriptIdx:   make(map[string]int),
-		toolLineCountByID:    make(map[string]int),
-		subagentProgressIdx:  make(map[string]int),
-		subagentProgress:     make(map[string]*cliSubagentProgress),
-		eventCh:              eventCh,
-		history:              history,
-		host:                 ctrl.Host(),
-		commands:             ctrl.Commands(),
-		skills:               ctrl.SlashSkills(),
-		viewport:             viewport.New(viewport.WithWidth(termW)),
-		statusLineCount:      3,
+		ctrl:                       ctrl,
+		label:                      ctrl.Label(),
+		modelRef:                   ctrl.ModelRef(),
+		missing:                    missing,
+		nativeScrollback:           nativeScrollback,
+		legacyScrollClear:          useLegacyViewportScrollClear(runtime.GOOS, os.Environ()),
+		mouseCaptureOff:            mouseCaptureOffByDefault(),
+		input:                      ti,
+		spinner:                    sp,
+		submittedInputCursor:       -1,
+		queueEditCursor:            -1,
+		nextPasteID:                nextPasteID,
+		usedPasteIDs:               usedPasteIDs,
+		reasoningLineIdx:           -1,
+		reasoningTextIdx:           -1,
+		answerIdx:                  -1,
+		toolStreamIdx:              -1,
+		reasoning:                  &strings.Builder{},
+		pending:                    &strings.Builder{},
+		pendingCommit:              &commitBuf,
+		diffMaxLines:               diffFoldLimit,
+		showReasoning:              nativeScrollback,
+		showTurnUsage:              true,
+		completedReasoning:         make(map[int]*completedReasoningBlock),
+		reasoningIndex:             make(map[int]int),
+		hoverTranscriptIdx:         -1,
+		pendingTranscriptToggleIdx: -1,
+		shellOutputs:               make(map[string]string),
+		shellExpanded:              make(map[string]bool),
+		shellTranscriptIdx:         make(map[string]int),
+		toolLineCountByID:          make(map[string]int),
+		subagentProgressIdx:        make(map[string]int),
+		subagentProgress:           make(map[string]*cliSubagentProgress),
+		eventCh:                    eventCh,
+		history:                    history,
+		host:                       ctrl.Host(),
+		commands:                   ctrl.Commands(),
+		skills:                     ctrl.SlashSkills(),
+		viewport:                   viewport.New(viewport.WithWidth(termW)),
+		statusLineCount:            3,
 	}
 	m.syncWindowTitle()
 	return m
@@ -714,18 +791,10 @@ func mouseCaptureOffByDefault() bool {
 }
 
 func configureChatTextarea(ti *textarea.Model) {
-	// Keep a stable two-cell input affordance, matching the prompt treatment in
-	// other coding TUIs. Continuation rows receive two spaces so text and the
-	// real terminal cursor stay aligned without repeating the arrow.
-	ti.SetPromptFunc(composerPromptWidth, func(info textarea.PromptInfo) string {
-		if info.LineNumber != 0 {
-			return ""
-		}
-		if info.Focused {
-			return accent("❯ ")
-		}
-		return dim("❯ ")
-	})
+	// Preserve the native two-cell affordance until user configuration is
+	// loaded. chatREPL applies ui.input_prompt afterwards, including an explicit
+	// empty value for a promptless composer.
+	setChatTextareaPrompt(ti, "❯ ")
 	ti.CharLimit = 16384
 	// The prompt and real terminal cursor already show where typing starts. Keep
 	// the idle composer quiet; modal free-text questions set their own temporary
@@ -759,6 +828,24 @@ func (m *chatTUI) refreshInputPlaceholder() {
 		return
 	}
 	m.input.Placeholder = ""
+}
+
+func setChatTextareaPrompt(ti *textarea.Model, prompt string) {
+	prompt = strings.ReplaceAll(prompt, "\r", "")
+	prompt = strings.ReplaceAll(prompt, "\n", " ")
+	promptWidth := ansi.StringWidth(prompt)
+	ti.Prompt = prompt
+	if promptWidth <= 0 {
+		ti.SetPromptFunc(0, nil)
+		ti.Prompt = ""
+		return
+	}
+	ti.SetPromptFunc(promptWidth, func(info textarea.PromptInfo) string {
+		if info.LineNumber == 0 {
+			return prompt
+		}
+		return ""
+	})
 }
 
 func isTermuxTerminal() bool {
@@ -978,9 +1065,9 @@ func (m chatTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	contentW := transcriptContentWidth(cm.width, cm.nativeScrollback)
 	cm.viewport.SetWidth(contentW)
-	// Recompute the wrapped status-line count so bottomRows reserves the right
-	// height for the viewport. Use cm.width (same as boxW in View()) so the
-	// wrapping width matches what View() actually renders.
+	// Recompute the pinned status-line count so bottomRows reserves the right
+	// height for the viewport. The status/data rows are fixed-height; only the
+	// running line above the composer can wrap.
 	cm.statusLineCount = cm.computeStatusLineCount(cm.width)
 	// Keep the composer proportional to the live terminal instead of letting its
 	// absolute row cap crowd the transcript and fixed status rows on short
@@ -1000,11 +1087,21 @@ func (m chatTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// transcriptDirty flag alone must never force a full-history rebuild (#6978).
 	forceFullWrap := widthChanged || len(cm.transcript) < prevLines
 	wrapBehind := cm.wrapWidth != contentW || cm.wrapBlockCount != len(cm.transcript)
+	anchorYOffset := -1
+	if cm.viewportAnchorDelta != 0 {
+		anchorYOffset = max(0, prevYOff+cm.viewportAnchorDelta)
+	}
 	if forceFullWrap || wrapBehind || len(cm.transcript) != prevLines {
 		if cm.syncWrappedLines(contentW, forceFullWrap) {
+			if anchorYOffset >= 0 {
+				cm.padWrappedCacheForYOffset(anchorYOffset, cm.viewport.Height())
+			}
 			cm.feedViewportContent()
 		}
-		if followTail || cm.shouldFollowTail() {
+		if anchorYOffset >= 0 {
+			cm.viewport.SetYOffset(anchorYOffset)
+			cm.viewportAnchorDelta = 0
+		} else if followTail || cm.shouldFollowTail() {
 			cm.viewport.GotoBottom() // tail-follow: stay pinned to newest output
 			cm.markFollowTail()
 		} else if widthChanged && resizeAnchor.valid {
@@ -1019,6 +1116,11 @@ func (m chatTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cm.viewport.GotoBottom()
 		cm.markFollowTail()
 		cm.forceGotoBottom = false
+	}
+	if cm.viewport.AtBottom() {
+		cm.clearJumpToBottomNotice()
+	} else if len(cm.transcript) > prevLines && !followTail {
+		cm.noteOffscreenTranscriptGrowth()
 	}
 	cm.transcriptDirty = false
 
@@ -1073,6 +1175,25 @@ func batchCmds(cmds ...tea.Cmd) tea.Cmd {
 	}
 }
 
+func padWrappedForYOffset(wrapped string, lineMap []int, desiredYOffset, viewportHeight int) (string, []int) {
+	if desiredYOffset <= 0 || viewportHeight <= 0 {
+		return wrapped, lineMap
+	}
+	lines := strings.Split(wrapped, "\n")
+	neededLines := viewportHeight + desiredYOffset
+	if len(lines) >= neededLines {
+		return wrapped, lineMap
+	}
+	pad := neededLines - len(lines)
+	for i := 0; i < pad; i++ {
+		lines = append(lines, "")
+		if lineMap != nil {
+			lineMap = append(lineMap, -1)
+		}
+	}
+	return strings.Join(lines, "\n"), lineMap
+}
+
 // update runs the model's message handling. Update wraps it to keep the
 // transcript viewport sized, fed, and tail-following after every message.
 func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -1090,9 +1211,8 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.started {
 			m.started = true
 			history := append([]provider.Message(nil), m.history...)
-			m.commitTranscriptSource(transcriptSource{
-				kind: transcriptSourceReplayBundle, raw: m.missing, history: history,
-			})
+			m.commitTranscriptSource(transcriptSource{kind: transcriptSourceBanner, raw: m.missing})
+			m.replayHistory(history, transcriptContentWidth(m.width, m.nativeScrollback))
 			m.history = nil
 		}
 
@@ -1117,6 +1237,9 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Outside the composer, or once its internal viewport has reached the
 		// requested edge, continue the gesture in the transcript. This mirrors
 		// ordinary nested-scroll behavior and avoids a dead wheel at boundaries.
+		m.selecting = false
+		m.autoScroll = 0
+		m.scrollbarDrag = false
 		switch msg.Button {
 		case tea.MouseWheelUp:
 			m.viewport.ScrollUp(3)
@@ -1144,9 +1267,16 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, m.copySelectionWithNotice(m.selectedComposerText()))
 			return m, finalize(m, cmds)
 		}
+		m.clearPendingTranscriptToggle()
+		if msg.Button == tea.MouseLeft && m.hitJumpToBottomPrompt(msg.X, msg.Y) {
+			m.viewport.GotoBottom()
+			m.clearJumpToBottomNotice()
+			return m, finalize(m, cmds)
+		}
 		if msg.Button == tea.MouseRight && m.sel.active && !m.sel.empty() {
 			text := m.selectedText()
 			m.sel = selection{}
+			m.selecting = false
 			cmds = append(cmds, m.copySelectionWithNotice(text))
 			return m, finalize(m, cmds)
 		}
@@ -1168,6 +1298,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.Button == tea.MouseLeft && m.inScrollbar(msg.X, msg.Y) {
 			m.sel = selection{}
+			m.selecting = false
 			m.autoScroll = 0
 			m.scrollbarDrag = true
 			m.scrollbarGrabOffset = m.scrollbarGrabRowOffset(msg.Y)
@@ -1175,17 +1306,33 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if msg.Button == tea.MouseLeft && msg.Y < m.viewport.Height() {
-			// Check if the clicked line is a shell-output hint.
 			lineIdx := m.viewport.YOffset() + msg.Y
-			if lineIdx >= 0 && lineIdx < len(m.wrappedLines) {
-				clicked := m.wrappedLines[lineIdx]
-				if strings.Contains(clicked, "more lines") && strings.Contains(clicked, "Ctrl+B") {
-					m.toggleShellOutput()
-					return m, finalize(m, cmds)
+			if idx, kind, ok := m.clickableAtPosition(lineIdx, msg.X); ok {
+				switch kind {
+				case transcriptHoverShell:
+					if m.toggleShellOutputAtTranscriptIdx(idx) {
+						return m, finalize(m, cmds)
+					}
+				case transcriptHoverReasoning:
+					if m.reasoningExpandedAtTranscriptIdx(idx) {
+						at := m.transcriptCaret(msg.X, msg.Y)
+						m.sel = selection{active: true, anchor: at, head: at}
+						m.selecting = true
+						m.scrollbarDrag = false
+						m.pendingTranscriptToggleIdx = idx
+						m.pendingTranscriptToggleKind = kind
+						m.autoScroll = 0
+						return m, nil
+					}
+					if m.toggleReasoningAtTranscriptIdx(idx) {
+						return m, finalize(m, cmds)
+					}
 				}
 			}
 			at := m.transcriptCaret(msg.X, msg.Y)
 			m.sel = selection{active: true, anchor: at, head: at}
+			m.selecting = true
+			m.scrollbarDrag = false
 			m.autoScroll = 0
 		}
 		return m, nil
@@ -1205,7 +1352,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// a button is held, so this is a drag). A drag held against the top or
 		// bottom edge starts an auto-scroll ticker so the selection can run past
 		// the visible window.
-		if m.sel.active {
+		if m.selecting && msg.Button == tea.MouseLeft && m.sel.active {
 			m.sel.head = m.transcriptCaret(msg.X, msg.Y)
 			m.dragX = msg.X
 			prev := m.autoScroll
@@ -1213,6 +1360,17 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.autoScroll != 0 && prev == 0 {
 				return m, autoScrollTick()
 			}
+		} else if msg.Y < m.viewport.Height() {
+			lineIdx := m.viewport.YOffset() + msg.Y
+			if idx, kind, ok := m.clickableAtPosition(lineIdx, msg.X); ok {
+				if m.setTranscriptHover(idx, kind) {
+					return m, nil
+				}
+			} else if m.clearTranscriptHover() {
+				return m, nil
+			}
+		} else if m.clearTranscriptHover() {
+			return m, nil
 		}
 		return m, nil
 
@@ -1220,7 +1378,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// One edge-scroll step: scroll a single line, drag the selection head to
 		// the edge row, and keep ticking until the drag ends, leaves the edge, or
 		// the viewport can't scroll further (so it can't run away to the end).
-		if !m.sel.active || m.autoScroll == 0 {
+		if !m.selecting || !m.sel.active || m.autoScroll == 0 {
 			return m, nil
 		}
 		edgeY := 0
@@ -1264,14 +1422,24 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.dragScrollbar(msg.Y) // already syncs scrollMode
 			m.scrollbarDrag = false
 			m.scrollbarGrabOffset = 0
+			m.selecting = false
 			return m, nil
 		}
 		m.autoScroll = 0 // stop edge auto-scroll
 		if msg.Button == tea.MouseLeft && m.sel.active {
-			if m.sel.empty() {
+			m.selecting = false
+			empty := m.sel.empty()
+			pendingIdx, pendingKind := m.pendingTranscriptToggleIdx, m.pendingTranscriptToggleKind
+			m.clearPendingTranscriptToggle()
+			if empty {
 				m.sel = selection{}
 			} else {
 				cmds = append(cmds, m.copySelectionWithNotice(m.selectedText()))
+			}
+			if empty && pendingIdx >= 0 && pendingKind == transcriptHoverReasoning {
+				if m.toggleReasoningAtTranscriptIdx(pendingIdx) {
+					return m, finalize(m, cmds)
+				}
 			}
 		}
 		return m, finalize(m, cmds)
@@ -1286,6 +1454,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// can replace it, and Left/Right collapse it to its ordered start/end.
 		sel := m.sel
 		m.sel = selection{}
+		m.selecting = false
 		if m.validComposerSelection() && !m.composerSel.empty() {
 			switch {
 			case msg.String() == "ctrl+c" || msg.String() == "super+c" || msg.String() == "meta+c" || msg.String() == "ctrl+insert":
@@ -1620,6 +1789,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.sel = sel
 					text := m.selectedText()
 					m.sel = selection{}
+					m.selecting = false
 					cmds = append(cmds, m.copySelectionWithNotice(text))
 					return m, finalize(m, cmds)
 				}
@@ -1645,6 +1815,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.sel = sel // restore so selectedText() can read it
 				text := m.selectedText()
 				m.sel = selection{}
+				m.selecting = false
 				cmds = append(cmds, m.copySelectionWithNotice(text))
 				return m, finalize(m, cmds)
 			}
@@ -1742,6 +1913,15 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.viewport.GotoBottom()
 					m.markFollowTail()
 					return m, nil
+				}
+				if slashRunsWhileRunning(line) {
+					m.rememberSubmittedInput(line)
+					m.input.Reset()
+					m.pastedBlocks = nil
+					if cmd := m.runSlashCommand(line); cmd != nil {
+						cmds = append(cmds, cmd)
+					}
+					return m, finalize(m, cmds)
 				}
 				// /queue and /steer are local commands even mid-turn.
 				if handled, msg := m.handleQueueSlash(line); handled {
@@ -2176,6 +2356,16 @@ func hasWideInputCells(s string) bool {
 	return s != "" && visibleWidth(s) != utf8.RuneCountInString(s)
 }
 
+func slashRunsWhileRunning(input string) bool {
+	cmd := strings.TrimSpace(strings.SplitN(input, " ", 2)[0])
+	switch cmd {
+	case "/rename", "/title":
+		return true
+	default:
+		return false
+	}
+}
+
 // finalize drains the committed-line queue and batches the turn's commands. In
 // the default alt-screen path the queue is already mirrored in m.transcript. In
 // Termux finalized lines are also emitted into the terminal's native scrollback.
@@ -2202,6 +2392,7 @@ func (m *chatTUI) clearTranscriptDisplay() {
 	m.transcriptSources = nil
 	m.clearWrapCache()
 	m.viewport.SetContent("")
+	m.resetCompletedReasoning()
 	m.shellOutputs = make(map[string]string)
 	m.shellExpanded = make(map[string]bool)
 	m.shellTranscriptIdx = make(map[string]int)
@@ -2285,6 +2476,9 @@ func (m *chatTUI) commitSpacer() {
 // scrollback mode they join the bottom rail because there is no main viewport.
 func (m chatTUI) bottomRows() int {
 	rows := 0
+	if m.showJumpToBottomPrompt() {
+		rows++
+	}
 	for _, s := range []string{
 		m.renderTodoPanel(),
 		m.renderApprovalBanner(),
@@ -2314,6 +2508,9 @@ func (m chatTUI) bottomRows() int {
 		rows += strings.Count(footer, "\n") + 1
 	}
 	if !m.hideComposer() {
+		if qi := m.renderQueueIndicator(); qi != "" {
+			rows += strings.Count(qi, "\n") + 1
+		}
 		rows += m.input.Height() + 2
 	}
 	if m.statusLineCount > 0 {
@@ -2342,12 +2539,26 @@ func (m chatTUI) hideComposer() bool {
 }
 
 // transcriptHeight is the row budget left for the transcript viewport once the
-// pinned bottom region is accounted for (at least one row).
+// pinned bottom region is accounted for. The transcript may yield its final
+// row so an active composer and queued feedback remain visible on short panes.
 func (m chatTUI) transcriptHeight() int {
-	if h := m.height - m.bottomRows(); h > 1 {
+	if h := m.height - m.bottomRows(); h > 0 {
 		return h
 	}
-	return 1
+	return 0
+}
+
+// padTerminalRows preserves the viewport's allocated height when the transcript
+// contains fewer rows than the pane can display. Bubble Tea does not pad sparse
+// viewport content itself, so without this the pinned composer/footer drifts up.
+func padTerminalRows(s string, rows int) string {
+	if rows <= 0 {
+		return ""
+	}
+	for strings.Count(s, "\n")+1 < rows {
+		s += "\n"
+	}
+	return s
 }
 
 func (m chatTUI) renderMainManager() string {
@@ -2468,17 +2679,607 @@ func (m *chatTUI) streamReasoning(chunk string) {
 // positive maxLines keeps only the trailing visual lines (the live view); 0
 // renders all (verbose collapse).
 func reasoningBlock(raw string, width, maxLines int) string {
-	w := max(width-len([]rune(connector)), 8)
+	return reasoningBlockStyled(raw, width, maxLines, false, false)
+}
+
+func reasoningBlockStyled(raw string, width, maxLines int, background, hover bool) string {
+	contentW := transcriptEntryWidth(width)
+	gutter := connector
+	if background {
+		gutter = assistantContentGutter
+	}
+	w := contentW - len([]rune(gutter))
+	if w < 8 {
+		w = 8
+	}
 	var lines []string
 	for ln := range strings.SplitSeq(strings.TrimRight(raw, "\n"), "\n") {
 		for wl := range strings.SplitSeq(ansi.Wrap(expandTabs(ln), w, ""), "\n") {
-			lines = append(lines, dim(wl))
+			lines = append(lines, wl)
 		}
 	}
 	if maxLines > 0 && len(lines) > maxLines {
 		lines = lines[len(lines)-maxLines:]
 	}
+	if background {
+		rows := make([]string, 0, len(lines)+2)
+		rows = append(rows, "")
+		for i, line := range lines {
+			if i == 0 {
+				rows = append(rows, "* "+line)
+				continue
+			}
+			rows = append(rows, gutter+line)
+		}
+		rows = append(rows, "")
+		return renderTranscriptRows(rows, contentW, activeCLITheme.faint, false)
+	}
+	for i := range lines {
+		lines[i] = dim(lines[i])
+	}
 	return connectorBlock(lines)
+}
+
+const assistantContentGutter = "  "
+
+func formatReasoningSummary(secs int) string {
+	s := fmt.Sprintf(i18n.M.ChatThoughtForFmt, secs)
+	if s == "" {
+		return s
+	}
+	r := []rune(s)
+	if r[0] >= 'a' && r[0] <= 'z' {
+		r[0] = r[0] - 'a' + 'A'
+	}
+	return "* " + string(r)
+}
+
+func renderAssistantBlock(block string) string {
+	if block == "" {
+		return ""
+	}
+	marker := "●"
+	if colorOn() {
+		marker = bold(marker)
+	}
+	lines := strings.Split(block, "\n")
+	seenContent := false
+	for i, line := range lines {
+		if !seenContent {
+			if strings.TrimSpace(ansi.Strip(line)) == "" {
+				continue
+			}
+			lines[i] = marker + " " + line
+			seenContent = true
+			continue
+		}
+		if line != "" {
+			lines[i] = assistantContentGutter + line
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func renderReasoningSummary(summary string, width int, hover bool) string {
+	if !colorOn() || !hover {
+		return dim(summary)
+	}
+	return themeStyle(activeCLITheme.muted).Bold(true).Render(summary)
+}
+
+func renderImageUnderstandingSummary(summary string, width int, hover bool) string {
+	if !colorOn() || !hover {
+		return dim(summary)
+	}
+	return themeStyle(activeCLITheme.muted).Bold(true).Render(summary)
+}
+
+func isImageUnderstandingNotice(e event.Event) bool {
+	if strings.TrimSpace(e.Detail) == "" {
+		return false
+	}
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(e.Text)), "image understood:")
+}
+
+func imageUnderstandingSummaryFromNotice(text string) string {
+	text = strings.TrimSpace(text)
+	const prefix = "image understood:"
+	if strings.HasPrefix(strings.ToLower(text), prefix) {
+		suffix := strings.TrimSpace(text[len(prefix):])
+		if suffix != "" {
+			return "◩ Image understood · " + suffix
+		}
+	}
+	return "◩ Image understood"
+}
+
+func imageUnderstandingBlockStyled(raw string, width int, hover bool) string {
+	contentW := transcriptEntryWidth(width)
+	innerW := contentW - len([]rune(assistantContentGutter))
+	if innerW < 8 {
+		innerW = 8
+	}
+	blocks := splitImageUnderstandingBlocks(raw)
+	if len(blocks) == 0 {
+		return ""
+	}
+	rows := make([]string, 0, 8)
+	rows = append(rows, "")
+	for i, block := range blocks {
+		if len(blocks) > 1 {
+			rows = append(rows, fmt.Sprintf("◩ Image #%d", i+1))
+		} else {
+			rows = append(rows, "◩ Image understanding")
+		}
+		for _, line := range wrapDisclosureBody(block, innerW) {
+			rows = append(rows, assistantContentGutter+line)
+		}
+		if i != len(blocks)-1 {
+			rows = append(rows, "")
+		}
+	}
+	rows = append(rows, "")
+	return renderTranscriptRows(rows, contentW, activeCLITheme.faint, hover)
+}
+
+func splitImageUnderstandingBlocks(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	const openTag = "<image-understanding"
+	const closeTag = "</image-understanding>"
+	var blocks []string
+	searchFrom := 0
+	for {
+		startRel := strings.Index(raw[searchFrom:], openTag)
+		if startRel < 0 {
+			break
+		}
+		start := searchFrom + startRel
+		endRel := strings.Index(raw[start:], closeTag)
+		if endRel < 0 {
+			break
+		}
+		end := start + endRel + len(closeTag)
+		if block := strings.TrimSpace(raw[start:end]); block != "" {
+			blocks = append(blocks, block)
+		}
+		searchFrom = end
+	}
+	if len(blocks) > 0 {
+		return blocks
+	}
+	parts := strings.Split(raw, "\n\n")
+	blocks = make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			blocks = append(blocks, part)
+		}
+	}
+	return blocks
+}
+
+func wrapDisclosureBody(raw string, width int) []string {
+	if width < 8 {
+		width = 8
+	}
+	var lines []string
+	for _, ln := range strings.Split(strings.TrimRight(raw, "\n"), "\n") {
+		wrapped := ansi.Wrap(expandTabs(ln), width, "")
+		if wrapped == "" {
+			lines = append(lines, "")
+			continue
+		}
+		lines = append(lines, strings.Split(wrapped, "\n")...)
+	}
+	return lines
+}
+
+func transcriptEntryWidth(width int) int {
+	if width <= 1 {
+		return 80
+	}
+	return transcriptContentWidth(width, false)
+}
+
+func renderConnectorBlock(lines []string, width int, fg cliColor, hover bool) string {
+	if len(lines) == 0 {
+		return ""
+	}
+	if !colorOn() {
+		styled := make([]string, len(lines))
+		for i, ln := range lines {
+			styled[i] = dim(ln)
+		}
+		return connectorBlock(styled)
+	}
+	indent := strings.Repeat(" ", len([]rune(connector)))
+	rows := make([]string, 0, len(lines))
+	rows = append(rows, connector+lines[0])
+	for _, ln := range lines[1:] {
+		rows = append(rows, indent+ln)
+	}
+	return renderTranscriptRows(rows, width, fg, hover)
+}
+
+func renderTranscriptRows(rows []string, width int, fg cliColor, hover bool) string {
+	if len(rows) == 0 {
+		return ""
+	}
+	if width <= 0 {
+		width = 80
+	}
+	if !colorOn() {
+		return strings.Join(rows, "\n")
+	}
+	bg := activeCLITheme.userBubbleBG
+	if hover {
+		bg = activeCLITheme.border
+	}
+	st := lipgloss.NewStyle().
+		Foreground(themeLipColor(fg)).
+		Background(themeLipColor(bg)).
+		Width(width).
+		MaxWidth(width)
+	if hover {
+		st = st.Bold(true)
+	}
+	rendered := make([]string, len(rows))
+	for i, row := range rows {
+		rendered[i] = st.Render(padRight(row, width))
+	}
+	return strings.Join(rendered, "\n")
+}
+
+func (m *chatTUI) resetCompletedReasoning() {
+	m.completedReasoning = make(map[int]*completedReasoningBlock)
+	m.reasoningIndex = make(map[int]int)
+	m.nextReasoningID = 0
+	m.hoverTranscriptIdx = -1
+	m.hoverKind = transcriptHoverNone
+}
+
+func (m *chatTUI) rememberCompletedReasoning(summaryIdx int, summary, raw string, expanded bool) {
+	if !m.lazyReasoning || strings.TrimSpace(raw) == "" || summaryIdx < 0 {
+		return
+	}
+	m.rememberTranscriptDisclosure(summaryIdx, summary, raw, expanded, transcriptDisclosureReasoning)
+}
+
+func (m *chatTUI) rememberImageUnderstanding(summaryIdx int, summary, raw string) {
+	if strings.TrimSpace(raw) == "" || summaryIdx < 0 {
+		return
+	}
+	m.rememberTranscriptDisclosure(summaryIdx, summary, raw, false, transcriptDisclosureImageUnderstanding)
+}
+
+func (m *chatTUI) rememberTranscriptDisclosure(summaryIdx int, summary, raw string, expanded bool, kind transcriptDisclosureKind) {
+	if m.completedReasoning == nil {
+		m.completedReasoning = make(map[int]*completedReasoningBlock)
+	}
+	id := m.nextReasoningID
+	m.nextReasoningID++
+	m.completedReasoning[id] = &completedReasoningBlock{
+		raw:        raw,
+		summary:    summary,
+		summaryIdx: summaryIdx,
+		expanded:   expanded,
+		kind:       kind,
+	}
+	m.rebuildReasoningIndex()
+}
+
+func (m *chatTUI) rebuildReasoningIndex() {
+	if m.reasoningIndex == nil {
+		m.reasoningIndex = make(map[int]int)
+	} else {
+		for k := range m.reasoningIndex {
+			delete(m.reasoningIndex, k)
+		}
+	}
+	for id, block := range m.completedReasoning {
+		if block.summaryIdx >= 0 && block.summaryIdx < len(m.transcript) {
+			m.reasoningIndex[block.summaryIdx] = id
+		}
+	}
+}
+
+func (m *chatTUI) shiftCompletedReasoning(start, delta int) {
+	for _, block := range m.completedReasoning {
+		if block.summaryIdx >= start {
+			block.summaryIdx += delta
+		}
+	}
+	m.rebuildReasoningIndex()
+}
+
+func (m *chatTUI) shiftLiveTranscriptRefsAfterInsert(at int) {
+	shiftTranscriptRefAfterInsert(&m.reasoningLineIdx, at)
+	shiftTranscriptRefAfterInsert(&m.reasoningTextIdx, at)
+	shiftTranscriptRefAfterInsert(&m.answerIdx, at)
+	shiftTranscriptRefAfterInsert(&m.toolStreamIdx, at)
+	shiftTranscriptRefAfterInsert(&m.hoverTranscriptIdx, at)
+	for id, idx := range m.shellTranscriptIdx {
+		if idx >= at {
+			m.shellTranscriptIdx[id] = idx + 1
+		}
+	}
+}
+
+func (m *chatTUI) shiftLiveTranscriptRefsAfterDelete(at int) {
+	shiftTranscriptRefAfterDelete(&m.reasoningLineIdx, at)
+	shiftTranscriptRefAfterDelete(&m.reasoningTextIdx, at)
+	shiftTranscriptRefAfterDelete(&m.answerIdx, at)
+	shiftTranscriptRefAfterDelete(&m.toolStreamIdx, at)
+	shiftTranscriptRefAfterDelete(&m.hoverTranscriptIdx, at)
+	if m.hoverTranscriptIdx < 0 {
+		m.hoverKind = transcriptHoverNone
+	}
+	for id, idx := range m.shellTranscriptIdx {
+		switch {
+		case idx == at:
+			delete(m.shellTranscriptIdx, id)
+		case idx > at:
+			m.shellTranscriptIdx[id] = idx - 1
+		}
+	}
+}
+
+func (m *chatTUI) deleteTranscriptLine(at int) bool {
+	if at < 0 || at >= len(m.transcript) {
+		return false
+	}
+	m.removeTranscriptBlock(at)
+	m.shiftLiveTranscriptRefsAfterDelete(at)
+	m.shiftCompletedReasoning(at+1, -1)
+	return true
+}
+
+func shiftTranscriptRefAfterInsert(ref *int, at int) {
+	if ref != nil && *ref >= at {
+		*ref = *ref + 1
+	}
+}
+
+func shiftTranscriptRefAfterDelete(ref *int, at int) {
+	if ref == nil {
+		return
+	}
+	switch {
+	case *ref == at:
+		*ref = -1
+	case *ref > at:
+		*ref--
+	}
+}
+
+func (m *chatTUI) truncateCompletedReasoning(n int) {
+	for id, block := range m.completedReasoning {
+		if block.summaryIdx >= n {
+			delete(m.completedReasoning, id)
+		}
+	}
+	if m.hoverTranscriptIdx >= n {
+		m.hoverTranscriptIdx = -1
+		m.hoverKind = transcriptHoverNone
+	}
+	m.rebuildReasoningIndex()
+}
+
+func (m *chatTUI) hasClickableTranscriptEntries() bool {
+	return len(m.reasoningIndex) > 0 || len(m.shellTranscriptIdx) > 0
+}
+
+func (m *chatTUI) clickableAtWrappedLine(lineIdx int) (int, transcriptHoverKind, bool) {
+	if lineIdx < 0 || lineIdx >= len(m.wrappedLineTranscriptIdx) {
+		return -1, transcriptHoverNone, false
+	}
+	idx := m.wrappedLineTranscriptIdx[lineIdx]
+	if idx < 0 {
+		return -1, transcriptHoverNone, false
+	}
+	if _, ok := m.reasoningIndex[idx]; ok {
+		return idx, transcriptHoverReasoning, true
+	}
+	if _, ok := m.shellOutputIDAtTranscriptIdx(idx); ok {
+		return idx, transcriptHoverShell, true
+	}
+	return -1, transcriptHoverNone, false
+}
+
+func (m *chatTUI) clickableAtPosition(lineIdx, x int) (int, transcriptHoverKind, bool) {
+	idx, kind, ok := m.clickableAtWrappedLine(lineIdx)
+	if !ok {
+		return -1, transcriptHoverNone, false
+	}
+	if kind == transcriptHoverReasoning && !m.reasoningExpandedAtTranscriptIdx(idx) {
+		if x < 0 || x >= m.collapsedDisclosureWidth(idx) {
+			return -1, transcriptHoverNone, false
+		}
+	}
+	return idx, kind, true
+}
+
+func (m *chatTUI) collapsedDisclosureWidth(idx int) int {
+	if idx < 0 || idx >= len(m.transcript) {
+		return 0
+	}
+	id, ok := m.reasoningIndex[idx]
+	if !ok {
+		return 0
+	}
+	block := m.completedReasoning[id]
+	if block == nil || block.expanded {
+		return ansi.StringWidth(ansi.Strip(m.transcript[idx]))
+	}
+	summary := strings.TrimSpace(block.summary)
+	if summary == "" {
+		summary = strings.TrimSpace(ansi.Strip(m.transcript[idx]))
+	}
+	return ansi.StringWidth(summary)
+}
+
+func (m *chatTUI) clearPendingTranscriptToggle() {
+	m.pendingTranscriptToggleIdx = -1
+	m.pendingTranscriptToggleKind = transcriptHoverNone
+}
+
+func (m *chatTUI) reasoningExpandedAtTranscriptIdx(idx int) bool {
+	if idx < 0 || m.reasoningIndex == nil {
+		return false
+	}
+	id, ok := m.reasoningIndex[idx]
+	if !ok {
+		return false
+	}
+	block := m.completedReasoning[id]
+	return block != nil && block.expanded
+}
+
+func (m *chatTUI) setTranscriptHover(idx int, kind transcriptHoverKind) bool {
+	if idx == m.hoverTranscriptIdx && kind == m.hoverKind {
+		return false
+	}
+	changed := false
+	if m.hoverTranscriptIdx >= 0 {
+		changed = m.renderTranscriptHover(m.hoverTranscriptIdx, m.hoverKind, false) || changed
+	}
+	m.hoverTranscriptIdx = idx
+	m.hoverKind = kind
+	if idx >= 0 {
+		changed = m.renderTranscriptHover(idx, kind, true) || changed
+	}
+	if changed {
+		m.transcriptDirty = true
+	}
+	return changed
+}
+
+func (m *chatTUI) clearTranscriptHover() bool {
+	if m.hoverTranscriptIdx < 0 {
+		return false
+	}
+	idx, kind := m.hoverTranscriptIdx, m.hoverKind
+	m.hoverTranscriptIdx = -1
+	m.hoverKind = transcriptHoverNone
+	if !m.renderTranscriptHover(idx, kind, false) {
+		return false
+	}
+	m.transcriptDirty = true
+	return true
+}
+
+func (m *chatTUI) renderTranscriptHover(idx int, kind transcriptHoverKind, hover bool) bool {
+	if idx < 0 || idx >= len(m.transcript) {
+		return false
+	}
+	before := m.transcript[idx]
+	switch kind {
+	case transcriptHoverReasoning:
+		id, ok := m.reasoningIndex[idx]
+		if !ok {
+			return false
+		}
+		block := m.completedReasoning[id]
+		if block == nil {
+			return false
+		}
+		if idx == block.summaryIdx {
+			if block.expanded {
+				return false
+			}
+			summary := block.summary
+			if strings.TrimSpace(summary) == "" {
+				summary = ansi.Strip(m.transcript[idx])
+			}
+			m.transcript[idx] = m.renderTranscriptDisclosureSummary(block, summary, hover)
+			return m.transcript[idx] != before
+		}
+	case transcriptHoverShell:
+		if id, ok := m.shellOutputIDAtTranscriptIdx(idx); ok {
+			m.transcript[idx] = m.renderShellOutputBlock(id, hover)
+			return m.transcript[idx] != before
+		}
+	}
+	return false
+}
+
+func (m *chatTUI) renderTranscriptDisclosureSummary(block *completedReasoningBlock, summary string, hover bool) string {
+	if block == nil {
+		return ""
+	}
+	if strings.TrimSpace(summary) == "" {
+		summary = block.summary
+	}
+	switch block.kind {
+	case transcriptDisclosureImageUnderstanding:
+		return renderImageUnderstandingSummary(summary, m.width, hover)
+	default:
+		return renderReasoningSummary(summary, m.width, hover)
+	}
+}
+
+func (m *chatTUI) renderTranscriptDisclosureBody(block *completedReasoningBlock, hover bool) string {
+	if block == nil {
+		return ""
+	}
+	switch block.kind {
+	case transcriptDisclosureImageUnderstanding:
+		return imageUnderstandingBlockStyled(block.raw, m.width, hover)
+	default:
+		return reasoningBlockStyled(block.raw, m.width, 0, true, hover)
+	}
+}
+
+func (m *chatTUI) toggleReasoningAtWrappedLine(lineIdx int) bool {
+	if lineIdx < 0 || lineIdx >= len(m.wrappedLineTranscriptIdx) {
+		return false
+	}
+	return m.toggleReasoningAtTranscriptIdx(m.wrappedLineTranscriptIdx[lineIdx])
+}
+
+func (m *chatTUI) toggleReasoningAtTranscriptIdx(transcriptIdx int) bool {
+	if transcriptIdx < 0 || m.reasoningIndex == nil {
+		return false
+	}
+	id, ok := m.reasoningIndex[transcriptIdx]
+	if !ok {
+		return false
+	}
+	block := m.completedReasoning[id]
+	if block == nil {
+		return false
+	}
+	if block.summaryIdx < 0 || block.summaryIdx >= len(m.transcript) {
+		return false
+	}
+	contentW := transcriptContentWidth(m.width, m.nativeScrollback)
+	oldRows := transcriptEntryLineCount(m.transcript[block.summaryIdx], contentW)
+	if block.expanded {
+		block.expanded = false
+		m.rewriteTranscriptBlock(block.summaryIdx, m.renderTranscriptDisclosureSummary(block, block.summary, false))
+	} else {
+		block.expanded = true
+		m.rewriteTranscriptBlock(block.summaryIdx, m.renderTranscriptDisclosureBody(block, false))
+	}
+	newRows := transcriptEntryLineCount(m.transcript[block.summaryIdx], contentW)
+	if delta := newRows - oldRows; delta != 0 {
+		m.viewportAnchorDelta += delta
+	}
+	m.hoverTranscriptIdx = -1
+	m.hoverKind = transcriptHoverNone
+	m.rebuildReasoningIndex()
+	m.transcriptDirty = true
+	return true
+}
+
+func transcriptEntryLineCount(entry string, width int) int {
+	if width <= 0 {
+		width = 80
+	}
+	return len(strings.Split(wrapTranscript(entry, width), "\n"))
 }
 
 // toolStreamTailLines caps how many trailing output lines a running tool shows;
@@ -2493,6 +3294,64 @@ const shellPreviewLines = 10
 // very large output (e.g. thousands of lines) doesn't hang the TUI or push the
 // input box off-screen.
 const shellExpandMaxLines = 200
+
+func (m *chatTUI) shellOutputIDAtTranscriptIdx(idx int) (string, bool) {
+	if idx < 0 {
+		return "", false
+	}
+	for id, entryIdx := range m.shellTranscriptIdx {
+		if entryIdx == idx {
+			if full, ok := m.shellOutputs[id]; ok && strings.TrimRight(full, "\n") != "" {
+				if len(strings.Split(strings.TrimRight(full, "\n"), "\n")) <= shellPreviewLines && !m.shellExpanded[id] {
+					return "", false
+				}
+				return id, true
+			}
+		}
+	}
+	return "", false
+}
+
+func (m *chatTUI) renderShellOutputBlock(id string, hover bool) string {
+	full, ok := m.shellOutputs[id]
+	if !ok {
+		return ""
+	}
+	lines := strings.Split(strings.TrimRight(full, "\n"), "\n")
+	if len(lines) == 1 && lines[0] == "" {
+		return ""
+	}
+	total := len(lines)
+	show := total
+	hint := ""
+	if m.shellExpanded[id] {
+		if show > shellExpandMaxLines {
+			show = shellExpandMaxLines
+			hint = fmt.Sprintf("… %d more lines", total-shellExpandMaxLines)
+		}
+	} else if show > shellPreviewLines {
+		show = shellPreviewLines
+		hint = fmt.Sprintf("… %d more lines (Ctrl+B)", total-shellPreviewLines)
+	}
+	innerW := transcriptEntryWidth(m.width) - len([]rune(connector))
+	if innerW < 10 {
+		innerW = 10
+	}
+	rendered := make([]string, 0, show+1)
+	for i := 0; i < show; i++ {
+		rendered = append(rendered, clampPlain(lines[i], innerW))
+	}
+	if hint != "" {
+		rendered = append(rendered, hint)
+	}
+	if hover || m.shellExpanded[id] {
+		return renderConnectorBlock(rendered, transcriptEntryWidth(m.width), activeCLITheme.faint, hover)
+	}
+	for i := range rendered {
+		rendered[i] = dim(rendered[i])
+	}
+	return connectorBlock(rendered)
+}
 
 // streamToolOutput appends a chunk of a running tool's output and re-renders its
 // live block (the last toolStreamTailLines lines) under the tool card, opening
@@ -2855,22 +3714,8 @@ func (m *chatTUI) collapseToolOutput(id, resultOutput string) {
 		}
 		if n > 0 {
 			if full, ok := m.shellOutputs[id]; ok {
-				lines := strings.Split(strings.TrimRight(full, "\n"), "\n")
-				total := len(lines)
-				if total > shellPreviewLines {
-					preview := make([]string, shellPreviewLines+1)
-					for i := range shellPreviewLines {
-						preview[i] = dim(clampPlain(lines[i], m.width-len([]rune(connector))))
-					}
-					preview[shellPreviewLines] = dim(fmt.Sprintf("… %d more lines (Ctrl+B)", total-shellPreviewLines))
-					m.commitLine(connectorBlock(preview))
-				} else {
-					rendered := make([]string, total)
-					for i, ln := range lines {
-						rendered[i] = dim(clampPlain(ln, m.width-len([]rune(connector))))
-					}
-					m.commitLine(connectorBlock(rendered))
-				}
+				m.shellOutputs[id] = full
+				m.commitLine(m.renderShellOutputBlock(id, false))
 				m.shellTranscriptIdx[id] = len(m.transcript) - 1
 			} else {
 				m.commitLine(connectorBlock([]string{dim(fmt.Sprintf("%d lines", n))}))
@@ -2982,44 +3827,32 @@ func (m *chatTUI) toggleShellOutput() {
 	if lastID == "" {
 		return
 	}
-	full, ok := m.shellOutputs[lastID]
-	if !ok {
-		return
-	}
-	lines := strings.Split(strings.TrimRight(full, "\n"), "\n")
-	total := len(lines)
-	innerW := m.width - len([]rune(connector))
-	if innerW < 10 {
-		innerW = 80
-	}
+	_ = m.toggleShellOutputID(lastID)
+}
 
-	if m.shellExpanded[lastID] {
-		// Collapse back to preview.
-		m.shellExpanded[lastID] = false
-		if total > shellPreviewLines {
-			preview := make([]string, shellPreviewLines+1)
-			for i := range shellPreviewLines {
-				preview[i] = dim(clampPlain(lines[i], innerW))
-			}
-			preview[shellPreviewLines] = dim(fmt.Sprintf("… %d more lines (Ctrl+B)", total-shellPreviewLines))
-			m.rewriteTranscriptBlock(lastIdx, connectorBlock(preview))
-		}
-	} else {
-		// Expand: show up to shellExpandMaxLines lines.
-		m.shellExpanded[lastID] = true
-		show := min(total, shellExpandMaxLines)
-		rendered := make([]string, show)
-		for i := range show {
-			rendered[i] = dim(clampPlain(lines[i], innerW))
-		}
-		if total > shellExpandMaxLines {
-			rendered = append(rendered, dim(fmt.Sprintf("… %d more lines", total-shellExpandMaxLines)))
-		}
-		m.rewriteTranscriptBlock(lastIdx, connectorBlock(rendered))
+func (m *chatTUI) toggleShellOutputAtTranscriptIdx(idx int) bool {
+	id, ok := m.shellOutputIDAtTranscriptIdx(idx)
+	if !ok {
+		return false
 	}
+	return m.toggleShellOutputID(id)
+}
+
+func (m *chatTUI) toggleShellOutputID(id string) bool {
+	idx, ok := m.shellTranscriptIdx[id]
+	if !ok || idx < 0 || idx >= len(m.transcript) {
+		return false
+	}
+	if _, ok := m.shellOutputs[id]; !ok {
+		return false
+	}
+	m.shellExpanded[id] = !m.shellExpanded[id]
+	m.rewriteTranscriptBlock(idx, m.renderShellOutputBlock(id, m.hoverTranscriptIdx == idx && m.hoverKind == transcriptHoverShell))
+	m.transcriptDirty = true
 	if m.nativeScrollback {
-		m.commitLine(m.transcript[lastIdx])
+		m.commitLine(m.transcript[idx])
 	}
+	return true
 }
 
 // toolWorkingFrames is the braille spinner cycled once per second on the
@@ -3078,12 +3911,13 @@ func (m *chatTUI) tickToolRunning() {
 // m.transcript, so the change is flagged via transcriptDirty.
 func (m *chatTUI) commitReasoning() {
 	if m.reasoningNative {
-		if strings.TrimSpace(m.reasoning.String()) != "" || !m.thinkStart.IsZero() {
+		raw := m.reasoning.String()
+		if strings.TrimSpace(raw) != "" {
 			secs := int(time.Since(m.thinkStart).Seconds())
 			m.commitSpacer()
-			m.commitLine(dim(fmt.Sprintf("  ▎ "+i18n.M.ChatThoughtForFmt, secs)))
-			if m.showReasoning && strings.TrimSpace(m.reasoning.String()) != "" {
-				m.commitLine(reasoningBlock(m.reasoning.String(), m.width, 0))
+			m.commitLine(dim(formatReasoningSummary(secs)))
+			if m.showReasoning && strings.TrimSpace(raw) != "" {
+				m.commitLine(reasoningBlock(raw, m.width, 0))
 			}
 		}
 		m.reasoning.Reset()
@@ -3095,16 +3929,51 @@ func (m *chatTUI) commitReasoning() {
 	if m.reasoningLineIdx < 0 {
 		return
 	}
+	raw := m.reasoning.String()
+	hasRaw := strings.TrimSpace(raw) != ""
+	if !hasRaw {
+		if m.reasoningTextIdx >= 0 {
+			m.deleteTranscriptLine(m.reasoningTextIdx)
+		}
+		if m.reasoningLineIdx >= 0 {
+			m.deleteTranscriptLine(m.reasoningLineIdx)
+		}
+		m.transcriptDirty = true
+		m.reasoning.Reset()
+		m.reasoningView = m.reasoningView[:0]
+		m.reasoningLineIdx = -1
+		m.reasoningTextIdx = -1
+		return
+	}
 	secs := int(time.Since(m.thinkStart).Seconds())
-	m.setTranscriptBlock(m.reasoningLineIdx, dim(fmt.Sprintf("  ▎ "+i18n.M.ChatThoughtForFmt, secs)), transcriptSource{kind: transcriptSourceFixed})
-	if m.reasoningTextIdx >= 0 {
-		if m.showReasoning && strings.TrimSpace(m.reasoning.String()) != "" {
-			raw := m.reasoning.String()
-			m.setTranscriptBlock(m.reasoningTextIdx, reasoningBlock(raw, m.width, 0), transcriptSource{
+	summary := formatReasoningSummary(secs)
+	m.setTranscriptBlock(m.reasoningLineIdx, renderReasoningSummary(summary, m.width, false), transcriptSource{kind: transcriptSourceFixed})
+	if m.lazyReasoning {
+		expanded := m.showReasoning && hasRaw
+		if expanded {
+			m.setTranscriptBlock(m.reasoningLineIdx, reasoningBlockStyled(raw, m.width, 0, true, false), transcriptSource{
 				kind: transcriptSourceReasoning, raw: raw,
 			})
-		} else {
-			m.removeTranscriptBlock(m.reasoningTextIdx)
+		}
+		if m.reasoningTextIdx >= 0 {
+			removed := m.reasoningTextIdx
+			if removed >= 0 && removed < len(m.transcript) {
+				m.removeTranscriptBlock(removed)
+				m.shiftCompletedReasoning(removed+1, -1)
+			}
+		}
+		m.rememberCompletedReasoning(m.reasoningLineIdx, summary, raw, expanded)
+	} else {
+		if m.reasoningTextIdx >= 0 {
+			if m.showReasoning && hasRaw {
+				m.setTranscriptBlock(m.reasoningTextIdx, reasoningBlock(raw, m.width, 0), transcriptSource{
+					kind: transcriptSourceReasoning, raw: raw,
+				})
+			} else {
+				removed := m.reasoningTextIdx
+				m.removeTranscriptBlock(removed)
+				m.shiftCompletedReasoning(removed+1, -1)
+			}
 		}
 	}
 	m.transcriptDirty = true
@@ -3120,7 +3989,7 @@ func (m *chatTUI) commitReasoning() {
 func (m *chatTUI) commitReasoningBeforeAnswer() {
 	hadReasoning := m.reasoningNative || m.reasoningLineIdx >= 0
 	m.commitReasoning()
-	if hadReasoning {
+	if hadReasoning && !m.lazyReasoning {
 		m.commitSpacer()
 	}
 }
@@ -3139,9 +4008,12 @@ func (m *chatTUI) streamAnswer() {
 	if len(prefix) <= m.answerFlushed {
 		return
 	}
-	source := transcriptSource{kind: transcriptSourceMarkdown, raw: prefix}
+	source := transcriptSource{kind: transcriptSourceAssistant, raw: prefix}
 	m.answerFlushed = len(prefix)
 	if m.answerIdx < 0 {
+		m.answerIdx = len(m.transcript)
+		m.commitTranscriptSource(source)
+	} else if m.answerIdx >= len(m.transcript) {
 		m.answerIdx = len(m.transcript)
 		m.commitTranscriptSource(source)
 	} else {
@@ -3163,8 +4035,10 @@ func (m *chatTUI) commitPending() {
 		return
 	}
 	raw := m.pending.String()
-	source := transcriptSource{kind: transcriptSourceMarkdown, raw: raw}
+	source := transcriptSource{kind: transcriptSourceAssistant, raw: raw}
 	if m.answerIdx < 0 {
+		m.commitTranscriptSource(source)
+	} else if m.answerIdx >= len(m.transcript) {
 		m.commitTranscriptSource(source)
 	} else {
 		block := m.renderTranscriptSource(source, m.width)
@@ -3322,10 +4196,11 @@ func freshApprovalAllowsSession(toolName string) bool {
 var (
 	// Input box: only top + bottom borders, no sides. The concrete colors are
 	// refreshed from the active CLI theme during startup.
-	inputBoxStyle    lipgloss.Style
-	todoPanelStyle   lipgloss.Style
-	statusBlockStyle lipgloss.Style
-	workingStyle     lipgloss.Style
+	inputBoxStyle       lipgloss.Style
+	approvalBannerStyle lipgloss.Style
+	todoPanelStyle      lipgloss.Style
+	statusBlockStyle    lipgloss.Style
+	workingStyle        lipgloss.Style
 )
 
 func (m chatTUI) cancelRequested() bool {
@@ -3374,6 +4249,58 @@ func (m chatTUI) runningWorkingLine(cancelRequested, styled bool) string {
 		}
 	}
 	return working
+}
+
+func (m chatTUI) statusStateText(shellMode, cancelRequested bool) string {
+	switch {
+	case m.rewind != nil:
+		return "⟲ rewind"
+	case m.mcpImport != nil:
+		return "MCP import"
+	case m.resumePick != nil:
+		return i18n.M.StatusResumePicker
+	case m.quickPick != nil:
+		return m.quickPick.title
+	case m.mcp != nil:
+		return "MCP"
+	case m.skillPick != nil:
+		return i18n.M.SkillPickerStatusLabel
+	case m.titlePick != nil:
+		return "Terminal title"
+	case m.chooser != nil:
+		return i18n.M.ChatStatusQuestion
+	case m.pendingApproval != nil && m.pendingApproval.Tool == planApprovalTool:
+		return i18n.M.ChatStatusPlanApproval
+	case m.pendingApproval != nil:
+		return i18n.M.ChatStatusToolApproval
+	case m.clipboardImagePending:
+		return i18n.M.ClipboardImagePastingHint
+	case m.copyNoticeText != "":
+		return green(m.copyNoticeText)
+	case cancelRequested:
+		return i18n.M.CtrlCQuitHint
+	case shellMode:
+		return i18n.M.ShellModeHint
+	case m.ctrl != nil && m.ctrl.AutoApproveTools():
+		return compactStatusText(i18n.M.ChatStatusYoloIdle)
+	default:
+		return compactStatusText(i18n.M.ChatStatusIdle)
+	}
+}
+
+func compactStatusText(s string) string {
+	switch strings.TrimSpace(strings.ToLower(s)) {
+	case "tool approvals skipped":
+		return "tools skipped"
+	}
+	return s
+}
+
+func statusDataGlyph(glyph string, color cliColor) string {
+	return lipgloss.NewStyle().
+		Foreground(lipgloss.Color(color.hex)).
+		Bold(true).
+		Render(glyph)
 }
 
 func (m chatTUI) View() tea.View {
@@ -3429,6 +4356,10 @@ func (m chatTUI) View() tea.View {
 	// transcriptHeight so the viewport above fills exactly the rest of the screen.
 	var parts []string
 	rowsAboveBox := 0 // terminal rows occupied by panels/working line before the composer
+	if jump := m.renderJumpToBottomPrompt(boxW); jump != "" {
+		parts = append(parts, jump)
+		rowsAboveBox++
+	}
 	if todo := m.renderTodoPanel(); todo != "" {
 		parts = append(parts, todo)
 		rowsAboveBox += strings.Count(todo, "\n") + 1
@@ -3482,7 +4413,7 @@ func (m chatTUI) View() tea.View {
 	// terminals break only between those semantic groups. Padding to full width
 	// prevents stale cells.
 	if working != "" {
-		parts = append(parts, workingStyle.Width(boxW).MaxWidth(boxW).Render(wrapStatusLine(working, boxW)))
+		parts = append(parts, workingStyle.Width(boxW).MaxWidth(boxW).Render(compactStatusLine(working, boxW)))
 		rowsAboveBox++
 	}
 	if footer := m.renderMainManagerFooter(); footer != "" {
@@ -3519,7 +4450,12 @@ func (m chatTUI) View() tea.View {
 	if card := m.renderMainManager(); card != "" {
 		mainArea = m.renderTranscriptWithMainManager(card)
 	}
-	v := tea.NewView(mainArea + "\n" + strings.Join(parts, "\n"))
+	content := strings.Join(parts, "\n")
+	if transcriptRows := m.transcriptHeight(); transcriptRows > 0 {
+		content = padTerminalRows(mainArea, transcriptRows) + "\n" + content
+	}
+	content = padTerminalRows(content, m.height)
+	v := tea.NewView(content)
 	v.AltScreen = true
 	v.WindowTitle = m.windowTitle
 	if m.mouseCaptureOff {
@@ -3528,7 +4464,7 @@ func (m chatTUI) View() tea.View {
 		// scrollbar, wheel-scroll, and drag-select while it's off.
 		v.MouseMode = tea.MouseModeNone
 	} else {
-		v.MouseMode = tea.MouseModeCellMotion // wheel targets the hovered scroll region; text selection is handled in-app
+		v.MouseMode = tea.MouseModeAllMotion // hover, selection, scrollbars, and transcript disclosures are handled in-app
 	}
 	// Anchor the real terminal cursor at the textarea's insertion point only when
 	// the composer is visible. input.Cursor() is relative to the textarea; offset
@@ -3597,11 +4533,17 @@ func compactionCardLines(c event.Compaction) []string {
 // left until the next compaction, and colours by proximity to that point rather
 // than the raw window. Falls back to a plain percentage when compaction is disabled.
 func (m chatTUI) contextTag() string {
+	if m.ctrl == nil {
+		return ""
+	}
 	used, window := m.ctrl.ContextSnapshot()
 	if used == 0 || window == 0 {
 		return ""
 	}
 	pct := used * 100 / window
+	if pct == 0 {
+		return ""
+	}
 	ratio := m.ctrl.CompactRatio()
 	if ratio <= 0 || ratio >= 1 {
 		// Compaction disabled: just the raw gauge, coloured on window fill.
@@ -3642,6 +4584,9 @@ func cacheRateLabel(format string, hit, denom int) string {
 // Σhit/Σ(hit+miss) (the steadier, cost-oriented number that matches the legacy
 // dashboard). "" before any cache tokens have been reported.
 func (m chatTUI) cacheStatus() (body string, rate float64, ok bool) {
+	if m.ctrl == nil {
+		return "", 0, false
+	}
 	now := ""
 	nowRate := 0.0
 	if u := m.ctrl.LastUsage(); u != nil {
@@ -3682,11 +4627,143 @@ func (m chatTUI) cacheTag() string {
 // start/finish emit Notices that arrive on eventCh and re-render the frame, so
 // the count stays current without a dedicated tick.
 func (m chatTUI) jobsTag() string {
+	if m.ctrl == nil {
+		return ""
+	}
 	n := len(m.ctrl.Jobs())
 	if n == 0 {
 		return ""
 	}
 	return dim(fmt.Sprintf("⚙ %d", n))
+}
+
+func (m chatTUI) modelComboTag() string {
+	exec := compactModelName(firstStatusNonEmpty(m.modelRef, m.label))
+	if strings.TrimSpace(exec) == "" {
+		return ""
+	}
+	parts := []string{exec}
+	if planner := m.plannerTag(exec); planner != "" {
+		parts = append(parts, planner)
+	}
+	label := strings.Join(parts, " · ")
+	if !colorOn() {
+		return label
+	}
+	return themeStyle(activeCLITheme.warn).Bold(true).Render(label)
+}
+
+func (m chatTUI) plannerTag(execLabel string) string {
+	planner := compactModelName(m.plannerModelRef)
+	if planner == "" || strings.EqualFold(planner, execLabel) {
+		return ""
+	}
+	if strings.HasPrefix(execLabel, "DS v4 ") && strings.HasPrefix(planner, "DS v4 ") {
+		return "plan " + strings.TrimPrefix(planner, "DS v4 ")
+	}
+	return "plan " + planner
+}
+
+func compactModelName(ref string) string {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return ""
+	}
+	if _, model, ok := strings.Cut(ref, "/"); ok {
+		ref = model
+	}
+	lower := strings.ToLower(ref)
+	switch lower {
+	case "deepseek-v4-flash":
+		return "DS v4 flash"
+	case "deepseek-v4-pro":
+		return "DS v4 pro"
+	}
+	if strings.HasPrefix(lower, "deepseek-") {
+		name := strings.TrimPrefix(ref, "deepseek-")
+		name = strings.ReplaceAll(name, "-", " ")
+		return "DS " + name
+	}
+	return viewCompactText(strings.ReplaceAll(ref, "-", " "), 22)
+}
+
+func firstStatusNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func plannerModelRefFromConfig(cfg *config.Config) string {
+	if cfg == nil {
+		return ""
+	}
+	ref := strings.TrimSpace(cfg.Agent.PlannerModel)
+	if ref == "" {
+		return ""
+	}
+	if entry, ok := cfg.ResolveModel(ref); ok {
+		return entry.Name + "/" + entry.Model
+	}
+	return ref
+}
+
+func (m chatTUI) workspaceTag() string {
+	label := m.workspaceLabel()
+	if label == "" {
+		return ""
+	}
+	return dim(label)
+}
+
+func (m chatTUI) workspaceLabel() string {
+	cwd, err := os.Getwd()
+	if err != nil || strings.TrimSpace(cwd) == "" {
+		return ""
+	}
+	return compactWorkspacePath(cwd)
+}
+
+func (m chatTUI) balanceTag() string {
+	if text := strings.TrimSpace(m.balance); text != "" {
+		return dim(text)
+	}
+	return ""
+}
+
+func compactWorkspacePath(path string) string {
+	path = filepath.Clean(path)
+	if home, err := os.UserHomeDir(); err == nil && strings.HasPrefix(path, home) {
+		path = "~" + strings.TrimPrefix(path, home)
+	}
+	parts := strings.Split(path, string(filepath.Separator))
+	if len(parts) >= 3 && parts[0] == "~" && parts[1] == "Lab" {
+		project := parts[2]
+		if stripped, ok := stripDatedLabPrefix(project); ok {
+			project = stripped
+		}
+		displayParts := append([]string{"~", "Lab", project}, parts[3:]...)
+		return strings.Join(displayParts, "/")
+	}
+	return path
+}
+
+func stripDatedLabPrefix(name string) (string, bool) {
+	const prefixLen = len("2006-01-02-")
+	if len(name) <= prefixLen {
+		return name, false
+	}
+	if name[4] != '-' || name[7] != '-' || name[10] != '-' {
+		return name, false
+	}
+	for _, i := range []int{0, 1, 2, 3, 5, 6, 8, 9} {
+		if name[i] < '0' || name[i] > '9' {
+			return name, false
+		}
+	}
+	return name[prefixLen:], true
 }
 
 func (m chatTUI) effortTag() string {
@@ -3697,7 +4774,11 @@ func (m chatTUI) effortTag() string {
 	if m.effortLevel != "auto" {
 		value = themeStyle(activeCLITheme.info).Bold(true).Render(m.effortLevel)
 	}
-	return footerMetric(i18n.M.ChatStatusEffortLabel, value)
+	label := i18n.M.ChatStatusEffortLabel
+	if label == "EFFORT" {
+		label = "effort"
+	}
+	return footerMetric(label, value)
 }
 
 // mouseTag is a persistent status-line marker while mouseCaptureOff is on, so
@@ -4010,11 +5091,8 @@ func truncateSubject(s string, width int) string {
 	return ansi.Truncate(s, max, "…")
 }
 
-// wrapStatusLine wraps a status line to `width` visible columns, ANSI-aware,
-// so text that exceeds one row flows onto additional lines instead of being
-// truncated with an ellipsis. Wrapping is permissive — spaces are preferred
-// break points — and works within the alt-screen view so there is no scrollback
-// artifact.
+// wrapStatusLine wraps a status line to width visible columns while preserving
+// ANSI styling. The footer layout uses this for narrow-terminal fallback rows.
 func wrapStatusLine(s string, width int) string {
 	if width <= 0 || s == "" {
 		return s
@@ -4022,12 +5100,74 @@ func wrapStatusLine(s string, width int) string {
 	return ansi.Hardwrap(s, width, true)
 }
 
+// compactStatusLine flattens a status line to a single terminal row. Status bars
+// must stay spatially stable; overlong details are less important than keeping
+// the composer and bottom metrics anchored.
+func compactStatusLine(s string, width int) string {
+	if width <= 0 || s == "" {
+		return s
+	}
+	s = strings.NewReplacer("\r", " ", "\n", " ", "\t", " ").Replace(s)
+	if visibleWidth(s) <= width {
+		return s
+	}
+	return ansi.Truncate(s, width, "…")
+}
+
+func statusDataLine(width int, resourceData []string, workspace, git string) string {
+	line := joinStatusDataParts(statusDataParts(resourceData, workspace, git))
+	if width <= 0 || visibleWidth(line) <= width {
+		return line
+	}
+
+	// Git identity is useful, but less important than live cache/context/cost and
+	// the current workspace. Drop it before truncating a still-readable path.
+	if git != "" {
+		line = joinStatusDataParts(statusDataParts(resourceData, workspace, ""))
+		if visibleWidth(line) <= width {
+			return line
+		}
+	}
+
+	if workspace != "" {
+		prefixParts := append([]string{}, resourceData...)
+		prefix := "  "
+		if len(prefixParts) > 0 {
+			prefix += strings.Join(prefixParts, " · ") + " · "
+		}
+		available := width - visibleWidth(prefix)
+		if available > 1 {
+			line = joinStatusDataParts(statusDataParts(resourceData, compactMiddle(workspace, available), ""))
+			if visibleWidth(line) <= width {
+				return line
+			}
+		}
+	}
+
+	return compactStatusLine(line, width)
+}
+
+func statusDataParts(resourceData []string, workspace, git string) []string {
+	parts := append([]string{}, resourceData...)
+	if strings.TrimSpace(workspace) != "" {
+		parts = append(parts, dim(workspace))
+	}
+	if strings.TrimSpace(git) != "" {
+		parts = append(parts, git)
+	}
+	return parts
+}
+
+func joinStatusDataParts(parts []string) string {
+	if len(parts) == 0 {
+		return "  "
+	}
+	return "  " + strings.Join(parts, " · ")
+}
+
 // computeStatusLineCount returns the number of terminal rows the status block
-// (working line + first status line + optional data band) will occupy after
-// wrapping to `width`. It mirrors the construction in View() so the reserved
-// height matches the rendered height exactly — the load-bearing invariant for
-// bottomRows().
-// Use the same width (m.width) that View() passes to wrapStatusLine.
+// (optional working line + first status line + data line) will occupy. Status
+// rows are compacted, never wrapped, so this is intentionally fixed-height.
 func (m chatTUI) computeStatusLineCount(width int) int {
 	if m.ctrl == nil {
 		return 3 // two information rows plus their divider
@@ -4045,13 +5185,10 @@ func (m chatTUI) computeStatusLineCount(width int) int {
 	primaryStatus := m.primaryStatusLine(modeTag, shellMode, cancelRequested)
 	statusBlock := m.renderStatusBlock(primaryStatus, width)
 
-	// Replicate the working (spinner) line from View(), shown only while a turn runs.
-	working := m.runningWorkingLine(cancelRequested, false)
-
 	// Count wrapped rows for every piece that View() renders as wrapped.
 	var lines int
 	if m.state == tuiRunning {
-		// working (spinner) line — wraps independently of the status block below.
+		working := m.runningWorkingLine(cancelRequested, false)
 		lines += strings.Count(wrapStatusLine(working, width), "\n") + 1
 	}
 	lines += strings.Count(statusBlock, "\n") + 1
@@ -4190,6 +5327,12 @@ func (m *chatTUI) toggleYoloMode() {
 }
 
 func (m chatTUI) modeTagText() string {
+	if m.ctrl == nil {
+		if m.planMode {
+			return "Plan"
+		}
+		return "Auto"
+	}
 	goalMode := strings.TrimSpace(m.ctrl.Goal()) != "" && m.ctrl.GoalStatus() == control.GoalStatusRunning
 	toolApprovalMode := m.ctrl.ToolApprovalMode()
 	if m.desktopShortcutLayout() {
@@ -4275,6 +5418,7 @@ func (m *chatTUI) toggleMouseCapture() {
 	m.mouseCaptureOff = !m.mouseCaptureOff
 	m.sel = selection{}
 	m.composerSel = composerSelection{}
+	m.selecting = false
 	m.scrollbarDrag = false
 	m.autoScroll = 0
 	if m.mouseCaptureOff {
@@ -4353,6 +5497,7 @@ func (m *chatTUI) unsendPending() {
 	m.input.SetValue(m.pendingRestore)
 	m.growInputToFit()
 	m.truncateTranscriptBlocks(m.bubbleStartIdx)
+	m.truncateCompletedReasoning(len(m.transcript))
 	m.transcriptDirty = true
 	m.bubblePending = false
 	m.pendingRestore = ""
@@ -4406,6 +5551,12 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 	}
 	switch e.Kind {
 	case event.Reasoning:
+		if strings.TrimSpace(e.Text) == "" && m.reasoningLineIdx < 0 && !m.reasoningNative {
+			break
+		}
+		if e.Text != "" && m.reasoningLineIdx < 0 {
+			m.jumpToBottomTurnNoted = false
+		}
 		if m.nativeScrollback {
 			if !m.reasoningNative {
 				m.thinkStart = time.Now()
@@ -4542,6 +5693,16 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 		}
 
 	case event.Notice:
+		if isImageUnderstandingNotice(e) {
+			m.finalizeStreamed()
+			summary := imageUnderstandingSummaryFromNotice(e.Text)
+			idx := len(m.transcript)
+			m.commitLine(renderImageUnderstandingSummary(summary, m.width, false))
+			if detail := strings.TrimSpace(e.Detail); detail != "" {
+				m.rememberImageUnderstanding(idx, summary, detail)
+			}
+			break
+		}
 		glyph := "·"
 		if e.Level == event.LevelWarn {
 			glyph = "!"
@@ -4658,7 +5819,9 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 		m.state = tuiIdle
 		m.turnPhase = ""
 		m.noteWatchdogIdle()
-		m.queueEditCursor, m.queueEditDraft = -1, ""
+		m.jumpToBottomTurnNoted = false
+		m.queueEditCursor = -1
+		m.queueEditDraft = ""
 		m.clearSubmittedPastes()
 		if e.Outcome == event.TurnOutcomeRecoveryPaused {
 			m.commitLine(wrapForViewport("⏸ "+i18n.M.RecoveryPaused, m.width, activeCLITheme.info))
@@ -4720,6 +5883,8 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 		return func() tea.Msg { return compactDoneMsg{err: m.ctrl.Compact(context.Background(), focus)} }
 	case "/context":
 		return m.showContextReport(input)
+	case "/recap":
+		m.runRecapCommand(input)
 	case "/new":
 		m.echoLocalCommand(input)
 		if err := m.ctrl.NewSession(); err != nil {
@@ -5142,8 +6307,11 @@ func (m *chatTUI) runExportCommand(input string) {
 	for _, msg := range msgs {
 		switch msg.Role {
 		case provider.RoleUser:
-			// Skip internal steer messages.
+			// Skip internal steer and retry/nudge messages.
 			if _, isSteer := agent.SteerText(msg.Content); isSteer {
+				continue
+			}
+			if control.IsSyntheticUserMessage(msg.Content) {
 				continue
 			}
 			content := exportUserContent(msg.Content)
@@ -5158,7 +6326,7 @@ func (m *chatTUI) runExportCommand(input string) {
 			exportedMessages++
 			lastRole = provider.RoleUser
 		case provider.RoleAssistant:
-			content := strings.TrimSpace(msg.Content)
+			content := visibleAssistantHistoryBody(msg.Content)
 			if content == "" {
 				continue
 			}
@@ -5195,7 +6363,9 @@ func (m *chatTUI) runExportCommand(input string) {
 }
 
 func exportUserContent(content string) string {
+	content = agent.HandoffTask(content)
 	content = control.StripComposePrefixes(content)
+	content = stripImageUnderstandingContextPrefix(content)
 	content = control.StripReferencedContextPrefix(content)
 	return strings.TrimSpace(content)
 }
@@ -5205,7 +6375,7 @@ func (m *chatTUI) echoLocalCommand(input string) {
 	if input == "" {
 		return
 	}
-	m.commitLine(dim("  › " + input))
+	m.commitLine(renderUserBubble(input, m.width, m.planMode))
 }
 
 // commandNames renders the custom command list for /help, "" when there are none.
@@ -5333,6 +6503,26 @@ func (m *chatTUI) runMCPSubcommand(input string) {
 	}
 }
 
+func (m *chatTUI) runRecapCommand(input string) {
+	m.echoLocalCommand(input)
+	if m.ctrl == nil {
+		m.notice("recap: controller not ready")
+		return
+	}
+	focus := strings.TrimSpace(strings.TrimPrefix(input, "/recap"))
+	recap := buildConversationRecap(m.ctrl.History(), focus, m.width)
+	if recap == "" {
+		m.notice("recap: no visible conversation yet")
+		return
+	}
+	m.commitSpacer()
+	if block := renderAssistantBlock(recap); block != "" {
+		m.commitLine(block)
+	}
+	m.transcriptDirty = true
+	m.forceGotoBottom = true
+}
+
 // showMCPStatus queues the connected MCP servers, their counts, and the prompt
 // commands / resource refs they expose — the discovery surface for /mcp.
 func (m *chatTUI) showMCPStatus() {
@@ -5421,46 +6611,52 @@ func replaySectionsForWithAssistantRenderer(
 	renderAssistant func(string, int) string,
 ) []string {
 	var out []string
-	for _, m := range history {
-		if m.LocalOnly {
-			if m.FinalReadinessRecovery != nil && m.FinalReadinessRecovery.Pending {
+	for _, msg := range history {
+		if msg.LocalOnly {
+			if msg.FinalReadinessRecovery != nil && msg.FinalReadinessRecovery.Pending {
 				out = append(out, fmt.Sprintf("  · %s\n\n", i18n.M.FinalReadinessRecovery))
 				continue
 			}
-			if reasoning := strings.TrimSpace(m.ReasoningContent); reasoning != "" {
+			if reasoning := strings.TrimSpace(msg.ReasoningContent); reasoning != "" {
 				out = append(out, dim("  ▎ "+i18n.M.ChatThinking)+"\n"+reasoningBlock(reasoning, width, 0)+"\n\n")
 			}
-			if body := strings.TrimSpace(m.Content); body != "" {
+			if body := strings.TrimSpace(msg.Content); body != "" {
 				out = append(out, renderAssistant(body, width)+"\n\n")
 			}
-			for _, call := range m.ToolCalls {
+			for _, call := range msg.ToolCalls {
 				out = append(out, toolCard(call.Name, "", width)+"\n\n")
 			}
-			if m.InterruptedTurn != nil {
+			if msg.InterruptedTurn != nil {
 				out = append(out, fmt.Sprintf("  · %s\n\n", interruptedTurnDisplayNotice()))
 			}
 			continue
 		}
-		switch m.Role {
+		switch msg.Role {
 		case provider.RoleUser:
 			// Steer messages are surfaced as a notice line, not a user bubble.
-			if text, handled := agent.ReplaySteerText(m.Content); handled {
+			if text, handled := agent.ReplaySteerText(msg.Content); handled {
 				if text != "" {
 					out = append(out, fmt.Sprintf("  ↪ %s\n\n", text))
 				}
 				continue
 			}
-			content := control.StripComposePrefixes(m.Content)
+			if control.IsSyntheticUserMessage(msg.Content) {
+				continue
+			}
+			content, _ := visibleUserHistoryParts(msg.Content)
+			if content == "" {
+				continue
+			}
 			out = append(out, renderUserBubble(content, width, false)+"\n\n")
 		case provider.RoleAssistant:
-			if reasoning := strings.TrimSpace(m.ReasoningContent); reasoning != "" {
+			if reasoning := strings.TrimSpace(msg.ReasoningContent); reasoning != "" {
 				out = append(out, dim("  ▎ "+i18n.M.ChatThinking)+"\n"+reasoningBlock(reasoning, width, 0)+"\n\n")
 			}
-			body := strings.TrimSpace(m.Content)
+			body := visibleAssistantHistoryBody(msg.Content)
 			if body != "" {
 				out = append(out, renderAssistant(body, width)+"\n\n")
 			}
-			for _, call := range m.ToolCalls {
+			for _, call := range msg.ToolCalls {
 				out = append(out, toolCard(call.Name, call.Arguments, width)+"\n\n")
 			}
 		}
@@ -5470,6 +6666,294 @@ func replaySectionsForWithAssistantRenderer(
 
 func interruptedTurnDisplayNotice() string {
 	return i18n.M.InterruptedRecovery
+}
+
+// replayHistory appends resumed history as semantic transcript blocks so each
+// user, reasoning, image-understanding, and assistant block can reflow and
+// retain its own disclosure state independently.
+func (m *chatTUI) replayHistory(history []provider.Message, width int) {
+	type replayToolCall struct {
+		id      string
+		name    string
+		args    string
+		visible bool
+	}
+	pendingTools := []replayToolCall{}
+	enqueueTool := func(tc provider.ToolCall) replayToolCall {
+		name := strings.TrimSpace(tc.Name)
+		call := replayToolCall{
+			id:      tc.ID,
+			name:    name,
+			args:    tc.Arguments,
+			visible: visibleReplayToolCall(name),
+		}
+		pendingTools = append(pendingTools, call)
+		return call
+	}
+	dequeueTool := func(id, fallbackName string) replayToolCall {
+		takeAt := func(i int) replayToolCall {
+			call := pendingTools[i]
+			pendingTools = append(pendingTools[:i], pendingTools[i+1:]...)
+			if call.name == "" {
+				call.name = fallbackName
+			}
+			return call
+		}
+		if id != "" {
+			for i := range pendingTools {
+				if pendingTools[i].id == id {
+					return takeAt(i)
+				}
+			}
+		}
+		if len(pendingTools) > 0 {
+			return takeAt(0)
+		}
+		return replayToolCall{id: id, name: fallbackName, visible: visibleReplayToolCall(fallbackName)}
+	}
+
+	for _, msg := range history {
+		switch msg.Role {
+		case provider.RoleUser:
+			if steerText, isSteer := agent.SteerText(msg.Content); isSteer {
+				m.commitSpacer()
+				m.commitLine(fmt.Sprintf("  ↪ %s", steerText))
+				continue
+			}
+			if control.IsSyntheticUserMessage(msg.Content) {
+				continue
+			}
+			content, imageUnderstanding := visibleUserHistoryParts(msg.Content)
+			if content == "" && imageUnderstanding == "" {
+				continue
+			}
+			m.commitSpacer()
+			if content != "" {
+				m.commitTranscriptSource(transcriptSource{kind: transcriptSourceUser, raw: content})
+			}
+			if imageUnderstanding != "" {
+				summary := imageUnderstandingSummaryFromRaw(imageUnderstanding)
+				idx := len(m.transcript)
+				m.commitLine(renderImageUnderstandingSummary(summary, width, false))
+				m.rememberImageUnderstanding(idx, summary, imageUnderstanding)
+			}
+		case provider.RoleAssistant:
+			body := visibleAssistantHistoryBody(msg.Content)
+			hasVisibleTool := false
+			for _, tc := range msg.ToolCalls {
+				if visibleReplayToolCall(tc.Name) {
+					hasVisibleTool = true
+					break
+				}
+			}
+			reasoning := visibleAssistantHistoryReasoning(msg.ReasoningContent, body != "" || hasVisibleTool)
+			if reasoning == "" && body == "" && !hasVisibleTool {
+				for _, tc := range msg.ToolCalls {
+					enqueueTool(tc)
+				}
+				continue
+			}
+			m.commitSpacer()
+			if reasoning != "" {
+				summary := formatReasoningSummary(0)
+				idx := len(m.transcript)
+				if m.lazyReasoning {
+					m.commitLine(renderReasoningSummary(summary, width, false))
+					m.rememberCompletedReasoning(idx, summary, reasoning, false)
+				} else {
+					m.commitLine(dim(summary))
+					if m.showReasoning {
+						m.commitTranscriptSource(transcriptSource{kind: transcriptSourceReasoning, raw: reasoning})
+					}
+				}
+			}
+			if body != "" {
+				m.commitTranscriptSource(transcriptSource{kind: transcriptSourceAssistant, raw: body})
+			}
+			for _, tc := range msg.ToolCalls {
+				call := enqueueTool(tc)
+				if !call.visible {
+					continue
+				}
+				m.commitTranscriptSource(transcriptSource{kind: transcriptSourceToolCard, raw: call.name, aux: call.args})
+			}
+		case provider.RoleTool:
+			call := dequeueTool(msg.ToolCallID, msg.Name)
+			if !call.visible {
+				continue
+			}
+			if block := replayToolResultBlock(msg.Content, width); block != "" {
+				m.commitLine(block)
+			}
+		}
+	}
+}
+
+func visibleReplayToolCall(name string) bool {
+	switch strings.TrimSpace(name) {
+	case "", "todo_write", planApprovalTool:
+		return false
+	default:
+		return true
+	}
+}
+
+func replayToolResultBlock(content string, width int) string {
+	content = strings.TrimRight(content, "\n")
+	if strings.TrimSpace(content) == "" {
+		return ""
+	}
+	lines := strings.Split(content, "\n")
+	innerW := width - len([]rune(connector))
+	if innerW < 10 {
+		innerW = 10
+	}
+	first := strings.TrimSpace(lines[0])
+	lower := strings.ToLower(first)
+	if strings.HasPrefix(lower, "error:") || strings.Contains(lower, "blocked") || strings.Contains(lower, "permission") {
+		return connectorBlock([]string{red(clampPlain(first, innerW))})
+	}
+	return connectorBlock([]string{dim(fmt.Sprintf("%d lines", len(lines)))})
+}
+
+func visibleUserHistoryBody(content string) string {
+	body, _ := visibleUserHistoryParts(content)
+	return body
+}
+
+func visibleUserHistoryParts(content string) (string, string) {
+	body := strings.TrimSpace(agent.HandoffTask(content))
+	var imageUnderstandingBlocks []string
+	for {
+		before := body
+		body = strings.TrimSpace(control.StripComposePrefixes(body))
+		var imageUnderstanding string
+		body, imageUnderstanding = stripImageUnderstandingContextPrefixWithRaw(body)
+		if imageUnderstanding != "" {
+			imageUnderstandingBlocks = append(imageUnderstandingBlocks, imageUnderstanding)
+		}
+		body = strings.TrimSpace(control.StripReferencedContextPrefix(body))
+		if body == before {
+			break
+		}
+	}
+	return body, strings.Join(imageUnderstandingBlocks, "\n\n")
+}
+
+func stripImageUnderstandingContextPrefix(content string) string {
+	body, _ := stripImageUnderstandingContextPrefixWithRaw(content)
+	return body
+}
+
+func stripImageUnderstandingContextPrefixWithRaw(content string) (string, string) {
+	const preamble = "Image understanding context:"
+	s := strings.TrimSpace(content)
+	if !strings.HasPrefix(s, preamble) {
+		return content, ""
+	}
+	s = strings.TrimSpace(s[len(preamble):])
+	const closeTag = "</image-understanding>"
+	var blocks []string
+	for {
+		s = strings.TrimSpace(s)
+		if !strings.HasPrefix(s, "<image-understanding") {
+			break
+		}
+		closeIdx := strings.Index(s, closeTag)
+		if closeIdx < 0 {
+			return "", strings.Join(blocks, "\n\n")
+		}
+		blockEnd := closeIdx + len(closeTag)
+		blocks = append(blocks, strings.TrimSpace(s[:blockEnd]))
+		s = strings.TrimSpace(s[closeIdx+len(closeTag):])
+	}
+	return s, strings.Join(blocks, "\n\n")
+}
+
+func imageUnderstandingSummaryFromRaw(raw string) string {
+	blocks := splitImageUnderstandingBlocks(raw)
+	count := len(blocks)
+	if count <= 0 {
+		count = 1
+	}
+	unit := "image"
+	if count != 1 {
+		unit = "images"
+	}
+	return fmt.Sprintf("◩ Image understood · %d %s · OCR + UI state", count, unit)
+}
+
+func visibleAssistantHistoryBody(content string) string {
+	body := strings.TrimSpace(control.StripComposePrefixes(content))
+	if body == "" {
+		return ""
+	}
+	if strings.TrimSpace(agent.HandoffTask(body)) != body {
+		return ""
+	}
+	if strings.HasPrefix(body, "# Reasonix executor handoff") {
+		return ""
+	}
+	if strings.HasPrefix(body, "You are the executor now.") {
+		return ""
+	}
+	if strings.Contains(body, "\nExecutor instructions:\n") {
+		return ""
+	}
+	return body
+}
+
+func visibleAssistantHistoryReasoning(reasoning string, hasVisibleContinuation bool) string {
+	reasoning = strings.TrimSpace(reasoning)
+	if reasoning == "" || !hasVisibleContinuation {
+		return ""
+	}
+	return reasoning
+}
+
+func buildConversationRecap(history []provider.Message, focus string, width int) string {
+	budget := viewBudget(width, 14)
+	if budget < 56 {
+		budget = 56
+	}
+	var entries []string
+	if focus != "" {
+		entries = append(entries, "焦点: "+viewCompactText(recapOneLine(focus), budget))
+	}
+	for _, msg := range history {
+		switch msg.Role {
+		case provider.RoleUser:
+			if _, isSteer := agent.SteerText(msg.Content); isSteer {
+				continue
+			}
+			if control.IsSyntheticUserMessage(msg.Content) {
+				continue
+			}
+			content := visibleUserHistoryBody(msg.Content)
+			if content == "" {
+				continue
+			}
+			entries = append(entries, "用户: "+viewCompactText(recapOneLine(displayLineForImageRefs(content)), budget))
+		case provider.RoleAssistant:
+			content := visibleAssistantHistoryBody(msg.Content)
+			if content == "" {
+				continue
+			}
+			entries = append(entries, "助手: "+viewCompactText(recapOneLine(content), budget))
+		}
+	}
+	if len(entries) == 0 {
+		return ""
+	}
+	const maxEntries = 7
+	if extra := len(entries) - maxEntries; extra > 0 {
+		entries = append([]string{fmt.Sprintf("… earlier %d entries omitted", extra)}, entries[extra:]...)
+	}
+	return "※ recap:\n" + strings.Join(entries, "\n")
+}
+
+func recapOneLine(text string) string {
+	return strings.Join(strings.Fields(text), " ")
 }
 
 // renderTUIBanner is the title + tip + optional missing-key warning printed once
@@ -5504,7 +6988,7 @@ func renderUserBubble(line string, width int, planMode bool) string {
 	if !colorOn() {
 		return "│ " + prefix + line
 	}
-	return "  " + accent(prefix+line)
+	return renderTranscriptRows([]string{prefix + line}, transcriptEntryWidth(width), activeCLITheme.accent, false)
 }
 
 var cliImageRefRe = regexp.MustCompile(`@\.reasonix/attachments/clipboard-\d{8}-\d{6}\.\d+(?:-(?:\d{6}|[a-f0-9]{8}))?\.(?:png|jpg|jpeg|gif|webp)`)

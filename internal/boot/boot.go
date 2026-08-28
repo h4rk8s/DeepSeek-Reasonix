@@ -1773,15 +1773,15 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 		ie, ok := cfg.ResolveModel(im)
 		if !ok {
 			slog.Warn("image understanding model is not a configured provider", "model", im)
-			sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: fmt.Sprintf("image_understanding_model %q not found - image understanding disabled", im)})
+			sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: fmt.Sprintf("image_understanding_model %q not found — image understanding disabled", im)})
 		} else if !config.EffectiveVision(ie) {
 			slog.Warn("image understanding model is not marked vision-capable", "model", im)
-			sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: fmt.Sprintf("image_understanding_model %q is not marked vision-capable - image understanding disabled", im)})
+			sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: fmt.Sprintf("image_understanding_model %q is not marked vision-capable — image understanding disabled", im)})
 		} else {
 			visionProv, err := NewProviderWithProxy(ie, proxySpec)
 			if err != nil {
 				slog.Warn("image understanding provider construction failed", "model", im, "err", err)
-				sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: fmt.Sprintf("image understanding construction failed: %v - disabled", err)})
+				sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: fmt.Sprintf("image understanding construction failed: %v — disabled", err)})
 			} else {
 				imageUnderstanding = control.NewBillableProviderImageUnderstanding(visionProv, ie.Price, sink)
 			}
