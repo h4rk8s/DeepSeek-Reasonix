@@ -1217,7 +1217,9 @@ func chatREPL(args []string, version string) int {
 		m.statuslineCmd = cfg.Statusline.Command // custom status-line command, "" = built-in row
 		m.showReasoning = cfg.UI.ShowReasoning   // /verbose persistence: start with config default
 		m.showTurnUsage = cfg.UI.ShowTurnUsage   // retain usage accounting even when transcript receipts are hidden
+		m.terminalTitleItems = cfg.TerminalTitleItems()
 		m.cfg = cfg
+		m.syncWindowTitle()
 	}
 
 	// /model support: a pure builder the TUI calls to rebuild on a different

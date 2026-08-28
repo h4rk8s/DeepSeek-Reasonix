@@ -251,6 +251,7 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	orig.Skills.DisabledSkills = []string{"review", "explore"}
 	orig.Skills.DisableImplicitInvocation = true
 	orig.Skills.MaxDepth = 2
+	orig.TerminalTitle.Items = []string{"app-name", "session-title", "git-branch"}
 	orig.Bot.ToolApprovalMode = "auto"
 	orig.Bot.Control = BotControlConfig{Enabled: true, Addr: "127.0.0.1:39001", TokenEnv: "BOT_CONTROL_TOKEN"}
 	orig.Bot.Feishu.OutboundMediaRoots = []string{"/tmp/reasonix-media", "/srv/shots"}
@@ -520,6 +521,9 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	}
 	if got.SkillMaxDepth() != 2 {
 		t.Errorf("skills.max_depth = %d, want 2", got.SkillMaxDepth())
+	}
+	if want := []string{"app-name", "session-title", "git-branch"}; !reflect.DeepEqual(got.TerminalTitleItems(), want) {
+		t.Errorf("terminal title items = %v, want %v", got.TerminalTitleItems(), want)
 	}
 	if len(got.Plugins) != 2 {
 		t.Fatalf("plugins count = %d, want 2", len(got.Plugins))
