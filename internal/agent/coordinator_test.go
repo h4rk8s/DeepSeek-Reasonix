@@ -237,6 +237,10 @@ func TestHandoffTaskRecoversOriginalInput(t *testing.T) {
 	if got := HandoffTask(formatHandoff("修复登录页的 bug", "1. read login.go")); got != "修复登录页的 bug" {
 		t.Errorf("HandoffTask(handoff) = %q, want the original task", got)
 	}
+	prefixed := "<reasoning-language>\nuse Chinese\n</reasoning-language>\n\n" + formatHandoff("你好", "plan")
+	if got := HandoffTask(prefixed); got != "你好" {
+		t.Errorf("HandoffTask(prefixed handoff) = %q, want original task", got)
+	}
 	multi := "fix the bug\n\nsteps:\n- a\n- b"
 	if got := HandoffTask(formatHandoff(multi, "plan")); got != multi {
 		t.Errorf("HandoffTask(multi-line) = %q, want %q", got, multi)
