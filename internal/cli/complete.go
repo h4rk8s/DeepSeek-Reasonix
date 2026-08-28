@@ -322,7 +322,7 @@ func (m *chatTUI) explicitSubcommandItems(val string) ([]compItem, int, bool) {
 		return nil, 0, false
 	}
 	switch cmd {
-	case "/mcp", "/skill", "/skills", "/plugin", "/plugins", "/memory":
+	case "/mcp", "/skill", "/skills", "/plugin", "/plugins", "/memory", "/queue":
 	default:
 		return nil, 0, false
 	}

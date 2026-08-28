@@ -302,6 +302,7 @@ var English = Messages{
 	CmdHelp:             "list commands",
 	CmdWeb:              "continue this session in the Web UI",
 	CmdTodo:             "dismiss the task list",
+	CmdQueue:            "manage queued instructions",
 	CmdQuit:             "exit the session",
 	CmdCopy:             "pick a response to copy to clipboard",
 	CmdExport:           "export session as markdown",
