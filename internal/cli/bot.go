@@ -503,7 +503,10 @@ func loadBotCommandConfig() (*config.Config, error) {
 	if _, err := os.Stat(userPath); err != nil {
 		return cfg, nil
 	}
-	userCfg := config.LoadForEdit(userPath)
+	userCfg, err := config.LoadForEditReadOnlyStrict(userPath)
+	if err != nil {
+		return nil, err
+	}
 	if botConfigIsUserOwned(userCfg.Bot) {
 		cfg.Bot = userCfg.Bot
 	}

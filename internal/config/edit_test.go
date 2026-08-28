@@ -74,6 +74,23 @@ func TestUICursorShapeNormalizes(t *testing.T) {
 	}
 }
 
+func TestUIShowUsageDefaultsVisible(t *testing.T) {
+	c := Default()
+	if !c.UIShowUsage() {
+		t.Fatal("UIShowUsage default = false, want true")
+	}
+	off := false
+	c.UI.ShowUsage = &off
+	if c.UIShowUsage() {
+		t.Fatal("UIShowUsage explicit false = true, want false")
+	}
+	on := true
+	c.UI.ShowUsage = &on
+	if !c.UIShowUsage() {
+		t.Fatal("UIShowUsage explicit true = false, want true")
+	}
+}
+
 func TestUICloseBehaviorNormalizes(t *testing.T) {
 	c := Default()
 	for _, tt := range []struct {

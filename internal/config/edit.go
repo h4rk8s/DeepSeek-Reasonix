@@ -128,7 +128,7 @@ func (c *Config) SetImageUnderstandingLog(mode string) error {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case "off", "none", "false", "0", "disabled":
 		c.UI.ImageUnderstandingLog = "off"
-	case "", "summary", "status":
+	case "", "summary", "status", "on", "true", "1", "enabled":
 		c.UI.ImageUnderstandingLog = "summary"
 	case "detail", "details", "verbose", "full":
 		c.UI.ImageUnderstandingLog = "detail"
@@ -514,6 +514,13 @@ func (c *Config) SetUICloseBehavior(mode string) error {
 // /verbose.
 func (c *Config) SetShowReasoning(on bool) error {
 	c.UI.ShowReasoning = on
+	return nil
+}
+
+// SetLazyReasoning keeps completed thinking collapsed but available for
+// click-to-expand. It only affects presentation.
+func (c *Config) SetLazyReasoning(on bool) error {
+	c.UI.LazyReasoning = on
 	return nil
 }
 

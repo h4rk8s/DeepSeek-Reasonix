@@ -40,7 +40,10 @@ func (m *chatTUI) runReasoningLanguageCommand(input string) {
 	mode, err = func() (string, error) {
 		unlock := config.LockUserConfigEdits()
 		defer unlock()
-		edit := config.LoadForEdit(path)
+		edit, err := config.LoadForEditReadOnlyStrict(path)
+		if err != nil {
+			return "", err
+		}
 		if err := edit.SetReasoningLanguage(mode); err != nil {
 			return "", err
 		}
