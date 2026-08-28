@@ -57,3 +57,15 @@ func TestBuiltinSlashCompletionAndHelpComeFromRegistry(t *testing.T) {
 		}
 	}
 }
+
+func TestQueueSlashCommandIsDiscoverableAndDescends(t *testing.T) {
+	for _, item := range builtinSlashItems() {
+		if item.label == "/queue" {
+			if item.insert != "/queue " || !item.descend {
+				t.Fatalf("/queue completion = %+v, want argument descent", item)
+			}
+			return
+		}
+	}
+	t.Fatal("/queue missing from slash completion")
+}
