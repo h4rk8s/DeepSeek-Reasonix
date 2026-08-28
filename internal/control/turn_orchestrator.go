@@ -233,6 +233,7 @@ func (o *turnOrchestrator) runOrchestratedTurn(ctx context.Context, turn orchest
 	if blocked {
 		return nil
 	}
+	input = c.withImageUnderstanding(ctx, input, turn.raw, turn.input)
 	startMessages := c.messageCount()
 	var marker agent.InFlightTurnMeta
 	defer func() { c.finishInFlightTurn(startMessages, marker) }()

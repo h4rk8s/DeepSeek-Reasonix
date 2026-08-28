@@ -2143,6 +2143,9 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.input, ic = m.input.Update(msg)
 	cmds = append(cmds, ic)
 	m.growInputToFit()
+	if beforeInput != m.input.Value() && m.normalizeTypedImagePath() {
+		return m, finalize(m, cmds)
+	}
 	// Re-filter the autocomplete menu against the freshly-edited input.
 	if _, ok := msg.(tea.KeyPressMsg); ok {
 		m.updateCompletion()
@@ -5488,13 +5491,13 @@ func renderUserBubble(line string, width int, planMode bool) string {
 	return "  " + accent(prefix+line)
 }
 
-var cliImageRefRe = regexp.MustCompile(`(?:^|\s)@\.reasonix/attachments/clipboard-\d{8}-\d{6}\.\d+(?:-(?:\d{6}|[a-f0-9]{8}))?\.(?:png|jpg|jpeg|gif|webp)`)
+var cliImageRefRe = regexp.MustCompile(`@\.reasonix/attachments/clipboard-\d{8}-\d{6}\.\d+(?:-(?:\d{6}|[a-f0-9]{8}))?\.(?:png|jpg|jpeg|gif|webp)`)
 
 func displayLineForImageRefs(line string) string {
 	idx := 0
 	out := cliImageRefRe.ReplaceAllStringFunc(line, func(_ string) string {
 		idx++
-		return " [image" + strconv.Itoa(idx) + "]"
+		return "[image" + strconv.Itoa(idx) + "]"
 	})
 	return strings.TrimSpace(out)
 }

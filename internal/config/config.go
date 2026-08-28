@@ -257,13 +257,14 @@ const (
 // UIConfig controls CLI presentation-only settings. Desktop appearance is kept in
 // DesktopConfig so desktop preferences cannot alter terminal output or prompts.
 type UIConfig struct {
-	Theme          string `toml:"theme"`           // auto|dark|light; empty resolves to auto
-	ThemeStyle     string `toml:"theme_style"`     // graphite|aurora|slate|carbon|nocturne|amber and legacy aliases
-	ShortcutLayout string `toml:"shortcut_layout"` // classic|desktop; accepted for compatibility
-	CloseBehavior  string `toml:"close_behavior"`  // legacy desktop close behavior; prefer desktop.close_behavior
-	ShowReasoning  bool   `toml:"show_reasoning"`  // Ctrl+O / /verbose: show thinking text in CLI; false = collapsed
-	ShowTurnUsage  bool   `toml:"show_turn_usage"` // show per-request token/cost receipts in the CLI/TUI transcript
-	CursorShape    string `toml:"cursor_shape"`    // block|underline|bar; empty defaults to bar
+	Theme                 string `toml:"theme"`                   // auto|dark|light; empty resolves to auto
+	ThemeStyle            string `toml:"theme_style"`             // graphite|aurora|slate|carbon|nocturne|amber and legacy aliases
+	ShortcutLayout        string `toml:"shortcut_layout"`         // classic|desktop; accepted for compatibility
+	CloseBehavior         string `toml:"close_behavior"`          // legacy desktop close behavior; prefer desktop.close_behavior
+	ShowReasoning         bool   `toml:"show_reasoning"`          // Ctrl+O / /verbose: show thinking text in CLI; false = collapsed
+	ShowTurnUsage         bool   `toml:"show_turn_usage"`         // show per-request token/cost receipts in the CLI/TUI transcript
+	CursorShape           string `toml:"cursor_shape"`            // block|underline|bar; empty defaults to bar
+	ImageUnderstandingLog string `toml:"image_understanding_log"` // off|summary|detail; CLI visibility for OCR/vision sidecar results
 }
 
 // CLIConfig controls user-global native CLI behavior. It is separate from
@@ -368,6 +369,19 @@ func (c *Config) UICursorShape() string {
 		return "underline"
 	default:
 		return "bar"
+	}
+}
+
+// UIImageUnderstandingLog normalizes how the CLI surfaces image-understanding
+// sidecar output. The default is a one-line summary.
+func (c *Config) UIImageUnderstandingLog() string {
+	switch strings.ToLower(strings.TrimSpace(c.UI.ImageUnderstandingLog)) {
+	case "off", "none", "false", "0", "disabled":
+		return "off"
+	case "detail", "details", "verbose", "full":
+		return "detail"
+	default:
+		return "summary"
 	}
 }
 
@@ -1461,6 +1475,12 @@ type AgentConfig struct {
 	// Deprecated compatibility field paired with AutoPlan. Old TOML remains
 	// readable, but loading clears it and rendering omits it.
 	AutoPlanClassifier string `toml:"auto_plan_classifier"`
+	// ImageUnderstandingModel optionally names a vision-capable provider/model
+	// used to describe image inputs for a text-only active model.
+	ImageUnderstandingModel string `toml:"image_understanding_model"`
+	// ImageUnderstandingCommand optionally names a local command that receives
+	// image paths and returns compact OCR/vision context.
+	ImageUnderstandingCommand string `toml:"image_understanding_command"`
 	// Soft/snip/force are retired compatibility keys; only CompactRatio is active.
 	SoftCompactRatio    float64 `toml:"soft_compact_ratio"`
 	ToolResultSnipRatio float64 `toml:"tool_result_snip_ratio"`

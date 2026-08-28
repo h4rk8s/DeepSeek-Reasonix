@@ -152,7 +152,9 @@ type Controller struct {
 	// vendor-aware resolution from config.
 	testCacheColdAfter time.Duration
 
-	shell                             sandbox.Shell                    // interpreter for user-invoked "!" commands; zero = auto
+	shell                             sandbox.Shell // interpreter for user-invoked "!" commands; zero = auto
+	imageUnderstanding                ImageUnderstanding
+	imageUnderstandingLog             string
 	startedOnce                       bool                             // guards the one-shot SessionStart hook on first turn
 	closeOnce                         sync.Once                        // makes close idempotent under racing teardown paths
 	onRemember                        func(rule string) RememberResult // set via Options; invoked when user picks "always allow"
@@ -555,6 +557,14 @@ type Options struct {
 	// Shell is the interpreter user-invoked "!" commands run under, so /shell
 	// matches the agent's configured [tools.shell] choice. Zero value = auto.
 	Shell sandbox.Shell
+	// ImageUnderstanding is an optional vision-model sidecar. It is used only
+	// when the active model is text-only and the current user turn references
+	// images; vision-capable active models continue to receive image bytes
+	// directly through provider.Message.Images.
+	ImageUnderstanding ImageUnderstanding
+	// ImageUnderstandingLog controls whether successful image-understanding
+	// sidecar output is surfaced in the CLI transcript: off, summary, or detail.
+	ImageUnderstandingLog string
 	// OnRemember, when set, is invoked with a new allow rule the user chose to
 	// persist to disk (e.g. "Bash(go test:*)"). The callback is wired into the
 	// permission Gate on EnableInteractiveApproval.
@@ -629,6 +639,10 @@ func New(opts Options) *Controller {
 		usageTee = NewGoalUsageTee(sink).(*goalUsageTee)
 		sink = usageTee
 	}
+	imageUnderstanding := opts.ImageUnderstanding
+	if nilutil.IsNil(imageUnderstanding) {
+		imageUnderstanding = nil
+	}
 	pluginCtx := opts.PluginCtx
 	if pluginCtx == nil {
 		pluginCtx = context.Background()
@@ -672,6 +686,8 @@ func New(opts Options) *Controller {
 		reasoningLanguage:                 config.NormalizeReasoningLanguage(opts.ReasoningLanguage),
 		disableColdResumePrune:            opts.DisableColdResumePrune,
 		shell:                             opts.Shell,
+		imageUnderstanding:                imageUnderstanding,
+		imageUnderstandingLog:             normalizeImageUnderstandingLog(opts.ImageUnderstandingLog),
 		onRemember:                        opts.OnRemember,
 		onRememberPlanModeReadOnlyCommand: opts.OnRememberPlanModeReadOnlyCommand,
 		writeAccess:                       newControllerWriteAccess(opts),
@@ -2036,6 +2052,7 @@ func (c *Controller) runReady(ctx context.Context, input string) (err error) {
 	if blocked {
 		return nil
 	}
+	input = c.withImageUnderstanding(ctx, input, rawInput)
 	startMessages := c.messageCount()
 	var marker agent.InFlightTurnMeta
 	defer func() { c.finishInFlightTurn(startMessages, marker) }()
@@ -5014,7 +5031,10 @@ func (c *Controller) SetSkillEnabled(name string, enabled bool) error {
 	// settings) don't drop this toggle or lose their own fields.
 	unlock := config.LockUserConfigEdits()
 	defer unlock()
-	cfg := config.LoadForEdit(config.UserConfigPath())
+	cfg, err := config.LoadForEditReadOnlyStrict(config.UserConfigPath())
+	if err != nil {
+		return err
+	}
 	if err := cfg.SetSkillEnabled(name, enabled); err != nil {
 		return err
 	}
@@ -5410,6 +5430,86 @@ func (c *Controller) imageInputEnabled() bool {
 // ImageInputEnabled reports whether the current model accepts direct image
 // inputs, so frontends can gate image-only UX before a turn starts.
 func (c *Controller) ImageInputEnabled() bool { return c.imageInputEnabled() }
+
+func (c *Controller) withImageUnderstanding(ctx context.Context, input string, sourceInputs ...string) string {
+	if nilutil.IsNil(c.imageUnderstanding) || c.imageInputEnabled() {
+		return input
+	}
+	source := input
+	for _, candidate := range sourceInputs {
+		if strings.TrimSpace(candidate) != "" {
+			source = candidate
+			break
+		}
+	}
+	images := c.inputImageRefs(source)
+	if len(images) == 0 {
+		return input
+	}
+	started := time.Now()
+	desc, err := c.imageUnderstanding.DescribeImages(ctx, source, images)
+	if err != nil {
+		c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "image understanding failed: " + err.Error()})
+		return input
+	}
+	desc = strings.TrimSpace(desc)
+	if desc == "" {
+		return input
+	}
+	c.emitImageUnderstandingNotice(len(images), desc, time.Since(started))
+	return "Image understanding context:\n\n" + desc + "\n\n" + input
+}
+
+func normalizeImageUnderstandingLog(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "off", "none", "false", "0", "disabled":
+		return "off"
+	case "detail", "details", "verbose", "full":
+		return "detail"
+	default:
+		return "summary"
+	}
+}
+
+func (c *Controller) emitImageUnderstandingNotice(count int, desc string, elapsed time.Duration) {
+	mode := normalizeImageUnderstandingLog(c.imageUnderstandingLog)
+	if mode == "off" {
+		return
+	}
+	label := "image"
+	if count != 1 {
+		label = "images"
+	}
+	parts := []string{fmt.Sprintf("%d %s", count, label), "OCR + UI state"}
+	if elapsedText := formatImageUnderstandingElapsed(elapsed); elapsedText != "" {
+		parts = append(parts, elapsedText)
+	}
+	e := event.Event{
+		Kind:   event.Notice,
+		Level:  event.LevelInfo,
+		Source: event.UsageSourceVision,
+		Text:   "image understood: " + strings.Join(parts, " · "),
+		Detail: desc,
+	}
+	c.sink.Emit(e)
+}
+
+func formatImageUnderstandingElapsed(d time.Duration) string {
+	if d <= 0 {
+		return ""
+	}
+	if d < time.Second {
+		ms := int(d.Round(time.Millisecond) / time.Millisecond)
+		if ms < 1 {
+			ms = 1
+		}
+		return fmt.Sprintf("%dms", ms)
+	}
+	if d < 10*time.Second {
+		return fmt.Sprintf("%.1fs", d.Seconds())
+	}
+	return d.Round(time.Second).String()
+}
 
 // InheritLifecycleFrom carries same-session lifecycle state across controller
 // rebuilds, such as model switches that preserve the conversation.

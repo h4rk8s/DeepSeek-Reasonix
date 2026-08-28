@@ -80,6 +80,11 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 		} else {
 			b.WriteString("# cursor_shape = \"bar\"   # block|underline|bar; text input cursor shape\n")
 		}
+		if strings.TrimSpace(c.UI.ImageUnderstandingLog) != "" {
+			fmt.Fprintf(&b, "image_understanding_log = %q   # off|summary|detail; CLI visibility for image-understanding results\n", c.UIImageUnderstandingLog())
+		} else {
+			b.WriteString("# image_understanding_log = \"summary\"   # off|summary|detail; CLI visibility for image-understanding results\n")
+		}
 		if strings.TrimSpace(c.UI.CloseBehavior) != "" && scope == RenderScopeProject {
 			fmt.Fprintf(&b, "close_behavior = %q   # legacy desktop close behavior; prefer [desktop].close_behavior in user config\n", c.DesktopCloseBehavior())
 		}
@@ -257,6 +262,16 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 		fmt.Fprintf(&b, "vision_model = %q   # image understanding fallback: auto or provider/model\n", c.Agent.VisionModel)
 	} else {
 		b.WriteString("# vision_model = \"auto\"   # optional: summarize images for text-only models\n")
+	}
+	if c.Agent.ImageUnderstandingModel != "" {
+		fmt.Fprintf(&b, "image_understanding_model = %q   # optional vision sidecar for text-only active models\n", c.Agent.ImageUnderstandingModel)
+	} else {
+		b.WriteString("# image_understanding_model = \"provider/vision-model\"   # optional vision sidecar\n")
+	}
+	if c.Agent.ImageUnderstandingCommand != "" {
+		fmt.Fprintf(&b, "image_understanding_command = %q   # optional local OCR/vision sidecar command\n", c.Agent.ImageUnderstandingCommand)
+	} else {
+		b.WriteString("# image_understanding_command = \"reasonix-vision-ocr\"   # optional local sidecar\n")
 	}
 	if c.Agent.SubagentModel != "" {
 		fmt.Fprintf(&b, "subagent_model = %q   # default model for runAs=subagent skills\n", c.Agent.SubagentModel)
@@ -856,6 +871,9 @@ func RenderTOMLProjectDelta(c *Config) string {
 		if strings.TrimSpace(c.UI.CursorShape) != "" {
 			fmt.Fprintf(&b, "cursor_shape = %q\n", c.UICursorShape())
 		}
+		if strings.TrimSpace(c.UI.ImageUnderstandingLog) != "" {
+			fmt.Fprintf(&b, "image_understanding_log = %q\n", c.UIImageUnderstandingLog())
+		}
 		if c.UI.CloseBehavior != d.UI.CloseBehavior {
 			fmt.Fprintf(&b, "close_behavior = %q\n", c.DesktopCloseBehavior())
 		}
@@ -953,6 +971,14 @@ func RenderTOMLProjectDelta(c *Config) string {
 	}
 	if c.Agent.VisionModel != d.Agent.VisionModel {
 		fmt.Fprintf(&agentBuf, "vision_model = %q\n", c.Agent.VisionModel)
+		anyAgent = true
+	}
+	if c.Agent.ImageUnderstandingModel != "" && c.Agent.ImageUnderstandingModel != d.Agent.ImageUnderstandingModel {
+		fmt.Fprintf(&agentBuf, "image_understanding_model = %q\n", c.Agent.ImageUnderstandingModel)
+		anyAgent = true
+	}
+	if c.Agent.ImageUnderstandingCommand != "" && c.Agent.ImageUnderstandingCommand != d.Agent.ImageUnderstandingCommand {
+		fmt.Fprintf(&agentBuf, "image_understanding_command = %q\n", c.Agent.ImageUnderstandingCommand)
 		anyAgent = true
 	}
 	if c.Agent.SubagentModel != "" && c.Agent.SubagentModel != d.Agent.SubagentModel {
