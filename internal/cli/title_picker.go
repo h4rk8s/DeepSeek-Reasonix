@@ -123,7 +123,10 @@ func persistTerminalTitleItems(items []string) error {
 	}
 	unlock := config.LockUserConfigEdits()
 	defer unlock()
-	edit := config.LoadForEdit(path)
+	edit, err := config.LoadForEditReadOnlyStrict(path)
+	if err != nil {
+		return err
+	}
 	if err := edit.SetTerminalTitleItems(items); err != nil {
 		return err
 	}

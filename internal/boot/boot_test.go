@@ -4024,8 +4024,8 @@ tier = "eager"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(raw), "\ntier") {
-		t.Fatalf("legacy eager tier should be removed during load:\n%s", raw)
+	if !strings.Contains(string(raw), `tier = "eager"`) {
+		t.Fatalf("Build should migrate legacy eager tier in memory without rewriting config:\n%s", raw)
 	}
 }
 
@@ -4069,8 +4069,8 @@ tier = "lazy"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(raw), "\ntier") {
-		t.Fatalf("legacy lazy tier should be removed during load:\n%s", raw)
+	if !strings.Contains(string(raw), `tier = "lazy"`) {
+		t.Fatalf("Build should migrate legacy lazy tier in memory without rewriting config:\n%s", raw)
 	}
 }
 

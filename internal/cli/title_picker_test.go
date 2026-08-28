@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
+
 	"reasonix/internal/config"
 	"reasonix/internal/control"
 	"reasonix/internal/event"
@@ -156,5 +158,24 @@ func TestTitleCommandPersistsUserConfigNotProjectConfig(t *testing.T) {
 	}
 	if string(gotProject) != projectBody {
 		t.Fatalf("/title should not rewrite project config:\n%s", gotProject)
+	}
+}
+
+func TestTitleCommandOpensPickerWhileTurnRunning(t *testing.T) {
+	m := newTestChatTUI()
+	m.state = tuiRunning
+	m.input.SetValue("/title")
+
+	next, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	updated := next.(chatTUI)
+
+	if updated.titlePick == nil {
+		t.Fatal("/title while running should open the terminal title picker")
+	}
+	if queued := updated.inboxBodies(); len(queued) != 0 {
+		t.Fatalf("/title while running queued feedback: %+v", queued)
+	}
+	if got := updated.input.Value(); got != "" {
+		t.Fatalf("input after /title = %q, want empty", got)
 	}
 }

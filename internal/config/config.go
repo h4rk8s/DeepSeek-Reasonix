@@ -262,8 +262,11 @@ type UIConfig struct {
 	ShortcutLayout        string `toml:"shortcut_layout"`         // classic|desktop; accepted for compatibility
 	CloseBehavior         string `toml:"close_behavior"`          // legacy desktop close behavior; prefer desktop.close_behavior
 	ShowReasoning         bool   `toml:"show_reasoning"`          // Ctrl+O / /verbose: show thinking text in CLI; false = collapsed
-	ShowTurnUsage         bool   `toml:"show_turn_usage"`         // show per-request token/cost receipts in the CLI/TUI transcript
+	ShowTurnUsage         bool   `toml:"show_turn_usage"`         // upstream name for per-turn token/cost receipts
+	ShowUsage             *bool  `toml:"show_usage"`              // local compatibility alias; explicit value wins
+	LazyReasoning         bool   `toml:"lazy_reasoning"`          // keep collapsed completed thinking clickable
 	CursorShape           string `toml:"cursor_shape"`            // block|underline|bar; empty defaults to bar
+	InputPrompt           string `toml:"input_prompt"`            // CLI textarea prompt; empty preserves the promptless default
 	ImageUnderstandingLog string `toml:"image_understanding_log"` // off|summary|detail; CLI visibility for OCR/vision sidecar results
 }
 
@@ -372,8 +375,23 @@ func (c *Config) UICursorShape() string {
 	}
 }
 
+// UIInputPrompt returns the literal CLI textarea prompt after removing control
+// line breaks. Empty keeps the existing promptless composer.
+func (c *Config) UIInputPrompt() string {
+	prompt := strings.ReplaceAll(c.UI.InputPrompt, "\r", "")
+	prompt = strings.ReplaceAll(prompt, "\n", " ")
+	return prompt
+}
+
+// UIShowUsage reports whether per-turn usage telemetry should be committed into
+// the CLI transcript. Missing configs default to true for compatibility.
+func (c *Config) UIShowUsage() bool {
+	return c.UI.ShowUsage == nil || *c.UI.ShowUsage
+}
+
 // UIImageUnderstandingLog normalizes how the CLI surfaces image-understanding
-// sidecar output. The default is a one-line summary.
+// sidecar output. The default is a one-line summary so the model prompt gets the
+// full context without flooding the transcript.
 func (c *Config) UIImageUnderstandingLog() string {
 	switch strings.ToLower(strings.TrimSpace(c.UI.ImageUnderstandingLog)) {
 	case "off", "none", "false", "0", "disabled":
@@ -1476,10 +1494,13 @@ type AgentConfig struct {
 	// readable, but loading clears it and rendering omits it.
 	AutoPlanClassifier string `toml:"auto_plan_classifier"`
 	// ImageUnderstandingModel optionally names a vision-capable provider/model
-	// used to describe image inputs for a text-only active model.
+	// used to describe image inputs for a text-only active model. Empty keeps
+	// image handling to the active model's native capability only.
 	ImageUnderstandingModel string `toml:"image_understanding_model"`
 	// ImageUnderstandingCommand optionally names a local command that receives
-	// image paths and returns compact OCR/vision context.
+	// image paths and returns compact OCR/vision context for a text-only active
+	// model. It is intentionally turn-local so it does not alter the stable
+	// system prompt or cache prefix.
 	ImageUnderstandingCommand string `toml:"image_understanding_command"`
 	// Soft/snip/force are retired compatibility keys; only CompactRatio is active.
 	SoftCompactRatio    float64 `toml:"soft_compact_ratio"`

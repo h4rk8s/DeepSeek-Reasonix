@@ -114,9 +114,20 @@ func TestSlashExportFiltersInternalAndReferencedContext(t *testing.T) {
 		"Referenced context:\n\n" +
 		"<file path=\"auth_private.go\">\nconst hiddenReference = true\n</file>\n\n" +
 		"please explain @auth_private.go"
+	executorHandoff := "<reasoning-language>\nuse Chinese\n</reasoning-language>\n\n" +
+		"# Reasonix executor handoff\n\n" +
+		"You are the executor now.\n\n" +
+		"Original task:\n" +
+		"<hook-context event=\"SessionStart\">\ninternal context\n</hook-context>\n\n" +
+		"<reasoning-language>\nuse Chinese\n</reasoning-language>\n\n" +
+		"hello\n\n" +
+		"Planner output:\nplanner boilerplate\n\n" +
+		"Executor instructions:\ninternal instructions"
 	m := newTestChatTUIWithMessages(t, dir,
 		provider.Message{Role: provider.RoleUser, Content: expandedReference},
+		provider.Message{Role: provider.RoleUser, Content: executorHandoff},
 		provider.Message{Role: provider.RoleUser, Content: agent.MidTurnSteerPrefix + "\ninternal steer should not export"},
+		provider.Message{Role: provider.RoleUser, Content: "You are already in the executor phase. The planner's read-only limitations do not apply to you.\n\nUse your available tools now to carry out the task."},
 		provider.Message{
 			Role:             provider.RoleAssistant,
 			Content:          "visible answer",
@@ -157,7 +168,14 @@ func TestSlashExportFiltersInternalAndReferencedContext(t *testing.T) {
 		"Referenced context:",
 		"<file path=",
 		"hiddenReference",
+		"Reasonix executor handoff",
+		"Planner output",
+		"Executor instructions",
+		"internal context",
+		"reasoning-language",
 		"internal steer should not export",
+		"executor phase",
+		"planner's read-only limitations",
 		"private thinking should not export",
 		"private-tool-input.txt",
 		"tool output should not export",

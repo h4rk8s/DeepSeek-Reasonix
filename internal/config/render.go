@@ -80,10 +80,15 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 		} else {
 			b.WriteString("# cursor_shape = \"bar\"   # block|underline|bar; text input cursor shape\n")
 		}
-		if strings.TrimSpace(c.UI.ImageUnderstandingLog) != "" {
-			fmt.Fprintf(&b, "image_understanding_log = %q   # off|summary|detail; CLI visibility for image-understanding results\n", c.UIImageUnderstandingLog())
+		if c.UIInputPrompt() != "" {
+			fmt.Fprintf(&b, "input_prompt = %q   # CLI input prefix; empty keeps the promptless composer\n", c.UIInputPrompt())
 		} else {
-			b.WriteString("# image_understanding_log = \"summary\"   # off|summary|detail; CLI visibility for image-understanding results\n")
+			b.WriteString("# input_prompt = \"> \"   # CLI input prefix; empty keeps the promptless composer\n")
+		}
+		if strings.TrimSpace(c.UI.ImageUnderstandingLog) != "" {
+			fmt.Fprintf(&b, "image_understanding_log = %q   # off=隐藏；summary=摘要可展开；detail=保留详细上下文\n", c.UIImageUnderstandingLog())
+		} else {
+			b.WriteString("# image_understanding_log = \"summary\"   # off=隐藏；summary=摘要可展开；detail=保留详细上下文\n")
 		}
 		if strings.TrimSpace(c.UI.CloseBehavior) != "" && scope == RenderScopeProject {
 			fmt.Fprintf(&b, "close_behavior = %q   # legacy desktop close behavior; prefer [desktop].close_behavior in user config\n", c.DesktopCloseBehavior())
@@ -94,6 +99,16 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 			b.WriteString("# show_reasoning = true   # CLI: show thinking text by default; false = collapsed (toggle with Ctrl+O)\n")
 		}
 		fmt.Fprintf(&b, "show_turn_usage = %v   # CLI/TUI: show per-request token and cost receipts in the transcript\n", c.UI.ShowTurnUsage)
+		if c.UI.ShowUsage != nil {
+			fmt.Fprintf(&b, "show_usage = %v   # CLI compatibility alias; explicit value overrides show_turn_usage\n", c.UIShowUsage())
+		} else {
+			b.WriteString("# show_usage = true   # compatibility alias for existing local configs\n")
+		}
+		if c.UI.LazyReasoning {
+			b.WriteString("lazy_reasoning = true   # CLI: keep completed thinking collapsed but clickable; REASONIX_LAZY_REASONING can override per run\n")
+		} else {
+			b.WriteString("# lazy_reasoning = true   # CLI: keep completed thinking collapsed but clickable; REASONIX_LAZY_REASONING can override per run\n")
+		}
 		b.WriteString("\n")
 	}
 
@@ -241,6 +256,16 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	} else {
 		b.WriteString("# reasoning_language = \"zh\"   # visible reasoning language: auto|zh|en\n")
 	}
+	if c.Agent.ImageUnderstandingModel != "" {
+		fmt.Fprintf(&b, "image_understanding_model = %q   # optional vision sidecar for images when the active model is text-only\n", c.Agent.ImageUnderstandingModel)
+	} else {
+		b.WriteString("# image_understanding_model = \"provider/vision-model\"   # optional; describes images for text-only active models\n")
+	}
+	if c.Agent.ImageUnderstandingCommand != "" {
+		fmt.Fprintf(&b, "image_understanding_command = %q   # optional local OCR/vision sidecar command; receives image paths\n", c.Agent.ImageUnderstandingCommand)
+	} else {
+		b.WriteString("# image_understanding_command = \"reasonix-vision-ocr\"   # optional; local sidecar, no model downloads\n")
+	}
 	fmt.Fprintf(&b, "compact_ratio       = %s   # sole auto trigger; presets 0.70/0.80/0.85 (default 0.80)\n", formatFloat(c.Agent.CompactRatio))
 	if c.Agent.Keep != nil {
 		fmt.Fprintf(&b, "keep                = %s   # deprecated compatibility field; ignored at runtime\n", renderStringArray(c.Agent.Keep))
@@ -262,16 +287,6 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 		fmt.Fprintf(&b, "vision_model = %q   # image understanding fallback: auto or provider/model\n", c.Agent.VisionModel)
 	} else {
 		b.WriteString("# vision_model = \"auto\"   # optional: summarize images for text-only models\n")
-	}
-	if c.Agent.ImageUnderstandingModel != "" {
-		fmt.Fprintf(&b, "image_understanding_model = %q   # optional vision sidecar for text-only active models\n", c.Agent.ImageUnderstandingModel)
-	} else {
-		b.WriteString("# image_understanding_model = \"provider/vision-model\"   # optional vision sidecar\n")
-	}
-	if c.Agent.ImageUnderstandingCommand != "" {
-		fmt.Fprintf(&b, "image_understanding_command = %q   # optional local OCR/vision sidecar command\n", c.Agent.ImageUnderstandingCommand)
-	} else {
-		b.WriteString("# image_understanding_command = \"reasonix-vision-ocr\"   # optional local sidecar\n")
 	}
 	if c.Agent.SubagentModel != "" {
 		fmt.Fprintf(&b, "subagent_model = %q   # default model for runAs=subagent skills\n", c.Agent.SubagentModel)
@@ -871,6 +886,9 @@ func RenderTOMLProjectDelta(c *Config) string {
 		if strings.TrimSpace(c.UI.CursorShape) != "" {
 			fmt.Fprintf(&b, "cursor_shape = %q\n", c.UICursorShape())
 		}
+		if c.UIInputPrompt() != "" {
+			fmt.Fprintf(&b, "input_prompt = %q\n", c.UIInputPrompt())
+		}
 		if strings.TrimSpace(c.UI.ImageUnderstandingLog) != "" {
 			fmt.Fprintf(&b, "image_understanding_log = %q\n", c.UIImageUnderstandingLog())
 		}
@@ -882,6 +900,12 @@ func RenderTOMLProjectDelta(c *Config) string {
 		}
 		if c.UI.ShowTurnUsage != d.UI.ShowTurnUsage {
 			fmt.Fprintf(&b, "show_turn_usage = %v\n", c.UI.ShowTurnUsage)
+		}
+		if c.UI.ShowUsage != nil {
+			fmt.Fprintf(&b, "show_usage = %v\n", c.UIShowUsage())
+		}
+		if c.UI.LazyReasoning != d.UI.LazyReasoning {
+			fmt.Fprintf(&b, "lazy_reasoning = %v\n", c.UI.LazyReasoning)
 		}
 		b.WriteString("\n")
 	}
@@ -949,6 +973,14 @@ func RenderTOMLProjectDelta(c *Config) string {
 			anyAgent = true
 		}
 	}
+	if c.Agent.ImageUnderstandingModel != "" && c.Agent.ImageUnderstandingModel != d.Agent.ImageUnderstandingModel {
+		fmt.Fprintf(&agentBuf, "image_understanding_model = %q\n", c.Agent.ImageUnderstandingModel)
+		anyAgent = true
+	}
+	if c.Agent.ImageUnderstandingCommand != "" && c.Agent.ImageUnderstandingCommand != d.Agent.ImageUnderstandingCommand {
+		fmt.Fprintf(&agentBuf, "image_understanding_command = %q\n", c.Agent.ImageUnderstandingCommand)
+		anyAgent = true
+	}
 	if c.Agent.CompactRatio != d.Agent.CompactRatio {
 		fmt.Fprintf(&agentBuf, "compact_ratio = %s\n", formatFloat(c.Agent.CompactRatio))
 		anyAgent = true
@@ -971,14 +1003,6 @@ func RenderTOMLProjectDelta(c *Config) string {
 	}
 	if c.Agent.VisionModel != d.Agent.VisionModel {
 		fmt.Fprintf(&agentBuf, "vision_model = %q\n", c.Agent.VisionModel)
-		anyAgent = true
-	}
-	if c.Agent.ImageUnderstandingModel != "" && c.Agent.ImageUnderstandingModel != d.Agent.ImageUnderstandingModel {
-		fmt.Fprintf(&agentBuf, "image_understanding_model = %q\n", c.Agent.ImageUnderstandingModel)
-		anyAgent = true
-	}
-	if c.Agent.ImageUnderstandingCommand != "" && c.Agent.ImageUnderstandingCommand != d.Agent.ImageUnderstandingCommand {
-		fmt.Fprintf(&agentBuf, "image_understanding_command = %q\n", c.Agent.ImageUnderstandingCommand)
 		anyAgent = true
 	}
 	if c.Agent.SubagentModel != "" && c.Agent.SubagentModel != d.Agent.SubagentModel {

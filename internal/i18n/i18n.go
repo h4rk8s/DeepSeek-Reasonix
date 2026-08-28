@@ -243,6 +243,7 @@ type Messages struct {
 	CmdCompact          string // /compact
 	CmdContinueChecks   string // /continue-checks
 	CmdContext          string // /context
+	CmdRecap            string // /recap
 	CmdRewind           string // /rewind
 	CmdTree             string // /tree
 	CmdBranch           string // /branch
