@@ -112,8 +112,8 @@ const (
 	ContextMaintenanceEvent
 	// WorkspaceChanged reports a debounced host-side workspace mutation.
 	WorkspaceChanged
-	// TurnPhase reports a host-side work phase for the active turn (working |
-	// checking | verifying | reviewing). Content-free; Text holds the phase.
+	// TurnPhase reports a host-side work phase for the active turn (vision |
+	// working | checking | verifying | reviewing). Content-free; Text holds it.
 	TurnPhase
 	// CompletionSummary reports a content-free end-of-turn quality summary for
 	// role-setting strategies (preset, verdict, check counts, review status).
@@ -143,6 +143,7 @@ const (
 type TurnPhaseName string
 
 const (
+	TurnPhaseVision    TurnPhaseName = "vision"
 	TurnPhaseWorking   TurnPhaseName = "working"
 	TurnPhaseChecking  TurnPhaseName = "checking"
 	TurnPhaseVerifying TurnPhaseName = "verifying"
@@ -558,7 +559,7 @@ type Event struct {
 	SessionPath     string                    // routes Serve frames
 	SessionReset    bool                      // SessionChanged came from /new or /clear, not resume/recovery
 	Workspace       *WorkspaceChangedPayload  // WorkspaceChanged (host-local)
-	// PhaseName is set on TurnPhase events (working|checking|verifying|reviewing).
+	// PhaseName is set on TurnPhase events (vision|working|checking|verifying|reviewing).
 	PhaseName TurnPhaseName
 	// Completion is set on CompletionSummary events.
 	Completion    *CompletionSummaryInfo

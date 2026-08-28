@@ -3,13 +3,14 @@ package cli
 import (
 	"strings"
 	"testing"
+	"time"
 
-	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi"
 
+	"reasonix/internal/config"
 	"reasonix/internal/control"
 	"reasonix/internal/event"
 	"reasonix/internal/provider"
@@ -39,37 +40,15 @@ func TestAssistantBlockAddsStableGutter(t *testing.T) {
 // newTestChatTUI builds a chatTUI with just the pieces the streaming/commit and
 // completion paths need, for unit tests that don't run the bubbletea loop.
 func newTestChatTUI() chatTUI {
-	commit := []string{}
-	ti := textarea.New()
-	configureChatTextarea(&ti)
-	ti.SetWidth(80)
-	shellIdx := map[string]int{}
-	shellOut := map[string]string{}
-	shellExp := map[string]bool{}
-	return chatTUI{
-		ctrl:                 control.New(control.Options{}),
-		input:                ti,
-		width:                80,
-		height:               40,
-		statusLineCount:      2,
-		submittedInputCursor: -1,
-		queueEditCursor:      -1,
-		nextPasteID:          1,
-		reasoningLineIdx:     -1,
-		reasoningTextIdx:     -1,
-		answerIdx:            -1,
-		toolStreamIdx:        -1,
-		reasoning:            &strings.Builder{},
-		pending:              &strings.Builder{},
-		pendingCommit:        &commit,
-		shellOutputs:         shellOut,
-		shellExpanded:        shellExp,
-		shellTranscriptIdx:   shellIdx,
-		toolLineCountByID:    map[string]int{},
-		subagentProgressIdx:  map[string]int{},
-		subagentProgress:     map[string]*cliSubagentProgress{},
-		showTurnUsage:        true,
+	m := newChatTUI(control.New(control.Options{}), "", make(chan event.Event, 1), 80)
+	m.buildController = func(controllerBuildSpec, []provider.Message, string, control.SessionAPI) (*control.Controller, error) {
+		return control.New(control.Options{}), nil
 	}
+	m.input.SetWidth(80)
+	m.width = 80
+	m.height = 40
+	m.statusLineCount = 2
+	return m
 }
 
 // subagentStatus / subagentPreview build reserved ToolProgress events the same
@@ -80,6 +59,67 @@ func subagentStatus(id, phase string) event.Event {
 
 func subagentPreview(id, channel, text string, truncated bool) event.Event {
 	return event.Event{Kind: event.ToolProgress, Tool: event.Tool{ID: id, Name: channel, Output: text, Truncated: truncated}}
+}
+
+func TestNativeReasoningCommitRegistersLazyDisclosure(t *testing.T) {
+	m := newTestChatTUI()
+	m.lazyReasoning = config.Default().UI.LazyReasoning
+	if !m.lazyReasoning {
+		t.Fatal("completed reasoning disclosures must be interactive by default")
+	}
+	m.reasoningNative = true
+	m.thinkStart = time.Now().Add(-time.Second)
+	m.reasoning.WriteString("native provider reasoning body")
+	m.commitLine("before")
+
+	m.commitReasoning()
+
+	idx := firstTranscriptIndexContaining(m.transcript, "Thought for")
+	if idx < 0 {
+		t.Fatalf("native reasoning summary missing: %q", m.transcript)
+	}
+	if !m.toggleReasoningAtTranscriptIdx(idx) {
+		t.Fatal("native reasoning summary is not registered as a disclosure")
+	}
+	expanded := ansi.Strip(m.transcript[idx])
+	if !strings.Contains(expanded, "native provider reasoning body") {
+		t.Fatalf("expanded native reasoning missing raw body: %q", expanded)
+	}
+	if strings.Contains(expanded, "Thought for") {
+		t.Fatalf("expanded native reasoning should replace its summary: %q", expanded)
+	}
+	if !m.toggleReasoningAtTranscriptIdx(idx) {
+		t.Fatal("native reasoning disclosure did not collapse")
+	}
+	if !hasThoughtFor(m.transcript[idx]) {
+		t.Fatalf("collapsed native reasoning summary was not restored: %q", m.transcript[idx])
+	}
+}
+
+func TestNativeReasoningCommitKeepsExpandedDisclosureInteractive(t *testing.T) {
+	m := newTestChatTUI()
+	m.lazyReasoning = true
+	m.showReasoning = true
+	m.reasoningNative = true
+	m.thinkStart = time.Now().Add(-time.Second)
+	m.reasoning.WriteString("expanded native provider reasoning")
+
+	m.commitReasoning()
+
+	idx := firstTranscriptIndexContaining(m.transcript, "expanded native provider reasoning")
+	if idx < 0 {
+		t.Fatalf("expanded native reasoning missing: %q", m.transcript)
+	}
+	if !m.toggleReasoningAtTranscriptIdx(idx) {
+		t.Fatal("expanded native reasoning is not registered as a disclosure")
+	}
+	collapsed := ansi.Strip(m.transcript[idx])
+	if !strings.Contains(collapsed, "Thought for") {
+		t.Fatalf("expanded native reasoning did not collapse to its summary: %q", collapsed)
+	}
+	if strings.Contains(collapsed, "expanded native provider reasoning") {
+		t.Fatalf("collapsed native reasoning still contains its body: %q", collapsed)
+	}
 }
 
 func TestCacheRateLabelKeepsTwoDecimals(t *testing.T) {
@@ -130,8 +170,8 @@ func TestIngestSeparatesReasoningFromAnswer(t *testing.T) {
 	if len(m.transcript) != 3 || !strings.Contains(m.transcript[2], "Hello") {
 		t.Fatalf("answer should commit as a separate entry, transcript=%v", m.transcript)
 	}
-	if plain := ansi.Strip(m.transcript[2]); !strings.HasPrefix(plain, "  ◆ Reasonix\n\n  Hello answer") {
-		t.Fatalf("answer should have an explicit assistant identity and indented body, got %q", plain)
+	if plain := ansi.Strip(m.transcript[2]); !strings.HasPrefix(plain, "◆ Reasonix\n\nHello answer") {
+		t.Fatalf("answer should have an explicit assistant identity aligned with the transcript, got %q", plain)
 	}
 }
 
@@ -143,7 +183,7 @@ func TestAssistantAnswerWithoutReasoningHasNoLeadingSpacer(t *testing.T) {
 	if len(m.transcript) != 1 {
 		t.Fatalf("direct answer should remain one compact block, got %d: %v", len(m.transcript), m.transcript)
 	}
-	if plain := ansi.Strip(m.transcript[0]); !strings.HasPrefix(plain, "  ◆ Reasonix\n\n  Direct answer") {
+	if plain := ansi.Strip(m.transcript[0]); !strings.HasPrefix(plain, "◆ Reasonix\n\nDirect answer") {
 		t.Fatalf("direct answer block = %q", plain)
 	}
 }

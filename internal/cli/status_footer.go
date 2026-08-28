@@ -277,7 +277,7 @@ func (m chatTUI) statusTelemetryGroups() []string {
 	}
 	var data []string
 	if m.ctrl != nil {
-		if body, rate, ok := m.cacheStatus(); ok {
+		if body, rate, ok := m.cacheStatus(); ok && m.presentation.StatusCache {
 			data = append(data, themeFg(cacheStatusColor(rate), body))
 		}
 		if context := m.contextTag(); context != "" {
@@ -287,7 +287,7 @@ func (m chatTUI) statusTelemetryGroups() []string {
 			data = append(data, jt)
 		}
 	}
-	if balance := m.balanceTag(); balance != "" {
+	if balance := m.balanceTag(); balance != "" && m.presentation.StatusCost {
 		data = append(data, balance)
 	}
 	if cost := m.sessionCostStatus(); cost != "" {
@@ -307,10 +307,27 @@ func (m chatTUI) renderStatusBlock(primary string, width int) string {
 	modelWork := m.statusModelWorkGroup(max(width-visibleWidth(statusFooterIndent), 1))
 	first := layoutStatusSides(primary, modelWork, width)
 	second := m.layoutGitTelemetry(width)
+	if m.presentation.StatusLayout == "one" {
+		groups := []string{strings.TrimSpace(first), strings.TrimSpace(strings.ReplaceAll(second, "\n", " · "))}
+		return wrapStatusGroups(strings.Join(nonEmptyStrings(groups), " · "), width)
+	}
 	if second == "" {
 		return first
 	}
+	if m.presentation.Profile == "hybrid" {
+		return statusFooterDivider(width) + "\n" + first + "\n" + second
+	}
 	return first + "\n" + statusFooterDivider(width) + "\n" + second
+}
+
+func nonEmptyStrings(values []string) []string {
+	out := values[:0]
+	for _, value := range values {
+		if strings.TrimSpace(ansi.Strip(value)) != "" {
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 // hideStatusHintWhenKeyNamesCannotFit keeps the readable Shift+Tab/Ctrl+Y
@@ -394,8 +411,12 @@ func (m chatTUI) layoutGitTelemetry(width int) string {
 	telemetryGroups := m.statusTelemetryGroups()
 	telemetry := strings.Join(telemetryGroups, "  ")
 	available := max(width-visibleWidth(statusFooterIndent), 1)
-	workspace := m.workspaceLabel()
-	hasGit := strings.TrimSpace(m.gitStatus.Repo) != "" && strings.TrimSpace(m.gitStatus.Branch) != ""
+	workspace := ""
+	hasGit := false
+	if m.presentation.StatusPath {
+		workspace = m.workspaceLabel()
+		hasGit = strings.TrimSpace(m.gitStatus.Repo) != "" && strings.TrimSpace(m.gitStatus.Branch) != ""
+	}
 
 	var identityLines []string
 	switch {

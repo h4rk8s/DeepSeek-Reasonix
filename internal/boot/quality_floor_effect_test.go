@@ -18,14 +18,14 @@ import (
 
 // TestEffectQualityFloorDoesNotTouchProviderPrefix pins the cache contract:
 // standard and delivery send identical system prompts and tool schemas. The
-// workspace line embeds the run's temp dir, so both sides normalize it.
+// workspace and environment sections vary by isolated run, so normalize them.
 func TestEffectQualityFloorDoesNotTouchProviderPrefix(t *testing.T) {
 	standard := effectRun(t, "boot-effect-floor-standard", "", ablation.Set{})
 	delivery := effectRun(t, "boot-effect-floor-delivery", "delivery", ablation.Set{})
 
 	stdReq, delReq := standard[0], delivery[0]
-	stdPrompt := stripWorkspaceLine(systemMessage(stdReq.Messages))
-	delPrompt := stripWorkspaceLine(systemMessage(delReq.Messages))
+	stdPrompt := stripEnvironmentBlock(stripWorkspaceLine(systemMessage(stdReq.Messages)))
+	delPrompt := stripEnvironmentBlock(stripWorkspaceLine(systemMessage(delReq.Messages)))
 	if stdPrompt != delPrompt {
 		t.Fatalf("delivery floor changed the provider-visible system prompt\n%s", firstPromptDiff(stdPrompt, delPrompt))
 	}

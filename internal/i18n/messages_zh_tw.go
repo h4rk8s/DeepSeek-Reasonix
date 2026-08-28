@@ -45,6 +45,7 @@ var ChineseTraditional = Messages{
 	ChatThoughtForFmt:                      "思考了 %d 秒",
 	ChatStatusThinkingFmt:                  "%s 思考中… (%d 秒 · Esc 取消)",
 	TurnPhaseWorking:                       "工作中",
+	TurnPhaseVision:                        "分析圖片中",
 	TurnPhaseChecking:                      "檢查中",
 	TurnPhaseVerifying:                     "驗證中",
 	TurnPhaseReviewing:                     "複審中",

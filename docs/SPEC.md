@@ -1021,6 +1021,30 @@ default_model = "deepseek"   # provider name (→ its default model) or "provide
 # cursor_shape = "bar"              # CLI/TUI textarea cursor: underline|block|bar
 show_turn_usage = false              # hide per-request token/cost receipts in the TUI; default true
 
+[ui.transcript]
+# profile = "hybrid"                # current|hybrid|claude|codex|grok preset
+# density = "balanced"              # compact|balanced|comfortable
+# turn_separator = "space"          # none|space|rule
+# user_prompt = "band"              # plain|band|boxed
+# assistant_marker = "dot"          # none|dot|diamond|name
+
+[ui.transcript.show]
+# role = true
+# activity = true
+# image_understanding = true
+# recap = true
+# turn_metrics = true
+
+[ui.composer]
+# prefix = "›"
+# frame = true
+
+[ui.status]
+# layout = "two"                    # one|two
+# cache = true
+# path = true
+# cost = true
+
 [agent]
 system_prompt = "You are Reasonix, a coding agent..."  # or system_prompt_file = "..."
 temperature       = 0.0
@@ -1135,6 +1159,23 @@ explicit controls for one-off and unattended execution; bot `0` means continuous
 unknown values fall back to `bar`. It applies to the Bubble Tea CLI/TUI
 textarea only, while desktop and browser inputs keep their platform-native
 cursor behavior.
+
+`[ui].lazy_reasoning` is display-only. When enabled, completed thinking text is
+kept in the TUI model but remains folded behind the `▎ thought for Ns` summary
+until clicked. It does not alter provider requests, saved context, or prompt
+cache prefixes. The global preference can also be changed with
+`reasonix config lazy-reasoning on|off|status`. `REASONIX_LAZY_REASONING=1`
+overrides it for a single CLI run without editing config.
+
+The nested `[ui.transcript]`, `[ui.composer]`, and `[ui.status]` tables are also
+display-only. A named transcript profile supplies coherent information-architecture
+defaults; explicitly configured child fields override the preset. The `hybrid`
+profile combines a banded user prompt, dot-marked assistant identity, expandable
+reasoning/image disclosures, in-place activity timing, a framed composer, and a
+two-level responsive status footer. Missing nested tables preserve the legacy
+Reasonix presentation. Invalid enum values fail config loading instead of silently
+falling back. None of these fields alter messages, tools, provider requests, or
+cache-stable prompt prefixes.
 
 `[serve]` controls the HTTP browser frontend used by `reasonix serve`. The
 default `auth_mode = "none"` is intended for the loopback default

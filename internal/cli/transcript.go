@@ -14,6 +14,7 @@ import (
 	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/x/ansi"
 
+	"reasonix/internal/config"
 	"reasonix/internal/provider"
 )
 
@@ -37,12 +38,13 @@ const (
 // instead of replacing it: the rendered slice remains the fast path for every
 // frame and preserves the many index-based live tool/reasoning updates.
 type transcriptSource struct {
-	kind     transcriptSourceKind
-	raw      string
-	aux      string
-	planMode bool
-	maxLines int
-	history  []provider.Message
+	kind       transcriptSourceKind
+	raw        string
+	aux        string
+	planMode   bool
+	maxLines   int
+	durationMs int64
+	history    []provider.Message
 }
 
 func (m *chatTUI) ensureTranscriptSources() {
@@ -102,17 +104,19 @@ func (m *chatTUI) renderTranscriptSource(source transcriptSource, terminalWidth 
 		}
 		return strings.TrimRight(rendered, "\n")
 	case transcriptSourceAssistant:
-		return renderAssistantMarkdown(source.raw, contentWidth)
+		return renderAssistantMarkdownWithPresentation(source.raw, contentWidth, m.presentation)
 	case transcriptSourceUser:
-		return renderUserBubble(source.raw, terminalWidth, source.planMode)
+		return renderUserBubbleWithPresentation(source.raw, terminalWidth, source.planMode, m.presentation)
 	case transcriptSourceReasoning:
 		return reasoningBlock(source.raw, terminalWidth, source.maxLines)
 	case transcriptSourceToolCard:
-		return toolCard(source.raw, source.aux, terminalWidth)
+		return toolCardWithPresentation(source.raw, source.aux, terminalWidth, source.durationMs, m.presentation)
 	case transcriptSourceBanner:
 		return strings.TrimRight(renderTUIBanner(m.label, source.raw, contentWidth), "\n")
 	case transcriptSourceReplayBundle:
-		return m.renderReplayBundle(source, contentWidth, renderAssistantMarkdown)
+		return m.renderReplayBundle(source, contentWidth, func(raw string, width int) string {
+			return renderAssistantMarkdownWithPresentation(raw, width, m.presentation)
+		})
 	case transcriptSourceTurnReceipt:
 		return renderTurnReceiptBand(source.raw, contentWidth)
 	case transcriptSourceSubagentProgress:
@@ -151,69 +155,84 @@ func (m chatTUI) renderReplayBundleCopy(
 	return m.renderReplayBundle(source, contentWidth, func(raw string, width int) string {
 		messagePrefix := prefix + "-" + strconv.Itoa(assistantIndex)
 		assistantIndex++
-		return renderAssistantMarkdownCopy(raw, width, messagePrefix)
+		return renderAssistantMarkdownCopyWithPresentation(raw, width, messagePrefix, m.presentation)
 	})
 }
 
-const assistantTranscriptIndent = "  "
-
 // renderAssistantMarkdown gives assistant prose the same explicit transcript
 // identity that user, reasoning, tool, and receipt blocks already have. The
-// body keeps a restrained two-cell gutter instead of using a heavy card, and
-// rendering at the reduced width keeps every indented row inside the viewport.
+// identity and left baseline that user and reasoning blocks already have.
 func renderAssistantMarkdown(raw string, contentWidth int) string {
+	return renderAssistantMarkdownWithPresentation(raw, contentWidth, config.Default().UIPresentation())
+}
+
+func renderAssistantMarkdownWithPresentation(raw string, contentWidth int, p config.UIPresentation) string {
 	contentWidth = max(contentWidth, 1)
-	indent := assistantTranscriptIndent
-	if contentWidth <= visibleWidth(indent) {
-		indent = ""
-	}
-	bodyWidth := max(contentWidth-visibleWidth(indent), 1)
-	renderer := newMarkdownRenderer(bodyWidth)
+	renderer := newMarkdownRenderer(contentWidth)
 	rendered := renderer.Render(raw)
 	if rendered == "" {
 		rendered = raw
 	}
 	body := strings.TrimRight(rendered, "\n")
-	header := indent + accent("◆") + " " + bold("Reasonix")
+	header := assistantHeader(p)
 	if body == "" {
 		return header
 	}
-	return header + "\n\n" + indentTranscriptBlock(body, indent)
+	if header == "" {
+		return body
+	}
+	gap := "\n\n"
+	if p.Density == "comfortable" {
+		gap = "\n\n\n"
+	}
+	return header + gap + body
 }
 
 // renderAssistantMarkdownCopy mirrors renderAssistantMarkdown's visible output
 // and adds zero-width math markers for on-demand clipboard reconstruction.
 func renderAssistantMarkdownCopy(raw string, contentWidth int, prefix string) string {
+	return renderAssistantMarkdownCopyWithPresentation(raw, contentWidth, prefix, config.Default().UIPresentation())
+}
+
+func renderAssistantMarkdownCopyWithPresentation(raw string, contentWidth int, prefix string, p config.UIPresentation) string {
 	contentWidth = max(contentWidth, 1)
-	indent := assistantTranscriptIndent
-	if contentWidth <= visibleWidth(indent) {
-		indent = ""
-	}
-	bodyWidth := max(contentWidth-visibleWidth(indent), 1)
-	renderer := newMarkdownRenderer(bodyWidth)
+	renderer := newMarkdownRenderer(contentWidth)
 	rendered := renderer.RenderCopy(raw, prefix)
 	if rendered == "" {
 		rendered = raw
 	}
 	body := strings.TrimRight(rendered, "\n")
-	header := indent + accent("◆") + " " + bold("Reasonix")
+	header := assistantHeader(p)
 	if body == "" {
 		return header
 	}
-	return header + "\n\n" + indentTranscriptBlock(body, indent)
+	if header == "" {
+		return body
+	}
+	gap := "\n\n"
+	if p.Density == "comfortable" {
+		gap = "\n\n\n"
+	}
+	return header + gap + body
 }
 
-func indentTranscriptBlock(block, indent string) string {
-	if indent == "" || block == "" {
-		return block
+func assistantHeader(p config.UIPresentation) string {
+	marker := ""
+	switch p.AssistantMarker {
+	case "dot":
+		marker = "●"
+	case "diamond":
+		marker = "◆"
+	case "name":
+		marker = "◆"
 	}
-	lines := strings.Split(block, "\n")
-	for i, line := range lines {
-		if line != "" {
-			lines[i] = indent + line
-		}
+	if !p.ShowRole {
+		return accent(marker)
 	}
-	return strings.Join(lines, "\n")
+	if marker == "" {
+		return bold("Reasonix")
+	}
+	return accent(marker) + " " + bold("Reasonix")
 }
 
 func renderTurnReceiptBand(receipt string, contentWidth int) string {
@@ -278,7 +297,15 @@ func (m chatTUI) buildCopyTranscript(contentWidth int) (string, int, bool) {
 		}
 		switch source.kind {
 		case transcriptSourceMarkdown:
-			rendered := renderAssistantMarkdownCopy(source.raw, contentWidth, strconv.Itoa(i))
+			renderer := newMarkdownRenderer(contentWidth)
+			rendered := strings.TrimRight(renderer.RenderCopy(source.raw, strconv.Itoa(i)), "\n")
+			if rendered == "" {
+				rendered = source.raw
+			}
+			markers += strings.Count(rendered, copyMathStartPrefix)
+			b.WriteString(rendered)
+		case transcriptSourceAssistant:
+			rendered := renderAssistantMarkdownCopyWithPresentation(source.raw, contentWidth, strconv.Itoa(i), m.presentation)
 			markers += strings.Count(rendered, copyMathStartPrefix)
 			b.WriteString(rendered)
 		case transcriptSourceReplayBundle:
