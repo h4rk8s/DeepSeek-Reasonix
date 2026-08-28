@@ -568,7 +568,7 @@ func TestComposerPromptAlignsWithSubmittedPrompt(t *testing.T) {
 }
 
 func firstLineContaining(s, needle string) string {
-	for _, line := range strings.Split(s, "\n") {
+	for line := range strings.SplitSeq(s, "\n") {
 		if strings.Contains(line, needle) {
 			return line
 		}
@@ -1745,7 +1745,7 @@ func TestJumpToBottomPromptTracksOffscreenOutput(t *testing.T) {
 	}
 
 	cur := adv(newChatTUI(ctrl, "", ch, 80), tea.WindowSizeMsg{Width: 80, Height: 10})
-	for i := 0; i < 40; i++ {
+	for range 40 {
 		cur = adv(cur, notice)
 	}
 	bottom := cur.viewport.YOffset()
@@ -1781,7 +1781,7 @@ func TestJumpToBottomPromptVisibleWhenScrolledAway(t *testing.T) {
 	}
 
 	cur := adv(newChatTUI(ctrl, "", ch, 80), tea.WindowSizeMsg{Width: 80, Height: 10})
-	for i := 0; i < 40; i++ {
+	for range 40 {
 		cur = adv(cur, notice)
 	}
 	cur = adv(cur, tea.MouseWheelMsg{Button: tea.MouseWheelUp})
@@ -1810,7 +1810,7 @@ func TestCtrlEndClearsJumpToBottomPrompt(t *testing.T) {
 	}
 
 	cur := adv(newChatTUI(ctrl, "", ch, 80), tea.WindowSizeMsg{Width: 80, Height: 10})
-	for i := 0; i < 40; i++ {
+	for range 40 {
 		cur = adv(cur, notice)
 	}
 	cur = adv(cur, tea.KeyPressMsg{Code: tea.KeyPgUp})
@@ -1841,7 +1841,7 @@ func TestClickPlainJumpToBottomPrompt(t *testing.T) {
 	}
 
 	cur := adv(newChatTUI(ctrl, "", ch, 80), tea.WindowSizeMsg{Width: 80, Height: 10})
-	for i := 0; i < 40; i++ {
+	for range 40 {
 		cur = adv(cur, notice)
 	}
 	cur = adv(cur, tea.KeyPressMsg{Code: tea.KeyPgUp})
@@ -1875,7 +1875,7 @@ func TestClickJumpToBottomPromptClearsIt(t *testing.T) {
 	}
 
 	cur := adv(newChatTUI(ctrl, "", ch, 80), tea.WindowSizeMsg{Width: 80, Height: 10})
-	for i := 0; i < 40; i++ {
+	for range 40 {
 		cur = adv(cur, notice)
 	}
 	cur = adv(cur, tea.KeyPressMsg{Code: tea.KeyPgUp})
@@ -1950,7 +1950,7 @@ func TestMouseSelectionReleaseStopsDragBeforeHoverAndWheel(t *testing.T) {
 	}
 
 	cur := adv(newChatTUI(ctrl, "", ch, 80), tea.WindowSizeMsg{Width: 80, Height: 10})
-	for i := 0; i < 40; i++ {
+	for i := range 40 {
 		cur = adv(cur, agentEventMsg(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: fmt.Sprintf("line %02d abcdefghijklmnopqrstuvwxyz", i)}))
 	}
 	cur.viewport.GotoTop()
@@ -2043,13 +2043,13 @@ func TestLazyReasoningExpandKeepsLowerViewportAnchor(t *testing.T) {
 	}
 	summary := formatReasoningSummary(1)
 	cur.transcript = cur.transcript[:0]
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		cur.transcript = append(cur.transcript, fmt.Sprintf("before-%02d", i))
 	}
 	reasoningIdx := len(cur.transcript)
 	cur.transcript = append(cur.transcript, renderReasoningSummary(summary, cur.width, false))
 	cur.transcript = append(cur.transcript, "anchor below reasoning")
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		cur.transcript = append(cur.transcript, fmt.Sprintf("tail-%02d", i))
 	}
 	cur.completedReasoning = map[int]*completedReasoningBlock{
@@ -2114,13 +2114,13 @@ func TestLazyReasoningMouseClickKeepsLowerViewportAnchor(t *testing.T) {
 	cur.lazyReasoning = true
 	summary := formatReasoningSummary(1)
 	cur.transcript = cur.transcript[:0]
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		cur.transcript = append(cur.transcript, fmt.Sprintf("before-%02d", i))
 	}
 	reasoningIdx := len(cur.transcript)
 	cur.transcript = append(cur.transcript, renderReasoningSummary(summary, cur.width, false))
 	cur.transcript = append(cur.transcript, "anchor below reasoning")
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		cur.transcript = append(cur.transcript, fmt.Sprintf("tail-%02d", i))
 	}
 	cur.completedReasoning = map[int]*completedReasoningBlock{
@@ -2222,13 +2222,13 @@ func TestLazyReasoningHoverThenMouseClickKeepsLowerViewportAnchor(t *testing.T) 
 	cur.lazyReasoning = true
 	summary := formatReasoningSummary(1)
 	cur.transcript = cur.transcript[:0]
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		cur.transcript = append(cur.transcript, fmt.Sprintf("before-%02d", i))
 	}
 	reasoningIdx := len(cur.transcript)
 	cur.transcript = append(cur.transcript, renderReasoningSummary(summary, cur.width, false))
 	cur.transcript = append(cur.transcript, "anchor below reasoning")
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		cur.transcript = append(cur.transcript, fmt.Sprintf("tail-%02d", i))
 	}
 	cur.completedReasoning = map[int]*completedReasoningBlock{

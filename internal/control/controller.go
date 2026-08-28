@@ -5532,10 +5532,7 @@ func formatImageUnderstandingElapsed(d time.Duration) string {
 		return ""
 	}
 	if d < time.Second {
-		ms := int(d.Round(time.Millisecond) / time.Millisecond)
-		if ms < 1 {
-			ms = 1
-		}
+		ms := max(int(d.Round(time.Millisecond)/time.Millisecond), 1)
 		return fmt.Sprintf("%dms", ms)
 	}
 	if d < 10*time.Second {
