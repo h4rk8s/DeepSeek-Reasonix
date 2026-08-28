@@ -134,6 +134,11 @@ type chatTUI struct {
 	// yoloRestoreToolApprovalMode remembers the Ask/Auto base mode that Ctrl+Y
 	// should restore after a desktop-style YOLO toggle.
 	yoloRestoreToolApprovalMode string
+	// terminalTitleItems controls which live session fields are mirrored into
+	// terminals that support OSC window/tab titles.
+	terminalTitleItems []string
+	// windowTitle is the latest rendered terminal title.
+	windowTitle string
 
 	// inboxSelectedID is the currently highlighted durable inbox item while
 	// browsing the queue in tuiRunning. Empty means "not browsing". Full bodies
@@ -434,6 +439,8 @@ type chatTUI struct {
 
 	// completion is the live autocomplete menu (slash commands; @-refs later).
 	completion completion
+	// titlePick is the modal /title manager for terminal title items.
+	titlePick *titlePicker
 	// fileSearchCache memoizes fileref.Search by query so the bounded walk runs
 	// once per @token fragment, not on every keystroke that re-renders the menu.
 	fileSearchCache map[string][]string
@@ -647,11 +654,12 @@ func newChatTUI(ctrl control.SessionAPI, missing string, eventCh chan event.Even
 	nativeScrollback := detectTermuxTerminal()
 	history := ctrl.History()
 	nextPasteID, usedPasteIDs := pasteIDStateForHistory(history)
-	return chatTUI{
+	m := chatTUI{
 		ctrl:                 ctrl,
 		label:                ctrl.Label(),
 		modelRef:             ctrl.ModelRef(),
 		missing:              missing,
+		terminalTitleItems:   config.DefaultTerminalTitleItems(),
 		nativeScrollback:     nativeScrollback,
 		legacyScrollClear:    useLegacyViewportScrollClear(runtime.GOOS, os.Environ()),
 		mouseCaptureOff:      mouseCaptureOffByDefault(),
@@ -685,6 +693,8 @@ func newChatTUI(ctrl control.SessionAPI, missing string, eventCh chan event.Even
 		viewport:             viewport.New(viewport.WithWidth(termW)),
 		statusLineCount:      3,
 	}
+	m.syncWindowTitle()
+	return m
 }
 
 func transcriptContentWidth(termW int, nativeScrollback bool) int {
@@ -976,6 +986,7 @@ func (m chatTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// absolute row cap crowd the transcript and fixed status rows on short
 	// windows. Textarea remains the owner of the scroll offset and caret reveal.
 	cm.syncInputHeightLimit()
+	cm.syncWindowTitle()
 	cm.viewport.SetHeight(cm.transcriptHeight())
 	widthChanged := cm.width != prevWidth
 	if widthChanged {
@@ -1407,6 +1418,10 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// The skill picker is modal while open: keys navigate it.
 		if m.skillPick != nil {
 			return m.handleSkillPickerKey(msg)
+		}
+		// The terminal title picker is modal while open: keys navigate it.
+		if m.titlePick != nil {
+			return m.handleTitlePickerKey(msg)
 		}
 		// A pending tool approval is modal: keystrokes answer it (y/a/n, Enter,
 		// Esc) rather than reaching the input.
@@ -2317,7 +2332,7 @@ func (m chatTUI) bottomRows() int {
 // reserve rows for a composer that cannot receive input, leaving a confusing
 // blank/bordered area at the bottom of the TUI.
 func (m chatTUI) hideComposer() bool {
-	if m.mcp != nil || m.clearConfirm != nil || m.mcpImport != nil || m.skillPick != nil || m.resumePick != nil || m.quickPick != nil || m.copyPick != nil || m.rewind != nil || m.pendingApproval != nil {
+	if m.mcp != nil || m.clearConfirm != nil || m.mcpImport != nil || m.skillPick != nil || m.titlePick != nil || m.resumePick != nil || m.quickPick != nil || m.copyPick != nil || m.rewind != nil || m.pendingApproval != nil {
 		return true
 	}
 	return (m.chooser != nil && !m.chooser.typing) || (m.elicit != nil && !m.elicit.typing)
@@ -2337,6 +2352,9 @@ func (m chatTUI) renderMainManager() string {
 		return card
 	}
 	if card := m.renderClearConfirm(); card != "" {
+		return card
+	}
+	if card := m.renderTitlePicker(); card != "" {
 		return card
 	}
 	return m.renderSkillPicker()
@@ -2363,6 +2381,8 @@ func (m chatTUI) renderMainManagerFooter() string {
 		hint = "Enter confirm · y clear · n/Esc cancel"
 	case m.skillPick != nil:
 		hint = m.skillPickerFooterHint()
+	case m.titlePick != nil:
+		hint = m.titlePickerFooterHint()
 	}
 	if strings.TrimSpace(hint) == "" {
 		return ""
@@ -3478,6 +3498,7 @@ func (m chatTUI) View() tea.View {
 
 	if m.nativeScrollback {
 		v := tea.NewView(strings.Join(parts, "\n"))
+		v.WindowTitle = m.windowTitle
 		if !hideComposer {
 			if cur := m.composerCursor(); cur != nil {
 				cur.X += 1
@@ -3497,6 +3518,7 @@ func (m chatTUI) View() tea.View {
 	}
 	v := tea.NewView(mainArea + "\n" + strings.Join(parts, "\n"))
 	v.AltScreen = true
+	v.WindowTitle = m.windowTitle
 	if m.mouseCaptureOff {
 		// Release the mouse to the terminal: native click-drag selection and
 		// right-click context menu work again, at the cost of the in-app
@@ -4724,6 +4746,9 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 		m.showStatusDetails()
 	case "/rename":
 		m.runRenameCommand(input)
+	case "/title":
+		m.echoLocalCommand(input)
+		m.openTitlePicker()
 	case "/todo":
 		m.echoLocalCommand(input)
 		// Dismiss the pinned task list; a later todo_write brings it back.
