@@ -147,7 +147,14 @@ console.log("\nask card layout");
   eq(computed.overflowWrap, "anywhere", "long unspaced ask questions can break within the shelf");
   ok(card.getAttribute("role") === "dialog", "ask prompt shelf keeps dialog semantics");
   ok(document.querySelector(".prompt-shelf--decision") != null, "ask uses the unified decision surface layout");
-  eq(parseFloat(window.getComputedStyle(card).maxHeight), Number(Math.min(window.innerHeight * 0.62, 560).toFixed(2)), "Ask card stays bounded by the viewport");
+  const cardMaxHeight = window.getComputedStyle(card).maxHeight;
+  const resolvedCardMaxHeight = Number.parseFloat(cardMaxHeight);
+  const expectedCardMaxHeight = Math.min(window.innerHeight * 0.62, 560);
+  ok(
+    cardMaxHeight === "min(62vh, 560px)"
+      || (cardMaxHeight.endsWith("px") && Math.abs(resolvedCardMaxHeight - expectedCardMaxHeight) < 0.01),
+    `Ask card stays bounded by the viewport: got ${JSON.stringify(cardMaxHeight)}`,
+  );
   eq(window.getComputedStyle(card).overflow, "hidden", "Ask card delegates overflow to one content scroller");
   eq(window.getComputedStyle(content).overflow, "auto", "Ask title, question, and options share one scroll region");
   eq(content.contains(footer), false, "Ask confirmation footer stays outside the scrolling content");

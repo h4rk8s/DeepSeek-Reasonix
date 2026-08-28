@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"flag"
 	"fmt"
+	"os"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -9,6 +11,60 @@ import (
 	"reasonix/internal/config"
 	"reasonix/internal/i18n"
 )
+
+func configCurrencyCommand(args []string) int {
+	fs := flag.NewFlagSet("config currency", flag.ContinueOnError)
+	local := fs.Bool("local", false, "unsupported; pricing currency is user-level only")
+	if code, ok := parseCommandFlags(fs, args); !ok {
+		return code
+	}
+	if *local {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, "currency is user-level only; --local is not supported")
+		return 2
+	}
+	rest := fs.Args()
+	if len(rest) > 1 {
+		configCurrencyUsage()
+		return 2
+	}
+	if len(rest) == 0 {
+		cfg, err := config.LoadForRootReadOnly(".")
+		if err != nil {
+			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+			return 1
+		}
+		fmt.Printf("currency = %q (display: %s)\n", pricingCurrencyDisplay(cfg.DisplayCurrencyPref()), cfg.ResolveDisplayCurrency())
+		return 0
+	}
+	mode, err := parseCLIPricingCurrency(rest[0])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+		return 2
+	}
+	path := config.UserConfigPath()
+	if path == "" {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, "cannot resolve user config path")
+		return 1
+	}
+	unlock := config.LockUserConfigEdits()
+	defer unlock()
+	cfg, err := config.LoadForEditReadOnlyStrict(path)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+		return 1
+	}
+	if err := cfg.SetDisplayCurrency(mode); err != nil {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+		return 2
+	}
+	resolved := cfg.ResolveDisplayCurrency()
+	if err := cfg.SaveTo(path); err != nil {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+		return 1
+	}
+	fmt.Printf("currency = %q (display: %s, %s)\n", pricingCurrencyDisplay(mode), resolved, displayPath(path))
+	return 0
+}
 
 func (m *chatTUI) runCurrencySubcommand(input string) tea.Cmd {
 	args := tokenizeArgs(input)

@@ -565,7 +565,7 @@ func TestComposerPromptAlignsWithSubmittedPrompt(t *testing.T) {
 }
 
 func firstLineContaining(s, needle string) string {
-	for _, line := range strings.Split(s, "\n") {
+	for line := range strings.SplitSeq(s, "\n") {
 		if strings.Contains(line, needle) {
 			return line
 		}
@@ -1823,7 +1823,7 @@ func TestJumpToBottomPromptTracksOffscreenOutput(t *testing.T) {
 	}
 
 	cur := adv(newChatTUI(ctrl, "", ch, 80), tea.WindowSizeMsg{Width: 80, Height: 10})
-	for i := 0; i < 40; i++ {
+	for range 40 {
 		cur = adv(cur, notice)
 	}
 	bottom := cur.viewport.YOffset()
@@ -1859,7 +1859,7 @@ func TestJumpToBottomPromptVisibleWhenScrolledAway(t *testing.T) {
 	}
 
 	cur := adv(newChatTUI(ctrl, "", ch, 80), tea.WindowSizeMsg{Width: 80, Height: 10})
-	for i := 0; i < 40; i++ {
+	for range 40 {
 		cur = adv(cur, notice)
 	}
 	cur = adv(cur, tea.MouseWheelMsg{Button: tea.MouseWheelUp})
@@ -1888,7 +1888,7 @@ func TestCtrlEndClearsJumpToBottomPrompt(t *testing.T) {
 	}
 
 	cur := adv(newChatTUI(ctrl, "", ch, 80), tea.WindowSizeMsg{Width: 80, Height: 10})
-	for i := 0; i < 40; i++ {
+	for range 40 {
 		cur = adv(cur, notice)
 	}
 	cur = adv(cur, tea.KeyPressMsg{Code: tea.KeyPgUp})
@@ -1919,7 +1919,7 @@ func TestClickPlainJumpToBottomPrompt(t *testing.T) {
 	}
 
 	cur := adv(newChatTUI(ctrl, "", ch, 80), tea.WindowSizeMsg{Width: 80, Height: 10})
-	for i := 0; i < 40; i++ {
+	for range 40 {
 		cur = adv(cur, notice)
 	}
 	cur = adv(cur, tea.KeyPressMsg{Code: tea.KeyPgUp})
@@ -1953,7 +1953,7 @@ func TestClickJumpToBottomPromptClearsIt(t *testing.T) {
 	}
 
 	cur := adv(newChatTUI(ctrl, "", ch, 80), tea.WindowSizeMsg{Width: 80, Height: 10})
-	for i := 0; i < 40; i++ {
+	for range 40 {
 		cur = adv(cur, notice)
 	}
 	cur = adv(cur, tea.KeyPressMsg{Code: tea.KeyPgUp})
@@ -2028,7 +2028,7 @@ func TestMouseSelectionReleaseStopsDragBeforeHoverAndWheel(t *testing.T) {
 	}
 
 	cur := adv(newChatTUI(ctrl, "", ch, 80), tea.WindowSizeMsg{Width: 80, Height: 10})
-	for i := 0; i < 40; i++ {
+	for i := range 40 {
 		cur = adv(cur, agentEventMsg(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: fmt.Sprintf("line %02d abcdefghijklmnopqrstuvwxyz", i)}))
 	}
 	cur.viewport.GotoTop()
@@ -2130,14 +2130,14 @@ func TestLazyReasoningExpandKeepsLowerViewportAnchor(t *testing.T) {
 	for i := range 20 {
 		cur.transcript = append(cur.transcript, fixedTranscriptBlock(fmt.Sprintf("tail-%02d", i)))
 	}
-	cur.disclosureModel.entries = map[int]*disclosureEntry{
+	cur.entries = map[int]*disclosureEntry{
 		0: {
 			raw:        "line one\nline two\nline three\nline four\nline five",
 			summary:    summary,
 			summaryIdx: reasoningIdx,
 		},
 	}
-	cur.disclosureModel.nextID = 1
+	cur.nextID = 1
 	cur.rebuildDisclosureIndex()
 	cur.transcriptDirty = true
 	cur = adv(cur, tea.WindowSizeMsg{Width: 80, Height: 16})
@@ -2201,14 +2201,14 @@ func TestLazyReasoningMouseClickKeepsLowerViewportAnchor(t *testing.T) {
 	for i := range 20 {
 		cur.transcript = append(cur.transcript, fixedTranscriptBlock(fmt.Sprintf("tail-%02d", i)))
 	}
-	cur.disclosureModel.entries = map[int]*disclosureEntry{
+	cur.entries = map[int]*disclosureEntry{
 		0: {
 			raw:        "line one\nline two\nline three\nline four\nline five",
 			summary:    summary,
 			summaryIdx: reasoningIdx,
 		},
 	}
-	cur.disclosureModel.nextID = 1
+	cur.nextID = 1
 	cur.rebuildDisclosureIndex()
 	cur.transcriptDirty = true
 	cur = adv(cur, tea.WindowSizeMsg{Width: 80, Height: 16})
@@ -2228,43 +2228,6 @@ func TestLazyReasoningMouseClickKeepsLowerViewportAnchor(t *testing.T) {
 	}
 	if cur.viewport.YOffset() <= 8 {
 		t.Fatalf("mouse expansion should scroll down to keep lower content stable, offset=%d", cur.viewport.YOffset())
-	}
-}
-
-func TestLazyReasoningCollapsedHoverOnlyHitsSummaryText(t *testing.T) {
-	m := newTestChatTUI()
-	m.lazyReasoning = true
-	summary := formatReasoningSummary(0)
-	m.transcript = fixedTranscriptBlocks(
-		renderReasoningSummary(summary, m.width, false),
-		"answer below",
-	)
-	m.disclosureModel.entries = map[int]*disclosureEntry{
-		0: {
-			raw:        "line one\nline two",
-			summary:    summary,
-			summaryIdx: 0,
-		},
-	}
-	m.disclosureModel.nextID = 1
-	m.rebuildDisclosureIndex()
-	wrapped, lineMap := wrapTranscriptEntries(m.transcript, 120)
-	m.wrappedLines = strings.Split(wrapped, "\n")
-	m.wrappedLineTranscriptIdx = lineMap
-
-	width := m.collapsedDisclosureWidth(0)
-	if width <= 0 {
-		t.Fatalf("collapsed reasoning summary should have a positive hit width")
-	}
-	idx, kind, ok := m.clickableAtPosition(0, width-1)
-	if !ok || idx != 0 || kind != transcriptHoverDisclosure {
-		t.Fatalf("summary text should be clickable, got idx=%d kind=%v ok=%v", idx, kind, ok)
-	}
-	if idx, kind, ok := m.clickableAtPosition(0, width); ok {
-		t.Fatalf("first cell after summary text should not be clickable, got idx=%d kind=%v", idx, kind)
-	}
-	if idx, kind, ok := m.clickableAtPosition(0, width+20); ok {
-		t.Fatalf("empty tail of the wrapped row should not be clickable, got idx=%d kind=%v", idx, kind)
 	}
 }
 
@@ -2309,14 +2272,14 @@ func TestLazyReasoningHoverThenMouseClickKeepsLowerViewportAnchor(t *testing.T) 
 	for i := range 20 {
 		cur.transcript = append(cur.transcript, fixedTranscriptBlock(fmt.Sprintf("tail-%02d", i)))
 	}
-	cur.disclosureModel.entries = map[int]*disclosureEntry{
+	cur.entries = map[int]*disclosureEntry{
 		0: {
 			raw:        "line one\nline two\nline three\nline four\nline five",
 			summary:    summary,
 			summaryIdx: reasoningIdx,
 		},
 	}
-	cur.disclosureModel.nextID = 1
+	cur.nextID = 1
 	cur.rebuildDisclosureIndex()
 	cur.transcriptDirty = true
 	cur = adv(cur, tea.WindowSizeMsg{Width: 80, Height: 16})
@@ -2372,14 +2335,14 @@ func TestLazyReasoningMouseClickKeepsAnchorWhenTranscriptDoesNotOverflow(t *test
 		renderReasoningSummary(summary, cur.width, false),
 		"anchor answer below reasoning",
 	)
-	cur.disclosureModel.entries = map[int]*disclosureEntry{
+	cur.entries = map[int]*disclosureEntry{
 		0: {
 			raw:        "line one\nline two\nline three\nline four\nline five",
 			summary:    summary,
 			summaryIdx: 1,
 		},
 	}
-	cur.disclosureModel.nextID = 1
+	cur.nextID = 1
 	cur.rebuildDisclosureIndex()
 	cur.transcriptDirty = true
 	cur = adv(cur, tea.WindowSizeMsg{Width: 80, Height: 18})

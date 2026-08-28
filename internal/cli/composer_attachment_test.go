@@ -32,9 +32,9 @@ func installTestComposerParts(t *testing.T, m *chatTUI, value string, parts ...p
 		searchFrom = byteStart + len(parts[i].label)
 	}
 	m.input.SetValue(value)
-	m.composerModel.value = value
-	m.composerModel.pastedBlocks = cloneComposerParts(parts)
-	m.composerModel.nextPartID = composerPartID(len(parts))
+	m.value = value
+	m.pastedBlocks = cloneComposerParts(parts)
+	m.nextPartID = composerPartID(len(parts))
 }
 
 func composerWithImageToken(t *testing.T, value string) chatTUI {
@@ -163,7 +163,7 @@ func TestComposerImageTokenHasIndependentVisualStyle(t *testing.T) {
 func TestComposerLiteralImageLabelNeverBecomesAttachment(t *testing.T) {
 	m := newComposerMouseTestTUI(t, 64, 14)
 	m.input.SetValue("typed [Image #1] literally")
-	m.composerModel.value = m.input.Value()
+	m.value = m.input.Value()
 
 	if got := m.composerAttachmentRanges(); len(got) != 0 {
 		t.Fatalf("literal label became an attachment range: %+v", got)
@@ -197,7 +197,7 @@ func TestComposerPartSpanMovesWithUnicodeEditBeforeIt(t *testing.T) {
 	original := m.pastedBlocks[0].span
 	after := "好" + before
 	m.input.SetValue(after)
-	m.composerModel.reconcileEdit(before, after)
+	m.reconcileEdit(before, after)
 
 	got := m.pastedBlocks[0].span
 	if got.start != original.start+1 || got.end != original.end+1 {
@@ -217,7 +217,7 @@ func TestComposerEditInsidePartInvalidatesOnlyThatIdentity(t *testing.T) {
 	)
 	after := "[Image #] and [Image #2]"
 	m.input.SetValue(after)
-	m.composerModel.reconcileEdit(before, after)
+	m.reconcileEdit(before, after)
 
 	if len(m.pastedBlocks) != 1 || m.pastedBlocks[0].payload != "@two.png" {
 		t.Fatalf("editing one token invalidated the wrong identities: %+v", m.pastedBlocks)

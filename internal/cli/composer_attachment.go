@@ -148,6 +148,93 @@ func (c *composerModel) takePartID() composerPartID {
 	return c.nextPartID
 }
 
+func (m *chatTUI) insertComposerPart(kind composerPartKind, payload, label string) {
+	edit := m.newComposerAttachmentEdit()
+	edit.trackUndo = true
+	m.insertComposerPartUntracked(kind, payload, label)
+	m.recordComposerAttachmentEdit(edit)
+}
+
+func (m *chatTUI) insertComposerPartUntracked(kind composerPartKind, payload, label string) {
+	before := m.input.Value()
+	if m.deleteComposerSelectionUntracked() {
+		m.reconcileEdit(before, m.input.Value())
+	}
+	before = m.input.Value()
+	start := m.composerCursorOffset()
+	m.input.InsertString(label + " ")
+	m.reconcileEdit(before, m.input.Value())
+	id := m.takePartID()
+	m.pastedBlocks = append(m.pastedBlocks, pastedBlock{
+		id: id, kind: kind, payload: payload, label: label,
+		span: composerAttachmentRange{partID: id, start: start, end: start + len([]rune(label))},
+	})
+}
+
+func (m *chatTUI) insertComposerText(text string) {
+	edit := m.newComposerAttachmentEdit()
+	if m.deleteComposerSelectionUntracked() {
+		m.reconcileEdit(edit.beforeValue, m.input.Value())
+	}
+	before := m.input.Value()
+	m.input.InsertString(text)
+	m.reconcileEdit(before, m.input.Value())
+	m.recordComposerAttachmentEdit(edit)
+}
+
+func (m *chatTUI) setComposerValueTracked(before, after string) {
+	edit := m.newComposerAttachmentEdit()
+	m.input.SetValue(after)
+	m.reconcileEdit(before, after)
+	m.recordComposerAttachmentEdit(edit)
+}
+
+func (m *chatTUI) composerPartIDsIn(value string) []composerPartID {
+	var parts []pastedBlock
+	if active, ok := projectComposerParts(m.pastedBlocks, m.value, value, composerPartActive); ok {
+		parts = append(parts, active...)
+	}
+	if pending, ok := projectComposerParts(m.pastedBlocks, m.pendingValue, value, composerPartPending); ok {
+		parts = append(parts, pending...)
+	}
+	slices.SortFunc(parts, func(a, b pastedBlock) int { return a.span.start - b.span.start })
+	seen := make(map[composerPartID]struct{}, len(parts))
+	ids := make([]composerPartID, 0, len(parts))
+	for _, part := range parts {
+		if _, ok := seen[part.id]; ok {
+			continue
+		}
+		seen[part.id] = struct{}{}
+		ids = append(ids, part.id)
+	}
+	return ids
+}
+
+func (m *chatTUI) clearSubmittedPastes() {
+	if len(m.pendingPartIDs) == 0 {
+		return
+	}
+	submitted := make(map[composerPartID]struct{}, len(m.pendingPartIDs))
+	for _, id := range m.pendingPartIDs {
+		submitted[id] = struct{}{}
+	}
+	kept := make([]pastedBlock, 0, len(m.pastedBlocks))
+	for _, part := range m.pastedBlocks {
+		if _, ok := submitted[part.id]; part.state != composerPartPending || !ok {
+			kept = append(kept, part)
+		}
+	}
+	m.pastedBlocks = kept
+	m.pendingPartIDs = nil
+	hasPending := false
+	for _, part := range kept {
+		hasPending = hasPending || part.state == composerPartPending
+	}
+	if !hasPending {
+		m.pendingValue = ""
+	}
+}
+
 func (c *composerModel) ensureValue(value string) {
 	if c.value == value {
 		return
@@ -289,10 +376,10 @@ func projectComposerParts(parts []pastedBlock, source, projected string, state c
 }
 
 func (m chatTUI) composerAttachmentRanges() []composerAttachmentRange {
-	if m.composerModel.value != m.input.Value() {
+	if m.value != m.input.Value() {
 		return nil
 	}
-	value := []rune(m.composerModel.value)
+	value := []rune(m.value)
 	ranges := make([]composerAttachmentRange, 0, len(m.pastedBlocks))
 	for _, part := range m.pastedBlocks {
 		if part.state != composerPartActive || part.kind != composerPartImage ||
@@ -318,7 +405,7 @@ func (m chatTUI) composerCursorOffset() int {
 	lines := strings.Split(m.input.Value(), "\n")
 	line := min(max(m.input.Line(), 0), len(lines)-1)
 	offset := 0
-	for i := 0; i < line; i++ {
+	for i := range line {
 		offset += utf8.RuneCountInString(lines[i]) + 1
 	}
 	return offset + min(max(m.input.Column(), 0), utf8.RuneCountInString(lines[line]))
@@ -356,7 +443,7 @@ func (m *chatTUI) deleteComposerAttachment(token composerAttachmentRange) bool {
 	}
 	before := m.newComposerAttachmentEdit()
 	m.input.SetValue(string(runes[:start]) + string(runes[end:]))
-	m.composerModel.reconcileEdit(before.beforeValue, m.input.Value())
+	m.reconcileEdit(before.beforeValue, m.input.Value())
 	m.composerSel = composerSelection{}
 	m.setComposerCursor(start)
 	m.recordComposerAttachmentEdit(before)
@@ -399,12 +486,12 @@ func (m *chatTUI) deleteComposerAttachmentAtCursor(msg tea.KeyPressMsg) bool {
 }
 
 func (m *chatTUI) newComposerAttachmentEdit() composerAttachmentEdit {
-	m.composerModel.ensureValue(m.input.Value())
+	m.ensureValue(m.input.Value())
 	return composerAttachmentEdit{
 		beforeValue:  m.input.Value(),
 		beforeCursor: m.composerCursorOffset(),
-		beforeModel:  m.composerModel.snapshot(),
-		trackUndo:    m.composerModel.hasActiveParts(),
+		beforeModel:  m.snapshot(),
+		trackUndo:    m.hasActiveParts(),
 	}
 }
 
@@ -417,10 +504,10 @@ func (m *chatTUI) updateComposerInputTracked(msg tea.Msg, edit *composerAttachme
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	if edit.beforeValue != m.input.Value() {
-		m.composerModel.reconcileEdit(edit.beforeValue, m.input.Value())
+		m.reconcileEdit(edit.beforeValue, m.input.Value())
 		m.recordComposerAttachmentEdit(*edit)
 	} else if beforeValue != m.input.Value() {
-		m.composerModel.reconcileEdit(beforeValue, m.input.Value())
+		m.reconcileEdit(beforeValue, m.input.Value())
 	}
 	return cmd
 }
@@ -449,7 +536,7 @@ func (m *chatTUI) undoComposerAttachmentEdit() bool {
 	}
 	m.attachmentHistory.undo = undo[:len(undo)-1]
 	m.input.SetValue(last.beforeValue)
-	m.composerModel.restore(last.beforeModel)
+	m.restore(last.beforeModel)
 	m.composerSel = composerSelection{}
 	m.setComposerCursor(last.beforeCursor)
 	m.growInputToFit()
@@ -458,7 +545,7 @@ func (m *chatTUI) undoComposerAttachmentEdit() bool {
 }
 
 func (m *chatTUI) snapshotActiveComposerParts() []pastedBlock {
-	m.composerModel.ensureValue(m.input.Value())
+	m.ensureValue(m.input.Value())
 	parts := make([]pastedBlock, 0, len(m.pastedBlocks))
 	for _, part := range m.pastedBlocks {
 		if part.state == composerPartActive {
@@ -477,7 +564,7 @@ func (m *chatTUI) replaceComposerDraft(value string, parts []pastedBlock) {
 		m.pastedBlocks = append(m.pastedBlocks, part)
 	}
 	m.input.SetValue(value)
-	m.composerModel.value = value
+	m.value = value
 	m.composerSel = composerSelection{}
 	m.attachmentHistory.undo = nil
 }
@@ -486,14 +573,14 @@ func (m *chatTUI) clearActiveComposerParts() {
 	m.pastedBlocks = slices.DeleteFunc(m.pastedBlocks, func(part pastedBlock) bool {
 		return part.state == composerPartActive
 	})
-	m.composerModel.value = m.input.Value()
+	m.value = m.input.Value()
 	m.composerSel = composerSelection{}
 	m.attachmentHistory.undo = nil
 }
 
 func (m *chatTUI) stageComposerSubmission(displayed string) {
-	m.composerModel.ensureValue(m.input.Value())
-	projected, ok := projectComposerParts(m.pastedBlocks, m.composerModel.value, displayed, composerPartActive)
+	m.ensureValue(m.input.Value())
+	projected, ok := projectComposerParts(m.pastedBlocks, m.value, displayed, composerPartActive)
 	byID := make(map[composerPartID]pastedBlock, len(projected))
 	if ok {
 		for _, part := range projected {
@@ -516,11 +603,11 @@ func (m *chatTUI) stageComposerSubmission(displayed string) {
 	for _, part := range projected {
 		m.pendingPartIDs = append(m.pendingPartIDs, part.id)
 	}
-	m.composerModel.pendingValue = ""
+	m.pendingValue = ""
 	if len(projected) > 0 {
-		m.composerModel.pendingValue = displayed
+		m.pendingValue = displayed
 	}
-	m.composerModel.value = ""
+	m.value = ""
 	m.composerSel = composerSelection{}
 	m.attachmentHistory.undo = nil
 }
@@ -545,8 +632,8 @@ func (m *chatTUI) restorePendingComposer(value string) {
 	}
 	m.pastedBlocks = kept
 	m.input.SetValue(value)
-	m.composerModel.value = value
-	m.composerModel.pendingValue = ""
+	m.value = value
+	m.pendingValue = ""
 	m.pendingPartIDs = nil
 	m.composerSel = composerSelection{}
 	m.attachmentHistory.undo = nil
