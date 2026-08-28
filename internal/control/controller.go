@@ -182,6 +182,8 @@ type Controller struct {
 	testCancelGrace time.Duration
 
 	shell                             sandbox.Shell // interpreter for user-invoked "!" commands; zero = auto
+	imageUnderstanding                ImageUnderstanding
+	imageUnderstandingLog             string
 	startedOnce                       bool          // guards the one-shot SessionStart hook on first turn
 	closeOnce                         sync.Once     // makes close idempotent under racing teardown paths
 	closeFinalizeOnce                 sync.Once     // releases persistence/resources only after the terminal boundary
@@ -696,6 +698,14 @@ type Options struct {
 	// Shell is the interpreter user-invoked "!" commands run under, so /shell
 	// matches the agent's configured [tools.shell] choice. Zero value = auto.
 	Shell sandbox.Shell
+	// ImageUnderstanding is an optional vision-model sidecar. It is used only
+	// when the active model is text-only and the current user turn references
+	// images; vision-capable active models continue to receive image bytes
+	// directly through provider.Message.Images.
+	ImageUnderstanding ImageUnderstanding
+	// ImageUnderstandingLog controls whether successful image-understanding
+	// sidecar output is surfaced in the CLI transcript: off, summary, or detail.
+	ImageUnderstandingLog string
 	// OnRemember, when set, is invoked with a new allow rule the user chose to
 	// persist to disk (e.g. "Bash(go test:*)"). The callback is wired into the
 	// permission Gate on EnableInteractiveApproval.
@@ -787,6 +797,10 @@ func New(opts Options) *Controller {
 		usageTee = NewGoalUsageTee(sink).(*goalUsageTee)
 		sink = usageTee
 	}
+	imageUnderstanding := opts.ImageUnderstanding
+	if nilutil.IsNil(imageUnderstanding) {
+		imageUnderstanding = nil
+	}
 	pluginCtx := opts.PluginCtx
 	if pluginCtx == nil {
 		pluginCtx = context.Background()
@@ -842,6 +856,8 @@ func New(opts Options) *Controller {
 		disableColdResumePrune:            opts.DisableColdResumePrune,
 		headPolicy:                        sessionHeadPolicy{fileBranchesOnly: opts.FileBranchesOnly},
 		shell:                             opts.Shell,
+		imageUnderstanding:                imageUnderstanding,
+		imageUnderstandingLog:             normalizeImageUnderstandingLog(opts.ImageUnderstandingLog),
 		onRemember:                        opts.OnRemember,
 		onRememberPlanModeReadOnlyCommand: opts.OnRememberPlanModeReadOnlyCommand,
 		writeAccess:                       newControllerWriteAccess(opts),

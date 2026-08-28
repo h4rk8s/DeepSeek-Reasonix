@@ -49,6 +49,14 @@ func pastedPathCandidates(src, goos string, shellDecoded bool) []string {
 		add(fields[0])
 	}
 
+	if goos != "windows" && !quoted && hasUnescapedPathWhitespace(src) {
+		// Screenshot tools can paste one existing POSIX path with raw spaces.
+		// Require a real file so ordinary text ending in ".png" stays text.
+		if candidate, ok := normalizePastedPathCandidate(src, goos); ok && pastedPathExists(candidate) {
+			add(candidate)
+		}
+	}
+
 	if goos == "windows" {
 		if !quoted && !hasUnescapedPathWhitespace(src) && strings.Contains(src, `\`) {
 			add(unescapeWindowsShellPath(src))
