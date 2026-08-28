@@ -2141,6 +2141,7 @@ func providersWithMissingKeys(cfg *config.Config) []config.ProviderEntry {
 		cfg.DefaultModel,
 		cfg.Agent.PlannerModel,
 		cfg.Agent.SubagentModel,
+		cfg.Agent.ImageUnderstandingModel,
 	}
 	if len(cfg.Agent.SubagentModels) > 0 {
 		keys := make([]string, 0, len(cfg.Agent.SubagentModels))
@@ -2328,6 +2329,8 @@ func configCommand(args []string) int {
 		return configCurrencyCommand(args[1:])
 	case "telemetry":
 		return configTelemetryCommand(args[1:])
+	case "image-understanding-log":
+		return configImageUnderstandingLogCommand(args[1:])
 	default:
 		configUsage()
 		return 2
@@ -2641,12 +2644,78 @@ func formatCompactRatioPercent(ratio float64) string {
 	return value + "%"
 }
 
+func configImageUnderstandingLogCommand(args []string) int {
+	fs := flag.NewFlagSet("config image-understanding-log", flag.ContinueOnError)
+	local := fs.Bool("local", false, "unsupported; image-understanding-log is user-level only")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *local {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, "image-understanding-log is user-level only; --local is not supported")
+		return 2
+	}
+	rest := fs.Args()
+	if len(rest) > 1 {
+		configImageUnderstandingLogUsage()
+		return 2
+	}
+	if len(rest) == 0 || strings.EqualFold(rest[0], "status") {
+		cfg, err := config.Load()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+			return 1
+		}
+		fmt.Printf("ui.image_understanding_log = %q\n", cfg.UIImageUnderstandingLog())
+		cmd := strings.TrimSpace(cfg.Agent.ImageUnderstandingCommand)
+		model := strings.TrimSpace(cfg.Agent.ImageUnderstandingModel)
+		switch {
+		case cmd != "":
+			fmt.Println("image_understanding_backend = \"command\"")
+			fmt.Printf("agent.image_understanding_command = %q\n", cmd)
+			fmt.Printf("image_understanding_cache = %q\n", control.ImageUnderstandingCachePathForRoot(""))
+		case model != "":
+			fmt.Println("image_understanding_backend = \"model\"")
+			fmt.Printf("agent.image_understanding_model = %q\n", model)
+		default:
+			fmt.Println("image_understanding_backend = \"disabled\"")
+		}
+		return 0
+	}
+	path := config.UserConfigPath()
+	if path == "" {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, "cannot resolve config path")
+		return 1
+	}
+	unlock, err := config.LockConfigFileEdits(path)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+		return 1
+	}
+	defer unlock()
+	cfg, err := config.LoadForEditReadOnlyStrict(path)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+		return 1
+	}
+	if err := cfg.SetImageUnderstandingLog(rest[0]); err != nil {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+		return 2
+	}
+	if err := cfg.SaveTo(path); err != nil {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+		return 1
+	}
+	fmt.Printf("ui.image_understanding_log = %q (%s)\n", cfg.UIImageUnderstandingLog(), displayPath(path))
+	return 0
+}
+
 func configUsage() {
 	fmt.Print(`Usage:
   reasonix config reasoning-language [--local] [auto|zh|en]
   reasonix config compact-ratio [--local] [30..85]
   reasonix config currency [auto|CNY|USD]
   reasonix config telemetry [auto|on|off]
+  reasonix config image-understanding-log [off|summary|detail|status]
 `)
 }
 
@@ -2737,5 +2806,11 @@ func configReasoningLanguageUsage() {
 func configCurrencyUsage() {
 	fmt.Print(`Usage:
   reasonix config currency [auto|CNY|USD]
+`)
+}
+
+func configImageUnderstandingLogUsage() {
+	fmt.Print(`Usage:
+  reasonix config image-understanding-log [off|summary|detail|status]
 `)
 }
