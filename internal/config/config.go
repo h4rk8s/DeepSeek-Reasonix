@@ -62,6 +62,7 @@ type Config struct {
 	Plugins          []PluginEntry       `toml:"plugins"`
 	Skills           SkillsConfig        `toml:"skills"`
 	Statusline       StatuslineConfig    `toml:"statusline"`
+	TerminalTitle    TerminalTitleConfig `toml:"terminal_title"`
 	LSP              LSPConfig           `toml:"lsp"`
 	Bot              BotConfig           `toml:"bot"`
 	Serve            ServeConfig         `toml:"serve"`
@@ -263,8 +264,11 @@ type UIConfig struct {
 	ShortcutLayout        string `toml:"shortcut_layout"`         // classic|desktop; accepted for compatibility
 	CloseBehavior         string `toml:"close_behavior"`          // legacy desktop close behavior; prefer desktop.close_behavior
 	ShowReasoning         bool   `toml:"show_reasoning"`          // Ctrl+O / /verbose: show thinking text in CLI; false = collapsed
-	ShowTurnUsage         bool   `toml:"show_turn_usage"`         // show per-request token/cost receipts in the CLI/TUI transcript
+	ShowTurnUsage         bool   `toml:"show_turn_usage"`         // upstream name for per-turn token/cost receipts
+	ShowUsage             *bool  `toml:"show_usage"`              // local compatibility alias; explicit value wins
+	LazyReasoning         bool   `toml:"lazy_reasoning"`          // keep collapsed completed thinking clickable
 	CursorShape           string `toml:"cursor_shape"`            // block|underline|bar; empty defaults to bar
+	InputPrompt           string `toml:"input_prompt"`            // CLI textarea prompt; empty preserves the promptless default
 	ImageUnderstandingLog string `toml:"image_understanding_log"` // off|summary|detail; CLI visibility for OCR/vision sidecar results
 }
 
@@ -336,8 +340,23 @@ func (c *Config) UICursorShape() string {
 	}
 }
 
+// UIInputPrompt returns the literal CLI textarea prompt after removing control
+// line breaks. Empty keeps the existing promptless composer.
+func (c *Config) UIInputPrompt() string {
+	prompt := strings.ReplaceAll(c.UI.InputPrompt, "\r", "")
+	prompt = strings.ReplaceAll(prompt, "\n", " ")
+	return prompt
+}
+
+// UIShowUsage reports whether per-turn usage telemetry should be committed into
+// the CLI transcript. Missing configs default to true for compatibility.
+func (c *Config) UIShowUsage() bool {
+	return c.UI.ShowUsage == nil || *c.UI.ShowUsage
+}
+
 // UIImageUnderstandingLog normalizes how the CLI surfaces image-understanding
-// sidecar output. The default is a one-line summary.
+// sidecar output. The default is a one-line summary so the model prompt gets the
+// full context without flooding the transcript.
 func (c *Config) UIImageUnderstandingLog() string {
 	switch strings.ToLower(strings.TrimSpace(c.UI.ImageUnderstandingLog)) {
 	case "off", "none", "false", "0", "disabled":
@@ -720,6 +739,128 @@ type LSPServer struct {
 // status data row. A JSON payload (model, context tokens, cwd) is fed on stdin.
 type StatuslineConfig struct {
 	Command string `toml:"command"`
+}
+
+// TerminalTitleConfig configures the terminal/Ghostty tab title shown by the
+// interactive CLI. Items are rendered in order and omitted when their value is
+// unavailable for the current session.
+type TerminalTitleConfig struct {
+	Items []string `toml:"items"`
+}
+
+const (
+	TerminalTitleActivity     = "activity"
+	TerminalTitleSessionTitle = "session-title"
+	TerminalTitleTodoProgress = "todo-progress"
+	TerminalTitleMode         = "mode"
+	TerminalTitleModel        = "model"
+	TerminalTitleEffort       = "effort"
+	TerminalTitleContext      = "context"
+	TerminalTitleBalance      = "balance"
+	TerminalTitleAppName      = "app-name"
+	TerminalTitleProjectName  = "project-name"
+	TerminalTitleCurrentDir   = "current-dir"
+	TerminalTitleRunState     = "run-state"
+	TerminalTitleGitBranch    = "git-branch"
+)
+
+var defaultTerminalTitleItems = []string{
+	TerminalTitleActivity,
+	TerminalTitleSessionTitle,
+	TerminalTitleTodoProgress,
+	TerminalTitleMode,
+	TerminalTitleModel,
+	TerminalTitleEffort,
+}
+
+// DefaultTerminalTitleItems returns the built-in terminal title item order.
+func DefaultTerminalTitleItems() []string {
+	return append([]string(nil), defaultTerminalTitleItems...)
+}
+
+// NormalizeTerminalTitleItems canonicalizes known item names, removes
+// duplicates, and falls back to the built-in defaults when no valid item remains.
+func NormalizeTerminalTitleItems(items []string) []string {
+	out, _ := normalizeTerminalTitleItems(items)
+	if len(out) == 0 {
+		return DefaultTerminalTitleItems()
+	}
+	return out
+}
+
+func normalizeTerminalTitleItems(items []string) ([]string, []string) {
+	out := []string{}
+	invalid := []string{}
+	seen := map[string]bool{}
+	for _, item := range items {
+		canonical := canonicalTerminalTitleItem(item)
+		if canonical == "" {
+			if strings.TrimSpace(item) != "" {
+				invalid = append(invalid, item)
+			}
+			continue
+		}
+		if seen[canonical] {
+			continue
+		}
+		seen[canonical] = true
+		out = append(out, canonical)
+	}
+	return out, invalid
+}
+
+func canonicalTerminalTitleItem(item string) string {
+	switch strings.ToLower(strings.TrimSpace(item)) {
+	case TerminalTitleActivity:
+		return TerminalTitleActivity
+	case TerminalTitleSessionTitle, "thread-title":
+		return TerminalTitleSessionTitle
+	case TerminalTitleTodoProgress, "task-progress":
+		return TerminalTitleTodoProgress
+	case TerminalTitleMode, "approval-mode", "tool-approval":
+		return TerminalTitleMode
+	case TerminalTitleModel:
+		return TerminalTitleModel
+	case TerminalTitleEffort, "reasoning-effort":
+		return TerminalTitleEffort
+	case TerminalTitleContext, "ctx":
+		return TerminalTitleContext
+	case TerminalTitleBalance:
+		return TerminalTitleBalance
+	case TerminalTitleAppName:
+		return TerminalTitleAppName
+	case TerminalTitleProjectName:
+		return TerminalTitleProjectName
+	case TerminalTitleCurrentDir:
+		return TerminalTitleCurrentDir
+	case TerminalTitleRunState:
+		return TerminalTitleRunState
+	case TerminalTitleGitBranch:
+		return TerminalTitleGitBranch
+	default:
+		return ""
+	}
+}
+
+// TerminalTitleItems returns the effective item order for terminal titles.
+func (c *Config) TerminalTitleItems() []string {
+	if c == nil {
+		return DefaultTerminalTitleItems()
+	}
+	return NormalizeTerminalTitleItems(c.TerminalTitle.Items)
+}
+
+// SetTerminalTitleItems validates and stores the terminal title item order.
+func (c *Config) SetTerminalTitleItems(items []string) error {
+	normalized, invalid := normalizeTerminalTitleItems(items)
+	if len(normalized) == 0 {
+		return fmt.Errorf("terminal title: select at least one item")
+	}
+	if len(invalid) > 0 {
+		return fmt.Errorf("terminal title: unknown item %q", invalid[0])
+	}
+	c.TerminalTitle.Items = normalized
+	return nil
 }
 
 // BotConfig 控制多渠道 IM bot 消息网关。
@@ -1833,6 +1974,7 @@ func Default() *Config {
 		UI:               UIConfig{Theme: "auto", ShowTurnUsage: true},
 		Desktop:          DesktopConfig{DefaultToolApprovalMode: "auto", ConversationWidth: "standard"},
 		Billing:          BillingConfig{},
+		TerminalTitle:    TerminalTitleConfig{Items: DefaultTerminalTitleItems()},
 		Notifications: NotificationsConfig{
 			Enabled:         false,
 			TurnDone:        true,

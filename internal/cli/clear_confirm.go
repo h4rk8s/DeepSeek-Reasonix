@@ -60,6 +60,7 @@ func (m *chatTUI) resetFreshContextView(clearTranscript bool) {
 	m.bubblePending = false
 	m.turnDiscarded = false
 	m.sessionCostQuote = nil
+	m.syncWindowTitle()
 	if clearTranscript {
 		m.clearTranscriptDisplay()
 		m.sessionSwitch = true

@@ -61,6 +61,12 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 }
 
 func (m *chatTUI) ingestReasoning(e event.Event) {
+	if strings.TrimSpace(e.Text) == "" && m.reasoningLineIdx < 0 && !m.reasoningNative {
+		return
+	}
+	if e.Text != "" && m.reasoningLineIdx < 0 {
+		m.jumpToBottomTurnNoted = false
+	}
 	if m.nativeScrollback {
 		if !m.reasoningNative {
 			m.thinkStart = time.Now()
@@ -208,6 +214,16 @@ func (m *chatTUI) ingestCompletionSummary(e event.Event) {
 }
 
 func (m *chatTUI) ingestNotice(e event.Event) {
+	if isImageUnderstandingNotice(e) {
+		m.finalizeStreamed()
+		summary := imageUnderstandingSummaryFromNotice(e.Text)
+		idx := len(m.transcript)
+		m.commitLine(renderImageUnderstandingSummary(summary, m.width, false))
+		if detail := strings.TrimSpace(e.Detail); detail != "" {
+			m.rememberImageUnderstanding(idx, summary, detail)
+		}
+		return
+	}
 	glyph := "·"
 	if e.Level == event.LevelWarn {
 		glyph = "!"
@@ -334,7 +350,9 @@ func (m *chatTUI) ingestTurnDone(e event.Event) {
 	m.state = tuiIdle
 	m.turnPhase = ""
 	m.noteWatchdogIdle()
-	m.queueEditCursor, m.queueEditDraft = -1, ""
+	m.jumpToBottomTurnNoted = false
+	m.queueEditCursor = -1
+	m.queueEditDraft = ""
 	m.clearSubmittedPastes()
 	m.commitTurnPauseNotice(e)
 	m.commitReceipt(e.Receipt)

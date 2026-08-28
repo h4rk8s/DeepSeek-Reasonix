@@ -9,6 +9,7 @@ import (
 
 	"reasonix/internal/agent"
 	"reasonix/internal/checkpoint"
+	"reasonix/internal/config"
 	"reasonix/internal/control"
 	"reasonix/internal/i18n"
 	"reasonix/internal/provider"
@@ -20,6 +21,7 @@ type rewindConfirmationController struct {
 	commits  []string
 	result   checkpoint.RewindResult
 	switches []string
+	session  string
 }
 
 func (c *rewindConfirmationController) PrepareRewind(_ int, _ control.RewindScope) (checkpoint.RewindPlan, error) {
@@ -29,6 +31,7 @@ func (c *rewindConfirmationController) PrepareRewind(_ int, _ control.RewindScop
 func (c *rewindConfirmationController) CommitRewind(planID string) (checkpoint.RewindResult, error) {
 	c.commits = append(c.commits, planID)
 	if c.result.ConversationForked || c.result.Branch != "" {
+		c.session = c.result.Branch
 		return c.result, nil
 	}
 	return checkpoint.RewindResult{OK: true}, nil
@@ -40,11 +43,13 @@ func (c *rewindConfirmationController) CommitRewindInPlace(planID string) (check
 
 func (c *rewindConfirmationController) SwitchBranch(ref string) (agent.BranchInfo, error) {
 	c.switches = append(c.switches, ref)
+	c.session = ref
 	return agent.BranchInfo{Path: ref}, nil
 }
 
 func (c *rewindConfirmationController) SetPlanMode(bool)            {}
 func (c *rewindConfirmationController) History() []provider.Message { return nil }
+func (c *rewindConfirmationController) SessionPath() string         { return c.session }
 
 func (c *rewindConfirmationController) SummarizeFrom(context.Context, int) error { return nil }
 func (c *rewindConfirmationController) SummarizeUpTo(context.Context, int) error { return nil }
@@ -183,6 +188,7 @@ func TestConversationRewindReplaysTheRewoundConversation(t *testing.T) {
 	}
 	m := newTestChatTUI()
 	m.ctrl = ctrl
+	m.terminalTitleItems = []string{config.TerminalTitleSessionTitle}
 	m.rewind = &rewindPicker{
 		metas:       []checkpoint.Meta{{Turn: 0}},
 		pendingPlan: plan,
@@ -198,5 +204,8 @@ func TestConversationRewindReplaysTheRewoundConversation(t *testing.T) {
 	}
 	if !m.sessionSwitch {
 		t.Fatal("conversation rewind did not replay the rewound conversation")
+	}
+	if m.windowTitle != "fork" {
+		t.Fatalf("conversation rewind title = %q, want fork", m.windowTitle)
 	}
 }

@@ -46,6 +46,13 @@ func (m chatTUI) buildCopyTranscript(contentWidth int) (string, int, bool) {
 		var rendered string
 		switch source.kind {
 		case transcriptSourceMarkdown:
+			renderer := newMarkdownRenderer(contentWidth)
+			rendered = renderer.RenderCopy(source.raw, strconv.Itoa(i))
+			if rendered == "" {
+				rendered = source.raw
+			}
+			rendered = strings.TrimRight(rendered, "\n")
+		case transcriptSourceAssistant:
 			rendered = renderAssistantMarkdownCopy(source.raw, contentWidth, strconv.Itoa(i))
 		case transcriptSourceReplayBundle:
 			rendered = m.renderReplayBundleCopy(source, contentWidth, strconv.Itoa(i))

@@ -5,11 +5,36 @@ import (
 	"testing"
 
 	"charm.land/bubbles/v2/textarea"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi"
 
+	"reasonix/internal/control"
 	"reasonix/internal/event"
 	"reasonix/internal/provider"
 )
+
+func hasThoughtFor(s string) bool {
+	return strings.Contains(strings.ToLower(ansi.Strip(s)), "thought for")
+}
+
+func TestAssistantBlockAddsStableGutter(t *testing.T) {
+	got := ansi.Strip(renderAssistantBlock("hello\n\nworld"))
+	lines := strings.Split(got, "\n")
+	if len(lines) != 3 {
+		t.Fatalf("lines = %d, want 3: %q", len(lines), got)
+	}
+	if lines[0] != "● hello" {
+		t.Fatalf("first line = %q, want assistant marker plus text", lines[0])
+	}
+	if lines[1] != "" {
+		t.Fatalf("blank separator should stay blank, got %q", lines[1])
+	}
+	if lines[2] != "  world" {
+		t.Fatalf("continuation line = %q, want two-cell gutter", lines[2])
+	}
+}
 
 // newTestChatTUI builds a chatTUI with just the pieces the streaming/commit and
 // completion paths need, for unit tests that don't run the bubbletea loop.
@@ -24,6 +49,7 @@ func newTestChatTUI() chatTUI {
 	return chatTUI{
 		input:                ti,
 		width:                80,
+		height:               40,
 		statusLineCount:      2,
 		submittedInputCursor: -1,
 		queueEditCursor:      -1,
@@ -56,8 +82,8 @@ func subagentPreview(id, channel, text string, truncated bool) event.Event {
 }
 
 func TestCacheRateLabelKeepsTwoDecimals(t *testing.T) {
-	if got := cacheRateLabel("turn hit %s", 998, 1000); got != "turn hit 99.80%" {
-		t.Fatalf("cacheRateLabel = %q, want turn hit 99.80%%", got)
+	if got := cacheRateLabel("hit %s", 998, 1000); got != "hit 99.80%" {
+		t.Fatalf("cacheRateLabel = %q, want hit 99.80%%", got)
 	}
 	if got := cacheRateLabel("avg %s", 1, 3); got != "avg 33.33%" {
 		t.Fatalf("cacheRateLabel = %q, want avg 33.33%%", got)
@@ -83,7 +109,7 @@ func TestIngestSeparatesReasoningFromAnswer(t *testing.T) {
 	}
 
 	m.ingestEvent(event.Event{Kind: event.Text, Text: "Hello answer"}) // answer begins → block collapses
-	if len(m.transcript) != 2 || !strings.Contains(m.transcript[0], "thought for") {
+	if len(m.transcript) != 2 || !hasThoughtFor(m.transcript[0]) {
 		t.Fatalf("block should collapse to a duration summary plus answer separator, transcript=%v", m.transcript)
 	}
 	if strings.TrimSpace(m.transcript[1]) != "" {
@@ -170,7 +196,7 @@ func TestVerboseReasoningInsertsTextUnderSummary(t *testing.T) {
 	if len(m.transcript) != 3 {
 		t.Fatalf("verbose block should be summary + text + answer separator, transcript=%v", m.transcript)
 	}
-	if !strings.Contains(m.transcript[0], "thought for") {
+	if !hasThoughtFor(m.transcript[0]) {
 		t.Errorf("first line should be the duration summary, got %q", m.transcript[0])
 	}
 	if !strings.Contains(m.transcript[1], "step one") || !strings.Contains(m.transcript[1], "step two") {
@@ -178,6 +204,835 @@ func TestVerboseReasoningInsertsTextUnderSummary(t *testing.T) {
 	}
 	if strings.TrimSpace(m.transcript[2]) != "" {
 		t.Errorf("verbose reasoning/answer separator = %q, want blank block", m.transcript[2])
+	}
+}
+
+func TestLazyReasoningTogglesCompletedThinking(t *testing.T) {
+	m := newTestChatTUI()
+	m.lazyReasoning = true
+
+	m.ingestEvent(event.Event{Kind: event.Reasoning, Text: "step one\nstep two"})
+	m.ingestEvent(event.Event{Kind: event.Text, Text: "Answer"}) // closes the block
+
+	if len(m.transcript) != 1 || strings.Contains(strings.Join(m.transcript, "\n"), "step one") {
+		t.Fatalf("lazy reasoning should start collapsed, transcript=%v", m.transcript)
+	}
+	if !m.toggleReasoningAtTranscriptIdx(0) {
+		t.Fatalf("expected summary click to expand reasoning")
+	}
+	if len(m.transcript) != 1 {
+		t.Fatalf("expanded reasoning should replace the summary entry in place, transcript=%v", m.transcript)
+	}
+	if hasThoughtFor(m.transcript[0]) {
+		t.Fatalf("expanded reasoning should not keep the collapsed summary visible: %v", m.transcript)
+	}
+	if !strings.Contains(m.transcript[0], "step one") || !strings.Contains(m.transcript[0], "step two") {
+		t.Fatalf("expanded reasoning body missing text: %v", m.transcript)
+	}
+	expandedLines := strings.Split(ansi.Strip(m.transcript[0]), "\n")
+	if len(expandedLines) < 4 {
+		t.Fatalf("expanded reasoning should include breathing room around the body: %q", ansi.Strip(m.transcript[0]))
+	}
+	if strings.TrimSpace(expandedLines[0]) != "" {
+		t.Fatalf("expanded reasoning should start with a blank line, got first line %q", expandedLines[0])
+	}
+	if expandedLines[1] != "* step one" {
+		t.Fatalf("expanded reasoning should start with an icon-aligned body line, got %q", expandedLines[1])
+	}
+	if strings.TrimSpace(expandedLines[len(expandedLines)-1]) != "" {
+		t.Fatalf("expanded reasoning should end with a blank line, got last line %q", expandedLines[len(expandedLines)-1])
+	}
+	if strings.Contains(ansi.Strip(m.transcript[0]), "⎿") {
+		t.Fatalf("expanded lazy reasoning should render as its own block, not a tool-output gutter: %q", m.transcript[0])
+	}
+	if !m.toggleReasoningAtTranscriptIdx(0) {
+		t.Fatalf("expected body click to collapse reasoning")
+	}
+	if len(m.transcript) != 1 || strings.Contains(strings.Join(m.transcript, "\n"), "step one") {
+		t.Fatalf("collapsed reasoning should remove body again, transcript=%v", m.transcript)
+	}
+}
+
+func TestImageUnderstandingNoticeUsesDisclosure(t *testing.T) {
+	m := newTestChatTUI()
+
+	m.ingestEvent(event.Event{
+		Kind:   event.Notice,
+		Source: event.UsageSourceVision,
+		Text:   "image understood: 2 images · OCR + UI state · 0.8s",
+		Detail: `<image-understanding source="@.reasonix/attachments/one.png">
+visible_text: first screenshot
+confidence: high
+</image-understanding>
+
+<image-understanding source="@.reasonix/attachments/two.png">
+visible_text: second screenshot
+confidence: medium
+</image-understanding>`,
+	})
+
+	joined := ansi.Strip(strings.Join(m.transcript, "\n"))
+	if !strings.Contains(joined, "Image understood · 2 images · OCR + UI state · 0.8s") {
+		t.Fatalf("summary missing:\n%s", joined)
+	}
+	if strings.Contains(joined, "first screenshot") || strings.Contains(joined, "<image-understanding") {
+		t.Fatalf("image detail should start collapsed:\n%s", joined)
+	}
+	if len(m.reasoningIndex) != 1 {
+		t.Fatalf("image disclosure should be clickable, index=%v", m.reasoningIndex)
+	}
+	if !m.toggleReasoningAtTranscriptIdx(0) {
+		t.Fatalf("expected image disclosure click to expand")
+	}
+	expanded := ansi.Strip(strings.Join(m.transcript, "\n"))
+	if !strings.Contains(expanded, "Image #1") || !strings.Contains(expanded, "Image #2") {
+		t.Fatalf("expanded detail should split multiple images:\n%s", expanded)
+	}
+	if !strings.Contains(expanded, "first screenshot") || !strings.Contains(expanded, "second screenshot") {
+		t.Fatalf("expanded image detail missing body:\n%s", expanded)
+	}
+	if !m.toggleReasoningAtTranscriptIdx(0) {
+		t.Fatalf("expected image disclosure click to collapse")
+	}
+	collapsed := ansi.Strip(strings.Join(m.transcript, "\n"))
+	if strings.Contains(collapsed, "first screenshot") {
+		t.Fatalf("collapsed image detail leaked:\n%s", collapsed)
+	}
+}
+
+func TestImageUnderstandingDisclosureKeepsSingleTaggedBlockWithBlankLines(t *testing.T) {
+	m := newTestChatTUI()
+
+	m.ingestEvent(event.Event{
+		Kind:   event.Notice,
+		Source: event.UsageSourceVision,
+		Text:   "image understood: 1 image · OCR + UI state · 333ms",
+		Detail: `<image-understanding source="@.reasonix/attachments/clipboard.png" sha256="abc">
+visible_text:
+• reasonix · deepseek-v4-flash + planner deepseek-v4-pro
+
+ui_state: Apple Vision OCR sidecar
+errors:
+
+layout: 1218x262; text_regions=2
+confidence: medium
+</image-understanding>`,
+	})
+
+	if !m.toggleReasoningAtTranscriptIdx(0) {
+		t.Fatalf("expected image disclosure click to expand")
+	}
+	expanded := ansi.Strip(strings.Join(m.transcript, "\n"))
+	if !strings.Contains(expanded, "Image understanding") {
+		t.Fatalf("single image should use single-image heading:\n%s", expanded)
+	}
+	if strings.Contains(expanded, "Image #2") {
+		t.Fatalf("single tagged block with blank lines should not create a fake second image:\n%s", expanded)
+	}
+	if !strings.Contains(expanded, "</image-understanding>") {
+		t.Fatalf("closing tag should stay with the single image block:\n%s", expanded)
+	}
+}
+
+func TestReplayHistoryCollapsesReasoningContent(t *testing.T) {
+	m := newTestChatTUI()
+	m.lazyReasoning = true
+
+	m.replayHistory([]provider.Message{
+		{Role: provider.RoleUser, Content: "hello"},
+		{
+			Role:             provider.RoleAssistant,
+			ReasoningContent: "private step one\nprivate step two",
+			Content:          "visible answer",
+		},
+	}, m.width)
+
+	joined := strings.Join(m.transcript, "\n")
+	if !hasThoughtFor(joined) {
+		t.Fatalf("replayed reasoning should render a collapsed summary:\n%s", joined)
+	}
+	if strings.Contains(joined, "private step") {
+		t.Fatalf("replayed lazy reasoning leaked by default:\n%s", joined)
+	}
+	if !strings.Contains(joined, "visible answer") {
+		t.Fatalf("replayed assistant answer missing:\n%s", joined)
+	}
+	if len(m.reasoningIndex) != 1 {
+		t.Fatalf("replayed reasoning should be clickable, index=%v", m.reasoningIndex)
+	}
+
+	idx := -1
+	for k := range m.reasoningIndex {
+		idx = k
+	}
+	if !m.toggleReasoningAtTranscriptIdx(idx) {
+		t.Fatalf("expected replayed reasoning summary to expand")
+	}
+	if got := strings.Join(m.transcript, "\n"); !strings.Contains(got, "private step one") {
+		t.Fatalf("expanded replayed reasoning missing body:\n%s", got)
+	}
+	if !m.toggleReasoningAtTranscriptIdx(idx) {
+		t.Fatalf("expected replayed reasoning body to collapse")
+	}
+	if got := strings.Join(m.transcript, "\n"); strings.Contains(got, "private step one") {
+		t.Fatalf("collapsed replayed reasoning leaked body:\n%s", got)
+	}
+}
+
+func TestReplayHistorySuppressesReasoningForHiddenAssistantMessages(t *testing.T) {
+	m := newTestChatTUI()
+	m.lazyReasoning = true
+
+	m.replayHistory([]provider.Message{
+		{
+			Role:             provider.RoleAssistant,
+			ReasoningContent: "private handoff reasoning",
+			Content:          "# Reasonix executor handoff\n\nExecutor instructions:\ninternal",
+		},
+		{Role: provider.RoleAssistant, Content: "visible answer"},
+	}, m.width)
+
+	joined := strings.Join(m.transcript, "\n")
+	if hasThoughtFor(joined) || strings.Contains(joined, "private handoff reasoning") {
+		t.Fatalf("hidden assistant history should not leave reasoning summaries:\n%s", joined)
+	}
+	if strings.Contains(joined, "Reasonix executor handoff") || strings.Contains(joined, "Executor instructions") {
+		t.Fatalf("hidden assistant history leaked:\n%s", joined)
+	}
+	if !strings.Contains(joined, "visible answer") {
+		t.Fatalf("visible assistant answer missing:\n%s", joined)
+	}
+}
+
+func TestReplayHistoryStripsImageContextFromUserTurn(t *testing.T) {
+	m := newTestChatTUI()
+	content := `Image understanding context:
+
+<image-understanding source="@.reasonix/attachments/shot.png" sha256="abc">
+visible_text: internal ocr
+</image-understanding>
+
+Referenced context:
+
+<image path=".reasonix/attachments/shot.png">
+[image attachment available at @.reasonix/attachments/shot.png]
+</image>
+
+[image1] what is wrong?`
+
+	m.replayHistory([]provider.Message{
+		{Role: provider.RoleUser, Content: content},
+	}, m.width)
+
+	joined := strings.Join(m.transcript, "\n")
+	for _, unwanted := range []string{
+		"Image understanding context",
+		"<image-understanding",
+		"Referenced context",
+		"<image path=",
+		"image attachment available",
+		"internal ocr",
+	} {
+		if strings.Contains(joined, unwanted) {
+			t.Fatalf("replayed user turn leaked %q:\n%s", unwanted, joined)
+		}
+	}
+	if !strings.Contains(joined, "[image1] what is wrong?") {
+		t.Fatalf("replayed user turn lost visible input:\n%s", joined)
+	}
+}
+
+func TestReplayHistoryStripsReferencedImageContextAfterComposePrefix(t *testing.T) {
+	m := newTestChatTUI()
+	content := `<reasoning-language>
+可见推理/思考文本偏好：请使用简体中文。
+</reasoning-language>
+
+Referenced context:
+
+<image path=".reasonix/attachments/clipboard-20260710-181440.565354-000013.png">
+[image attachment available at [image1]; sent as direct model image input only when the selected model supports vision. Text-only models can still use an available OCR/image/vision tool with this local path; image bytes are not inlined into prompt text.]
+</image>
+
+[image2] 这个页面太粗糙，不 native`
+
+	m.replayHistory([]provider.Message{
+		{Role: provider.RoleUser, Content: content},
+	}, m.width)
+
+	joined := strings.Join(m.transcript, "\n")
+	for _, unwanted := range []string{
+		"reasoning-language",
+		"可见推理",
+		"Referenced context",
+		"<image path=",
+		"image attachment available",
+		"direct model image input",
+		"clipboard-20260710",
+	} {
+		if strings.Contains(joined, unwanted) {
+			t.Fatalf("replayed user turn leaked %q:\n%s", unwanted, joined)
+		}
+	}
+	if !strings.Contains(joined, "[image2] 这个页面太粗糙，不 native") {
+		t.Fatalf("replayed user turn lost visible input:\n%s", joined)
+	}
+}
+
+func TestReplayHistoryRebuildsCollapsedImageUnderstandingDisclosure(t *testing.T) {
+	m := newTestChatTUI()
+	content := `<reasoning-language>
+可见推理/思考文本偏好：请使用简体中文。
+</reasoning-language>
+
+Referenced context:
+
+<image path=".reasonix/attachments/clipboard-20260710-181440.565354-000013.png">
+[image attachment available at [image1]]
+</image>
+
+Image understanding context:
+
+<image-understanding source="@.reasonix/attachments/clipboard-20260710-181440.565354-000013.png" sha256="abc">
+visible_text: internal OCR text
+ui_state: internal UI state
+</image-understanding>
+
+[image2] 帮我看看`
+
+	m.replayHistory([]provider.Message{
+		{Role: provider.RoleUser, Content: content},
+	}, m.width)
+
+	joined := strings.Join(m.transcript, "\n")
+	for _, unwanted := range []string{
+		"Image understanding context",
+		"<image-understanding",
+		"visible_text:",
+		"internal OCR text",
+		"Referenced context",
+		"<image path=",
+		"reasoning-language",
+	} {
+		if strings.Contains(joined, unwanted) {
+			t.Fatalf("replayed user turn leaked %q before expansion:\n%s", unwanted, joined)
+		}
+	}
+	if !strings.Contains(joined, "[image2] 帮我看看") {
+		t.Fatalf("replayed user turn lost visible input:\n%s", joined)
+	}
+	if !strings.Contains(joined, "Image understood") {
+		t.Fatalf("image understanding summary missing:\n%s", joined)
+	}
+
+	var summaryIdx = -1
+	for idx, line := range m.transcript {
+		if strings.Contains(line, "Image understood") {
+			summaryIdx = idx
+			break
+		}
+	}
+	if summaryIdx < 0 {
+		t.Fatalf("image understanding summary index missing:\n%s", joined)
+	}
+	id, ok := m.reasoningIndex[summaryIdx]
+	if !ok {
+		t.Fatalf("image understanding summary is not clickable")
+	}
+	block := m.completedReasoning[id]
+	if block == nil || block.expanded {
+		t.Fatalf("image understanding should be remembered collapsed by default: %+v", block)
+	}
+	if block.kind != transcriptDisclosureImageUnderstanding {
+		t.Fatalf("wrong disclosure kind = %v", block.kind)
+	}
+	if !strings.Contains(block.raw, "<image-understanding") || !strings.Contains(block.raw, "internal UI state") {
+		t.Fatalf("image understanding raw detail not preserved: %q", block.raw)
+	}
+}
+
+func TestReplayHistoryImageUnderstandingMatchesLiveDisclosureRendering(t *testing.T) {
+	detail := `<image-understanding source="@.reasonix/attachments/clipboard.png" sha256="abc">
+visible_text: same OCR
+ui_state: same UI
+</image-understanding>`
+
+	live := newTestChatTUI()
+	live.ingestEvent(event.Event{
+		Kind:   event.Notice,
+		Source: event.UsageSourceVision,
+		Text:   "image understood: 1 image · OCR + UI state",
+		Detail: detail,
+	})
+
+	replay := newTestChatTUI()
+	replay.replayHistory([]provider.Message{
+		{Role: provider.RoleUser, Content: "Image understanding context:\n\n" + detail + "\n\n[image1] same prompt"},
+	}, replay.width)
+
+	liveCollapsed := ansi.Strip(strings.Join(live.transcript, "\n"))
+	replayCollapsed := ansi.Strip(strings.Join(replay.transcript, "\n"))
+	if !strings.Contains(liveCollapsed, "Image understood · 1 image · OCR + UI state") {
+		t.Fatalf("live summary missing:\n%s", liveCollapsed)
+	}
+	if !strings.Contains(replayCollapsed, "Image understood · 1 image · OCR + UI state") {
+		t.Fatalf("replay summary missing:\n%s", replayCollapsed)
+	}
+	if strings.Contains(replayCollapsed, "<image-understanding") || strings.Contains(replayCollapsed, "same OCR") {
+		t.Fatalf("replay disclosure should start collapsed:\n%s", replayCollapsed)
+	}
+
+	liveIdx := firstTranscriptIndexContaining(live.transcript, "Image understood")
+	replayIdx := firstTranscriptIndexContaining(replay.transcript, "Image understood")
+	if liveIdx < 0 || replayIdx < 0 {
+		t.Fatalf("missing disclosure indexes: live=%d replay=%d", liveIdx, replayIdx)
+	}
+	if !live.toggleReasoningAtTranscriptIdx(liveIdx) {
+		t.Fatalf("live disclosure did not expand")
+	}
+	if !replay.toggleReasoningAtTranscriptIdx(replayIdx) {
+		t.Fatalf("replay disclosure did not expand")
+	}
+	liveExpanded := ansi.Strip(strings.Join(live.transcript, "\n"))
+	replayExpanded := ansi.Strip(strings.Join(replay.transcript, "\n"))
+	for _, want := range []string{"Image understanding", "<image-understanding", "same OCR", "same UI"} {
+		if !strings.Contains(liveExpanded, want) {
+			t.Fatalf("live expanded missing %q:\n%s", want, liveExpanded)
+		}
+		if !strings.Contains(replayExpanded, want) {
+			t.Fatalf("replay expanded missing %q:\n%s", want, replayExpanded)
+		}
+	}
+}
+
+func firstTranscriptIndexContaining(lines []string, needle string) int {
+	for idx, line := range lines {
+		if strings.Contains(line, needle) {
+			return idx
+		}
+	}
+	return -1
+}
+
+func TestReplayHistoryLazyReasoningIgnoresShowReasoning(t *testing.T) {
+	m := newTestChatTUI()
+	m.lazyReasoning = true
+	m.showReasoning = true
+
+	m.replayHistory([]provider.Message{
+		{
+			Role:             provider.RoleAssistant,
+			ReasoningContent: "private replay reasoning",
+			Content:          "visible answer",
+		},
+	}, m.width)
+
+	joined := strings.Join(m.transcript, "\n")
+	if !hasThoughtFor(joined) {
+		t.Fatalf("replayed reasoning should render a collapsed summary:\n%s", joined)
+	}
+	if strings.Contains(joined, "private replay reasoning") {
+		t.Fatalf("lazy replay should stay collapsed even when showReasoning is enabled:\n%s", joined)
+	}
+	if !strings.Contains(joined, "visible answer") {
+		t.Fatalf("assistant answer missing:\n%s", joined)
+	}
+	if len(m.reasoningIndex) != 1 {
+		t.Fatalf("replayed reasoning should remain clickable, index=%v", m.reasoningIndex)
+	}
+}
+
+func TestReplayHistoryKeepsTurnStructure(t *testing.T) {
+	m := newTestChatTUI()
+
+	m.replayHistory([]provider.Message{
+		{Role: provider.RoleUser, Content: "hello"},
+		{Role: provider.RoleAssistant, Content: "first answer"},
+		{Role: provider.RoleUser, Content: "next"},
+		{Role: provider.RoleAssistant, Content: "second answer"},
+	}, m.width)
+
+	joined := ansi.Strip(strings.Join(m.transcript, "\n"))
+	if strings.Count(joined, "› ") != 2 {
+		t.Fatalf("replayed user turns should remain visible as separate bubbles:\n%s", joined)
+	}
+	lines := strings.Split(joined, "\n")
+	nextLine := -1
+	for i, line := range lines {
+		if strings.Contains(line, "› next") {
+			nextLine = i
+			break
+		}
+	}
+	if nextLine <= 0 || strings.TrimSpace(lines[nextLine-1]) != "" {
+		t.Fatalf("replayed user turn should be separated by a blank turn spacer:\n%s", joined)
+	}
+	if strings.Count(joined, "◆ Reasonix") != 2 ||
+		!strings.Contains(joined, "first answer") ||
+		!strings.Contains(joined, "second answer") {
+		t.Fatalf("replayed assistant answers should keep assistant identity blocks:\n%s", joined)
+	}
+}
+
+func TestReplayHistorySkipsSyntheticExecutorHandoff(t *testing.T) {
+	m := newTestChatTUI()
+
+	m.replayHistory([]provider.Message{
+		{Role: provider.RoleUser, Content: "hello"},
+		{Role: provider.RoleUser, Content: "You are already in the executor phase. The planner's read-only limitations do not apply to you.\n\nUse your available tools now to carry out the task."},
+		{Role: provider.RoleAssistant, Content: "visible answer"},
+	}, m.width)
+
+	joined := strings.Join(m.transcript, "\n")
+	if strings.Contains(joined, "executor phase") || strings.Contains(joined, "planner's read-only limitations") {
+		t.Fatalf("replayed history leaked synthetic executor handoff:\n%s", joined)
+	}
+	if !strings.Contains(joined, "hello") {
+		t.Fatalf("real user message missing:\n%s", joined)
+	}
+	if !strings.Contains(joined, "visible answer") {
+		t.Fatalf("assistant answer missing:\n%s", joined)
+	}
+}
+
+func TestReplayHistorySkipsAssistantExecutorHandoff(t *testing.T) {
+	m := newTestChatTUI()
+	handoff := "# Reasonix executor handoff\n\n" +
+		"You are the executor now. Use your available tools to execute the task.\n\n" +
+		"Original task:\nhello\n\n" +
+		"Planner output:\nplanner boilerplate\n\n" +
+		"Executor instructions:\ninternal instructions"
+
+	m.replayHistory([]provider.Message{
+		{Role: provider.RoleUser, Content: "hello"},
+		{Role: provider.RoleAssistant, Content: handoff},
+		{Role: provider.RoleAssistant, Content: "visible answer"},
+	}, m.width)
+
+	joined := strings.Join(m.transcript, "\n")
+	for _, unwanted := range []string{
+		"Reasonix executor handoff",
+		"Planner output",
+		"Executor instructions",
+		"You are the executor now",
+	} {
+		if strings.Contains(joined, unwanted) {
+			t.Fatalf("replayed assistant history leaked %q:\n%s", unwanted, joined)
+		}
+	}
+	if !strings.Contains(joined, "hello") {
+		t.Fatalf("real user message missing:\n%s", joined)
+	}
+	if !strings.Contains(joined, "visible answer") {
+		t.Fatalf("assistant answer missing:\n%s", joined)
+	}
+}
+
+func TestReplayHistoryDisplaysExecutorHandoffOriginalTask(t *testing.T) {
+	m := newTestChatTUI()
+	handoff := "<reasoning-language>\nuse Chinese\n</reasoning-language>\n\n" +
+		"# Reasonix executor handoff\n\n" +
+		"You are the executor now. Use your available tools to execute the task.\n\n" +
+		"Original task:\n" +
+		"<hook-context event=\"SessionStart\">\nlocal context\n</hook-context>\n\n" +
+		"<reasoning-language>\nuse Chinese\n</reasoning-language>\n\n" +
+		"hello\n\n" +
+		"Planner output:\nplanner boilerplate\n\n" +
+		"Executor instructions:\ninternal instructions"
+
+	m.replayHistory([]provider.Message{
+		{Role: provider.RoleUser, Content: handoff},
+		{Role: provider.RoleAssistant, Content: "visible answer"},
+	}, m.width)
+
+	joined := strings.Join(m.transcript, "\n")
+	for _, unwanted := range []string{
+		"Reasonix executor handoff",
+		"Planner output",
+		"Executor instructions",
+		"local context",
+		"reasoning-language",
+	} {
+		if strings.Contains(joined, unwanted) {
+			t.Fatalf("replayed handoff leaked %q:\n%s", unwanted, joined)
+		}
+	}
+	if !strings.Contains(joined, "hello") {
+		t.Fatalf("original task missing from replayed handoff:\n%s", joined)
+	}
+	if !strings.Contains(joined, "visible answer") {
+		t.Fatalf("assistant answer missing:\n%s", joined)
+	}
+}
+
+func TestReplayHistoryRestoresToolCallCards(t *testing.T) {
+	m := newTestChatTUI()
+
+	m.replayHistory([]provider.Message{
+		{Role: provider.RoleUser, Content: "inspect"},
+		{Role: provider.RoleAssistant, ReasoningContent: "Need to inspect files first.", ToolCalls: []provider.ToolCall{{
+			ID:        "call_1",
+			Name:      "read_file",
+			Arguments: `{"path":"README.md"}`,
+		}}},
+		{Role: provider.RoleTool, ToolCallID: "call_1", Name: "read_file", Content: "one\ntwo\n"},
+		{Role: provider.RoleAssistant, Content: "done"},
+	}, m.width)
+
+	joined := ansi.Strip(strings.Join(m.transcript, "\n"))
+	if !strings.Contains(joined, "› inspect") {
+		t.Fatalf("user turn missing:\n%s", joined)
+	}
+	if !hasThoughtFor(joined) {
+		t.Fatalf("tool-only assistant reasoning should stay visible as collapsed thinking:\n%s", joined)
+	}
+	if !strings.Contains(joined, "Read(README.md)") {
+		t.Fatalf("replayed tool dispatch missing:\n%s", joined)
+	}
+	if !strings.Contains(joined, "2 lines") {
+		t.Fatalf("replayed tool result summary missing:\n%s", joined)
+	}
+	if !strings.Contains(joined, "done") {
+		t.Fatalf("final assistant reply missing:\n%s", joined)
+	}
+}
+
+func TestReplayHistoryRestoresToolErrorCards(t *testing.T) {
+	m := newTestChatTUI()
+
+	m.replayHistory([]provider.Message{
+		{Role: provider.RoleUser, Content: "run it"},
+		{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{
+			ID:        "call_1",
+			Name:      "bash",
+			Arguments: `{"command":"make test"}`,
+		}}},
+		{Role: provider.RoleTool, ToolCallID: "call_1", Name: "bash", Content: "error: command exited: status 2\n"},
+	}, m.width)
+
+	joined := ansi.Strip(strings.Join(m.transcript, "\n"))
+	if !strings.Contains(joined, "Bash(make test)") {
+		t.Fatalf("replayed bash dispatch missing:\n%s", joined)
+	}
+	if !strings.Contains(joined, "error: command exited: status 2") {
+		t.Fatalf("replayed tool error missing:\n%s", joined)
+	}
+}
+
+func TestBuildConversationRecapSkipsInternalHandoff(t *testing.T) {
+	recap := buildConversationRecap([]provider.Message{
+		{Role: provider.RoleUser, Content: "hello"},
+		{Role: provider.RoleAssistant, Content: "# Reasonix executor handoff\n\nYou are the executor now.\n\nOriginal task:\nhello\n\nPlanner output:\nplan\n\nExecutor instructions:\ninternal"},
+		{Role: provider.RoleUser, Content: "You are already in the executor phase. The planner's read-only limitations do not apply to you.\n\nUse your available tools now to carry out the task."},
+		{Role: provider.RoleAssistant, Content: "visible answer"},
+	}, "focus on state", 80)
+
+	if !strings.Contains(recap, "焦点: focus on state") {
+		t.Fatalf("recap missing focus:\n%s", recap)
+	}
+	if strings.Contains(recap, "executor handoff") || strings.Contains(recap, "Executor instructions") || strings.Contains(recap, "executor phase") {
+		t.Fatalf("recap leaked internal handoff text:\n%s", recap)
+	}
+	if !strings.Contains(recap, "用户: hello") || !strings.Contains(recap, "助手: visible answer") {
+		t.Fatalf("recap missing visible turns:\n%s", recap)
+	}
+}
+
+func TestLazyReasoningToggleShiftsStreamingAnswer(t *testing.T) {
+	m := newTestChatTUI()
+	m.lazyReasoning = true
+
+	m.ingestEvent(event.Event{Kind: event.Reasoning, Text: "inspect context"})
+	m.ingestEvent(event.Event{Kind: event.Text, Text: "first paragraph\n\n"})
+	if m.answerIdx != 1 {
+		t.Fatalf("answerIdx = %d, want 1 before expanding reasoning; transcript=%v", m.answerIdx, m.transcript)
+	}
+	if !m.toggleReasoningAtTranscriptIdx(0) {
+		t.Fatalf("expected summary click to expand reasoning")
+	}
+	if m.answerIdx != 1 {
+		t.Fatalf("answerIdx = %d, want 1 after in-place reasoning expansion; transcript=%v", m.answerIdx, m.transcript)
+	}
+
+	m.ingestEvent(event.Event{Kind: event.Text, Text: "second paragraph\n\n"})
+	if m.answerIdx < 0 || m.answerIdx >= len(m.transcript) {
+		t.Fatalf("answerIdx out of range after streaming more text: idx=%d len=%d", m.answerIdx, len(m.transcript))
+	}
+	if strings.Contains(m.transcript[0], "second paragraph") {
+		t.Fatalf("streaming answer overwrote expanded reasoning body: transcript=%v", m.transcript)
+	}
+	if !strings.Contains(m.transcript[m.answerIdx], "second paragraph") {
+		t.Fatalf("streaming answer did not update answer block: idx=%d transcript=%v", m.answerIdx, m.transcript)
+	}
+
+	if !m.toggleReasoningAtTranscriptIdx(0) {
+		t.Fatalf("expected body click to collapse reasoning")
+	}
+	if m.answerIdx != 1 {
+		t.Fatalf("answerIdx = %d, want 1 after in-place reasoning collapse; transcript=%v", m.answerIdx, m.transcript)
+	}
+	m.ingestEvent(event.Event{Kind: event.Text, Text: "third paragraph\n\n"})
+	if m.answerIdx < 0 || m.answerIdx >= len(m.transcript) {
+		t.Fatalf("answerIdx out of range after collapsing reasoning: idx=%d len=%d", m.answerIdx, len(m.transcript))
+	}
+	if !strings.Contains(m.transcript[m.answerIdx], "third paragraph") {
+		t.Fatalf("streaming answer missing third paragraph: idx=%d transcript=%v", m.answerIdx, m.transcript)
+	}
+}
+
+func TestLazyReasoningToggleRecordsViewportAnchorDelta(t *testing.T) {
+	m := newTestChatTUI()
+	m.lazyReasoning = true
+
+	m.ingestEvent(event.Event{Kind: event.Reasoning, Text: strings.Repeat("long reasoning line ", 20)})
+	m.ingestEvent(event.Event{Kind: event.Text, Text: "Answer"})
+	if len(m.transcript) != 1 {
+		t.Fatalf("collapsed lazy reasoning should be one entry, transcript=%v", m.transcript)
+	}
+	if !m.toggleReasoningAtTranscriptIdx(0) {
+		t.Fatal("expected summary click to expand reasoning")
+	}
+	if len(m.transcript) != 1 {
+		t.Fatalf("expanded lazy reasoning should still be one entry, transcript=%v", m.transcript)
+	}
+	if m.viewportAnchorDelta <= 0 {
+		t.Fatalf("expansion should record a positive viewport anchor delta, got %d", m.viewportAnchorDelta)
+	}
+	m.viewportAnchorDelta = 0
+	if !m.toggleReasoningAtTranscriptIdx(0) {
+		t.Fatal("expected body click to collapse reasoning")
+	}
+	if m.viewportAnchorDelta >= 0 {
+		t.Fatalf("collapse should record a negative viewport anchor delta, got %d", m.viewportAnchorDelta)
+	}
+}
+
+func TestLazyReasoningHoverRestylesSummaryButNotExpandedBody(t *testing.T) {
+	prevColor := activeColorProfile
+	activeColorProfile = colorprofile.ANSI256
+	defer func() { activeColorProfile = prevColor }()
+
+	m := newTestChatTUI()
+	m.lazyReasoning = true
+
+	m.ingestEvent(event.Event{Kind: event.Reasoning, Text: "step one\nstep two"})
+	m.ingestEvent(event.Event{Kind: event.Text, Text: "Answer"})
+	collapsed := m.transcript[0]
+	if !m.setTranscriptHover(0, transcriptHoverReasoning) {
+		t.Fatal("expected hover to restyle the collapsed reasoning summary")
+	}
+	if m.transcript[0] == collapsed {
+		t.Fatalf("hover should change the rendered summary style")
+	}
+	if !hasThoughtFor(m.transcript[0]) {
+		t.Fatalf("hover should preserve summary text: %q", m.transcript[0])
+	}
+	if strings.Contains(ansi.Strip(m.transcript[0]), "\n") {
+		t.Fatalf("hovered summary should stay a single-line clickable target: %q", m.transcript[0])
+	}
+	if !m.toggleReasoningAtTranscriptIdx(0) {
+		t.Fatal("expected reasoning to expand")
+	}
+	body := m.transcript[0]
+	if m.setTranscriptHover(0, transcriptHoverReasoning) {
+		t.Fatal("hover over expanded reasoning body should not re-render")
+	}
+	if m.transcript[0] != body {
+		t.Fatalf("expanded reasoning body should not visually change on hover")
+	}
+	if !strings.Contains(ansi.Strip(m.transcript[0]), "step two") {
+		t.Fatalf("hover should preserve body text: %q", m.transcript[0])
+	}
+}
+
+func TestLazyReasoningExpandedPlainClickCollapsesButDragSelectionDoesNot(t *testing.T) {
+	makeExpanded := func(t *testing.T) chatTUI {
+		t.Helper()
+		m := newTestChatTUI()
+		m.ctrl = control.New(control.Options{})
+		m.lazyReasoning = true
+		m.ingestEvent(event.Event{Kind: event.Reasoning, Text: "step one\nstep two\nstep three"})
+		m.ingestEvent(event.Event{Kind: event.Text, Text: "Answer"})
+		if !m.toggleReasoningAtTranscriptIdx(0) {
+			t.Fatal("expected reasoning to expand")
+		}
+		wrapped, lineMap := wrapTranscriptEntries(m.transcript, 80)
+		m.viewport = viewport.New(viewport.WithWidth(80))
+		m.viewport.SetHeight(20)
+		m.viewport.SetContent(wrapped)
+		m.wrappedLines = strings.Split(wrapped, "\n")
+		m.wrappedLineTranscriptIdx = lineMap
+		return m
+	}
+	rowOf := func(t *testing.T, m chatTUI, needle string) int {
+		t.Helper()
+		for i, line := range m.wrappedLines {
+			if strings.Contains(ansi.Strip(line), needle) {
+				return i
+			}
+		}
+		t.Fatalf("could not find %q in wrapped lines:\n%s", needle, strings.Join(m.wrappedLines, "\n"))
+		return 0
+	}
+
+	click := makeExpanded(t)
+	row := rowOf(t, click, "step one")
+	next, _ := click.update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 6, Y: row})
+	click = next.(chatTUI)
+	next, _ = click.update(tea.MouseReleaseMsg{Button: tea.MouseLeft, X: 6, Y: row})
+	click = next.(chatTUI)
+	if click.reasoningExpandedAtTranscriptIdx(0) {
+		t.Fatal("plain click release should collapse expanded reasoning")
+	}
+
+	drag := makeExpanded(t)
+	row = rowOf(t, drag, "step one")
+	next, _ = drag.update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 6, Y: row})
+	drag = next.(chatTUI)
+	next, _ = drag.update(tea.MouseMotionMsg{Button: tea.MouseLeft, X: 15, Y: row})
+	drag = next.(chatTUI)
+	next, _ = drag.update(tea.MouseReleaseMsg{Button: tea.MouseLeft, X: 15, Y: row})
+	drag = next.(chatTUI)
+	if !drag.reasoningExpandedAtTranscriptIdx(0) {
+		t.Fatal("drag selection over expanded reasoning should not collapse it")
+	}
+	if !strings.Contains(ansi.Strip(drag.transcript[0]), "step two") {
+		t.Fatalf("drag selection should preserve expanded body, got %q", drag.transcript[0])
+	}
+}
+
+func TestShellClickTogglesTargetOutput(t *testing.T) {
+	m := newTestChatTUI()
+	m.shellOutputs["shell-1"] = strings.Join([]string{
+		"one-01", "one-02", "one-03", "one-04", "one-05", "one-06",
+		"one-07", "one-08", "one-09", "one-10", "one-11",
+	}, "\n")
+	m.shellOutputs["shell-2"] = strings.Join([]string{
+		"two-01", "two-02", "two-03", "two-04", "two-05", "two-06",
+		"two-07", "two-08", "two-09", "two-10", "two-11",
+	}, "\n")
+	m.shellTranscriptIdx["shell-1"] = 0
+	m.shellTranscriptIdx["shell-2"] = 1
+	m.transcript = []string{
+		m.renderShellOutputBlock("shell-1", false),
+		m.renderShellOutputBlock("shell-2", false),
+	}
+	wrapped, lineMap := wrapTranscriptEntries(m.transcript, 80)
+	m.wrappedLines = strings.Split(wrapped, "\n")
+	m.wrappedLineTranscriptIdx = lineMap
+
+	idx, kind, ok := m.clickableAtWrappedLine(0)
+	if !ok || idx != 0 || kind != transcriptHoverShell {
+		t.Fatalf("line 0 should hit first shell output, got idx=%d kind=%v ok=%v", idx, kind, ok)
+	}
+	if !m.toggleShellOutputAtTranscriptIdx(idx) {
+		t.Fatal("expected target shell output to toggle")
+	}
+	if !m.shellExpanded["shell-1"] {
+		t.Fatal("first shell output should be expanded")
+	}
+	if m.shellExpanded["shell-2"] {
+		t.Fatal("clicking first shell output must not expand the second")
 	}
 }
 
