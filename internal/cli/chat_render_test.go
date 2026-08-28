@@ -55,7 +55,7 @@ func newTestChatTUI() chatTUI {
 		statusLineCount:      2,
 		submittedInputCursor: -1,
 		queueEditCursor:      -1,
-		nextPasteID:          1,
+		composerModel:        composerModel{nextPasteID: 1},
 		reasoningLineIdx:     -1,
 		reasoningTextIdx:     -1,
 		answerIdx:            -1,
@@ -341,8 +341,8 @@ confidence: medium
 	if strings.Contains(joined, "first screenshot") || strings.Contains(joined, "<image-understanding") {
 		t.Fatalf("image detail should start collapsed:\n%s", joined)
 	}
-	if len(m.disclosureModel.index) != 1 {
-		t.Fatalf("image disclosure should be clickable, index=%v", m.disclosureModel.index)
+	if len(m.index) != 1 {
+		t.Fatalf("image disclosure should be clickable, index=%v", m.index)
 	}
 	if !m.toggleTranscriptDisclosureAt(0) {
 		t.Fatalf("expected image disclosure click to expand")
@@ -420,12 +420,12 @@ func TestReplayHistoryCollapsesReasoningContent(t *testing.T) {
 	if !strings.Contains(joined, "visible answer") {
 		t.Fatalf("replayed assistant answer missing:\n%s", joined)
 	}
-	if len(m.disclosureModel.index) != 1 {
-		t.Fatalf("replayed reasoning should be clickable, index=%v", m.disclosureModel.index)
+	if len(m.index) != 1 {
+		t.Fatalf("replayed reasoning should be clickable, index=%v", m.index)
 	}
 
 	idx := -1
-	for k := range m.disclosureModel.index {
+	for k := range m.index {
 		idx = k
 	}
 	if !m.toggleTranscriptDisclosureAt(idx) {
@@ -598,11 +598,11 @@ ui_state: internal UI state
 	if summaryIdx < 0 {
 		t.Fatalf("image understanding summary index missing:\n%s", joined)
 	}
-	id, ok := m.disclosureModel.index[summaryIdx]
+	id, ok := m.index[summaryIdx]
 	if !ok {
 		t.Fatalf("image understanding summary is not clickable")
 	}
-	block := m.disclosureModel.entries[id]
+	block := m.entries[id]
 	if block == nil || block.expanded {
 		t.Fatalf("image understanding should be remembered collapsed by default: %+v", block)
 	}
@@ -700,8 +700,8 @@ func TestReplayHistoryLazyReasoningIgnoresShowReasoning(t *testing.T) {
 	if !strings.Contains(joined, "visible answer") {
 		t.Fatalf("assistant answer missing:\n%s", joined)
 	}
-	if len(m.disclosureModel.index) != 1 {
-		t.Fatalf("replayed reasoning should remain clickable, index=%v", m.disclosureModel.index)
+	if len(m.index) != 1 {
+		t.Fatalf("replayed reasoning should remain clickable, index=%v", m.index)
 	}
 }
 

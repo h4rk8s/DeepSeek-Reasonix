@@ -186,7 +186,7 @@ func TestUseCapabilitySuccessResetsSharedRepeatReminder(t *testing.T) {
 			t.Fatalf("recoverable call was reminded early: %q", out)
 		}
 	}
-	if out := a.executeBatch(t.Context(), &a.turn, []provider.ToolCall{good}).results[0]; out != "remember done" {
+	if out := a.executeBatch(t.Context(), &a.turn, []provider.ToolCall{good}).results[0]; stripReceiptCitation(out) != "remember done" {
 		t.Fatalf("successful repair = %q", out)
 	}
 	for range 2 {
@@ -214,7 +214,7 @@ func TestCapabilityGatewayReceiptsBindPermissionAndResultToCanonicalTarget(t *te
 		"action":"call","capability_id":"remember","arguments":{}
 	}`}
 	batch := a.executeBatch(t.Context(), &a.turn, []provider.ToolCall{call})
-	if batch.err != nil || len(batch.results) != 1 || batch.results[0] != "remember done" {
+	if batch.err != nil || len(batch.results) != 1 || stripReceiptCitation(batch.results[0]) != "remember done" {
 		t.Fatalf("batch = %+v", batch)
 	}
 	if len(gate.checked) != 1 || gate.checked[0] != "remember" {
