@@ -154,7 +154,7 @@ func TestWrapCacheAppendOnlyMatchesFullRebuild(t *testing.T) {
 	m.width = 40
 	cw := 40
 	for i := range 5 {
-		m.transcript = append(m.transcript, fmt.Sprintf("block-%d %s", i, strings.Repeat("word ", 20)))
+		m.transcript = append(m.transcript, fixedTranscriptBlock(fmt.Sprintf("block-%d %s", i, strings.Repeat("word ", 20))))
 	}
 	m.rebuildWrappedLinesFull(cw)
 	full := append([]string(nil), m.wrappedLines...)

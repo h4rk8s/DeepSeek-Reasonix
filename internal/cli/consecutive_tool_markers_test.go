@@ -28,7 +28,7 @@ func TestParallelBashMarkersKeepOwnLineCount(t *testing.T) {
 	for _, id := range ids {
 		m.ingestEvent(event.Event{Kind: event.ToolResult, Tool: event.Tool{ID: id, Name: "bash", Output: strings.Repeat("line\n", 22)}})
 	}
-	transcript := m.transcript
+	transcript := renderedTranscriptBlocks(m.transcript)
 	if joined := strings.Join(transcript, "\n"); strings.Contains(joined, "-1 lines") {
 		t.Fatalf("transcript must not contain a negative line count:\n%s", joined)
 	}
@@ -78,7 +78,7 @@ func TestNonShellToolLateResultShowsCorrectCount(t *testing.T) {
 	// No ToolProgress for either; the result is the only signal.
 	m.ingestEvent(event.Event{Kind: event.ToolResult, Tool: event.Tool{ID: "call_a", Name: "bash", Output: "a\nsecond\nthird\n"}})
 	m.ingestEvent(event.Event{Kind: event.ToolResult, Tool: event.Tool{ID: "call_b", Name: "bash", Output: "b\n"}})
-	transcript := m.transcript
+	transcript := renderedTranscriptBlocks(m.transcript)
 	joined := strings.Join(transcript, "\n")
 	if strings.Contains(joined, "-1 lines") {
 		t.Fatalf("transcript must not contain a negative line count:\n%s", joined)

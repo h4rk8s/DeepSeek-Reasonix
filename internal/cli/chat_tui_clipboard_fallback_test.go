@@ -52,7 +52,7 @@ func TestCtrlVUnsupportedImageFallsBackToText(t *testing.T) {
 	next, cmd = m.Update(cmd())
 	m = next.(chatTUI)
 
-	if got := strings.Join(m.transcript, "\n"); strings.Contains(got, "wl-paste") {
+	if got := strings.Join(renderedTranscriptBlocks(m.transcript), "\n"); strings.Contains(got, "wl-paste") {
 		t.Fatalf("empty image clipboard surfaced a tooling notice:\n%s", got)
 	}
 	result := clipboardTextPasteResultFromCmd(t, cmd)
@@ -62,7 +62,7 @@ func TestCtrlVUnsupportedImageFallsBackToText(t *testing.T) {
 	if got, want := m.input.Value(), "before https://example.com/x"; got != want {
 		t.Fatalf("clipboard text fallback produced %q, want %q", got, want)
 	}
-	if got := strings.Join(m.transcript, "\n"); strings.Contains(got, "image/bmp") {
+	if got := strings.Join(renderedTranscriptBlocks(m.transcript), "\n"); strings.Contains(got, "image/bmp") {
 		t.Fatalf("successful text fallback surfaced an image error:\n%s", got)
 	}
 }
@@ -229,7 +229,7 @@ func TestLateTerminalPasteCancelsScheduledTextFallback(t *testing.T) {
 			if got, want := m.input.Value(), "term text"; got != want {
 				t.Fatalf("late terminal paste was duplicated: %q, want %q", got, want)
 			}
-			if got := strings.Join(m.transcript, "\n"); strings.Contains(got, i18n.M.ClipboardPasteEmptyNotice) {
+			if got := strings.Join(renderedTranscriptBlocks(m.transcript), "\n"); strings.Contains(got, i18n.M.ClipboardPasteEmptyNotice) {
 				t.Fatalf("terminal-owned paste surfaced a stale empty notice:\n%s", got)
 			}
 		})
@@ -247,7 +247,7 @@ func TestClipboardImagePasteKeepsNoticeForRealFailures(t *testing.T) {
 	if cmd != nil {
 		t.Fatal("a real clipboard failure must not trigger a text paste")
 	}
-	if got := strings.Join(m.transcript, "\n"); !strings.Contains(got, "wl-paste") {
+	if got := strings.Join(renderedTranscriptBlocks(m.transcript), "\n"); !strings.Contains(got, "wl-paste") {
 		t.Fatalf("a real clipboard failure lost its notice:\n%s", got)
 	} else if strings.ContainsAny(got, "\x1b\a") {
 		t.Fatalf("a real clipboard failure rendered terminal controls: %q", got)
@@ -280,7 +280,7 @@ func TestCtrlVEmptyImageProbeWithNoTextSurfacesNotice(t *testing.T) {
 			result := clipboardTextPasteResultFromCmd(t, cmd)
 			next, _ = m.Update(result)
 			m = next.(chatTUI)
-			if got := strings.Join(m.transcript, "\n"); !strings.Contains(got, tc.want) {
+			if got := strings.Join(renderedTranscriptBlocks(m.transcript), "\n"); !strings.Contains(got, tc.want) {
 				t.Fatalf("empty image probe notice = %q, want %q", got, tc.want)
 			}
 		})

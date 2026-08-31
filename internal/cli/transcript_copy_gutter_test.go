@@ -17,8 +17,7 @@ func transcriptSelectionModel(source transcriptSource) chatTUI {
 	contentWidth := transcriptContentWidth(m.width, m.nativeScrollback)
 	m.viewport.SetWidth(contentWidth)
 	rendered := m.renderTranscriptSource(source, m.width)
-	m.transcript = []string{rendered}
-	m.transcriptSources = []transcriptSource{source}
+	m.transcript = []transcriptBlock{{rendered: rendered, source: source}}
 	m.wrappedLines = wrapBlockLines(rendered, contentWidth)
 	return m
 }
@@ -115,7 +114,7 @@ func TestSelectedTextStripsWholeConnectorGutter(t *testing.T) {
 	m.viewport.SetWidth(contentWidth)
 	m.beginToolRunning("shell-copy-test")
 	m.streamToolOutput("shell-copy-test", "first\nsecond\n│ literal output")
-	m.wrappedLines = wrapBlockLines(m.transcript[0], contentWidth)
+	m.wrappedLines = wrapBlockLines(m.transcript[0].rendered, contentWidth)
 	if got, want := selectTranscriptLines(&m, 0, 2), "first\nsecond\n│ literal output"; got != want {
 		t.Fatalf("connector selection = %q, want %q", got, want)
 	}

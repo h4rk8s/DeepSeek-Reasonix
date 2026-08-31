@@ -17,6 +17,7 @@ type Message struct {
 	CompletionReceipt *eventwire.CompletionReceipt `json:"completionReceipt,omitempty"`
 	CompletionSummary *eventwire.CompletionSummary `json:"completionSummary,omitempty"`
 	TurnID            string                       `json:"turnId,omitempty"`
+	Kind              Kind                         `json:"kind,omitempty"`
 	Role              string                       `json:"role"`
 	Content           string                       `json:"content"`
 	Detail            string                       `json:"detail,omitempty"`
@@ -53,6 +54,7 @@ type Message struct {
 	ReadCompletion   *provider.ReadCompletion         `json:"readCompletion,omitempty"`
 	ProtocolRecovery *provider.ProtocolRecoveryAction `json:"protocolRecovery,omitempty"`
 	Diagnostic       *provider.FailureDiagnostic      `json:"diagnostic,omitempty"`
+	Missing          []string                         `json:"missing,omitempty"`
 	ServerSearch     []provider.ServerSearchCall      `json:"serverSearch,omitempty"`
 }
 
