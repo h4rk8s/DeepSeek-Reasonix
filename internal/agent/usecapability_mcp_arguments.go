@@ -34,13 +34,6 @@ func parseUseCapabilityArgs(raw json.RawMessage) (useCapabilityArgs, string, str
 	if args.Limit < 0 || args.Limit > 8 {
 		return args, "", "", fmt.Errorf("limit must be between 1 and 8 when provided")
 	}
-	if action == "call" && strings.HasPrefix(id, "mcp-tool:") {
-		normalized, err := normalizeMCPToolArguments(args.Arguments)
-		if err != nil {
-			return args, "", "", err
-		}
-		args.Arguments = normalized
-	}
 	return args, action, id, nil
 }
 

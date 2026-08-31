@@ -382,7 +382,8 @@ func (a *Agent) applyDeliveryPolicyGates(turn *turnRuntime, plan *toolCallPlan) 
 // only the private, repairable envelope errors marked by the resolver.
 func (a *Agent) proxyResolutionError(plan *toolCallPlan, err error) toolOutcome {
 	var inputErr *capabilityInputError
-	if errors.As(err, &inputErr) {
+	var resolutionErr *capabilityResolutionError
+	if errors.As(err, &inputErr) || errors.As(err, &resolutionErr) {
 		return a.diagnoseCapabilityInputFailure(plan, err)
 	}
 	return toolOutcome{output: fmt.Sprintf("error: %v", err), errMsg: firstLine(err.Error())}
