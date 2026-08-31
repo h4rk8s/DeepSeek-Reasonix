@@ -311,7 +311,7 @@ func TestChatResumeCommandRefusedWhenLeaseHeld(t *testing.T) {
 
 	m.runResumeCommand("/resume 1")
 
-	out := strings.Join(m.transcript, "\n")
+	out := strings.Join(renderedTranscriptBlocks(m.transcript), "\n")
 	if !strings.Contains(out, "in use by another Reasonix") {
 		t.Fatalf("refusal notice missing from transcript:\n%s", out)
 	}

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"reasonix/internal/event"
 	"reasonix/internal/i18n"
+	transcriptmodel "reasonix/internal/transcript"
 	"strings"
 	"time"
 )
@@ -82,7 +83,7 @@ func (m *chatTUI) ingestReasoning(e event.Event) {
 		m.commitSpacer()
 		m.thinkStart = time.Now()
 		m.reasoningLineIdx = len(m.transcript)
-		m.commitLine(dim("  ▎ " + i18n.M.ChatThinking))
+		m.commitSemanticLine(dim("  ▎ "+i18n.M.ChatThinking), transcriptmodel.KindThinkingDisclosure)
 		m.reasoningTextIdx = len(m.transcript)
 		m.commitLine("")
 		m.reasoningView = m.reasoningView[:0]
@@ -169,7 +170,7 @@ func (m *chatTUI) ingestToolResult(e event.Event) {
 		if detail != "" {
 			errText = detail + " · " + errText
 		}
-		m.commitLine("  " + red("●") + " " + bold(label) + " " + red("⊘ "+errText))
+		m.commitSemanticLine("  "+red("●")+" "+bold(label)+" "+red("⊘ "+errText), transcriptmodel.KindToolActivity)
 	}
 }
 
@@ -218,7 +219,7 @@ func (m *chatTUI) ingestNotice(e event.Event) {
 		m.finalizeStreamed()
 		summary := imageUnderstandingSummaryFromNotice(e.Text)
 		idx := len(m.transcript)
-		m.commitLine(renderImageUnderstandingSummary(summary, m.width, false))
+		m.commitSemanticLine(renderImageUnderstandingSummary(summary, m.width, false), transcriptmodel.KindImageDisclosure)
 		if detail := strings.TrimSpace(e.Detail); detail != "" {
 			m.rememberImageUnderstanding(idx, summary, detail)
 		}
@@ -229,7 +230,7 @@ func (m *chatTUI) ingestNotice(e event.Event) {
 		glyph = "!"
 	}
 	m.finalizeStreamed()
-	m.commitLine(fmt.Sprintf("  %s %s", glyph, e.Text))
+	m.commitSemanticLine(fmt.Sprintf("  %s %s", glyph, e.Text), transcriptmodel.KindForEvent(e))
 }
 
 func (m *chatTUI) ingestGuardianAssessment(e event.Event) {
@@ -260,7 +261,7 @@ func (m *chatTUI) ingestExtensionStatus(e event.Event) {
 	// severity-aware notice line, like event.Notice.
 	if line := extensionStatusLine(e.Extension); line != "" {
 		m.finalizeStreamed()
-		m.commitLine(line)
+		m.commitSemanticLine(line, transcriptmodel.KindExtension)
 	}
 }
 
@@ -271,18 +272,18 @@ func (m *chatTUI) ingestExtensionSurface(e event.Event) {
 	m.finalizeStreamed()
 	if e.Extension != nil && e.Extension.Notification != nil {
 		if line := extensionNotificationLine(e.Extension); line != "" {
-			m.commitLine(line)
+			m.commitSemanticLine(line, transcriptmodel.KindExtension)
 		}
 		return
 	}
 	for _, ln := range extensionSurfaceLines(e.Extension, m.width) {
-		m.commitLine(ln)
+		m.commitSemanticLine(ln, transcriptmodel.KindExtension)
 	}
 }
 
 func (m *chatTUI) ingestCompactionStarted(e event.Event) {
 	m.finalizeStreamed()
-	m.commitLine(dim("  ⋯ " + i18n.M.CompactionWorking))
+	m.commitSemanticLine(dim("  ⋯ "+i18n.M.CompactionWorking), transcriptmodel.KindCompaction)
 }
 
 func (m *chatTUI) ingestCompactionDone(e event.Event) {
@@ -299,7 +300,7 @@ func (m *chatTUI) ingestCompactionDone(e event.Event) {
 
 func (m *chatTUI) ingestPhase(e event.Event) {
 	m.finalizeStreamed()
-	m.commitLine(fmt.Sprintf("[%s]", e.Text))
+	m.commitSemanticLine(fmt.Sprintf("[%s]", e.Text), transcriptmodel.KindPlannerPhase)
 }
 
 func (m *chatTUI) ingestApprovalRequest(e event.Event) {

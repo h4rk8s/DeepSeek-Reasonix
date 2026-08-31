@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"reasonix/internal/provider"
+	"reasonix/internal/transcript"
 )
 
 type transcriptSourceKind uint8
@@ -32,13 +33,12 @@ const (
 )
 
 // transcriptSource retains only the semantic inputs needed to reproduce a
-// width-dependent transcript block. It deliberately sits beside []string
-// instead of replacing it: the rendered slice remains the fast path for every
-// frame and preserves the many index-based live tool/reasoning updates.
+// width-dependent transcript block.
 type transcriptSource struct {
-	kind transcriptSourceKind
-	raw  string
-	aux  string
+	kind      transcriptSourceKind
+	entryKind transcript.Kind
+	raw       string
+	aux       string
 	// copyRendered mirrors an already-rendered fixed block with internal copy
 	// spans. It is never displayed or persisted; selection copy consumes the
 	// spans to omit decorations whose provenance would otherwise be ambiguous.
@@ -48,19 +48,32 @@ type transcriptSource struct {
 	history      []provider.Message
 }
 
-func (m *chatTUI) ensureTranscriptSources() {
-	if len(m.transcriptSources) > len(m.transcript) {
-		m.transcriptSources = m.transcriptSources[:len(m.transcript)]
-	}
-	for len(m.transcriptSources) < len(m.transcript) {
-		m.transcriptSources = append(m.transcriptSources, transcriptSource{kind: transcriptSourceFixed})
+// transcriptBlock is the TUI's single transcript truth. Rendered content and
+// the semantic source that can reproduce it must move together through live
+// updates, replay, resize, copying, and mouse hit-testing.
+type transcriptBlock struct {
+	rendered string
+	source   transcriptSource
+}
+
+func fixedTranscriptBlock(rendered string) transcriptBlock {
+	return transcriptBlock{
+		rendered: rendered,
+		source:   transcriptSource{kind: transcriptSourceFixed},
 	}
 }
 
+func fixedTranscriptBlocks(rendered ...string) []transcriptBlock {
+	blocks := make([]transcriptBlock, len(rendered))
+	for i := range rendered {
+		blocks[i] = fixedTranscriptBlock(rendered[i])
+	}
+	return blocks
+}
+
 func (m *chatTUI) appendTranscriptBlock(rendered string, source transcriptSource) {
-	m.ensureTranscriptSources()
-	m.transcript = append(m.transcript, rendered)
-	m.transcriptSources = append(m.transcriptSources, source)
+	source.entryKind = semanticKindForTranscriptSource(source)
+	m.transcript = append(m.transcript, transcriptBlock{rendered: rendered, source: source})
 	// Wrap cache extends on next Update via append-only path.
 }
 
@@ -68,29 +81,49 @@ func (m *chatTUI) setTranscriptBlock(index int, rendered string, source transcri
 	if index < 0 || index >= len(m.transcript) {
 		return
 	}
-	m.ensureTranscriptSources()
-	m.transcript[index] = rendered
-	m.transcriptSources[index] = source
+	source.entryKind = semanticKindForTranscriptSource(source)
+	m.transcript[index] = transcriptBlock{rendered: rendered, source: source}
 	// In-place rewrite: drop wrap from this block onward so the next sync
 	// re-wraps the mutated block and everything after it.
 	m.invalidateWrapFrom(index)
+}
+
+func semanticKindForTranscriptSource(source transcriptSource) transcript.Kind {
+	if source.entryKind != "" {
+		return source.entryKind
+	}
+	switch source.kind {
+	case transcriptSourceAssistant:
+		return transcript.KindAssistant
+	case transcriptSourceUser:
+		return transcript.KindUserPrompt
+	case transcriptSourceReasoning:
+		return transcript.KindThinkingDisclosure
+	case transcriptSourceToolCard, transcriptSourceSubagentProgress:
+		return transcript.KindToolActivity
+	case transcriptSourceTurnReceipt:
+		return transcript.KindTurnMetrics
+	default:
+		return transcript.KindUnknown
+	}
+}
+
+func (m *chatTUI) commitSemanticLine(rendered string, kind transcript.Kind) {
+	*m.pendingCommit = append(*m.pendingCommit, rendered)
+	m.appendTranscriptBlock(rendered, transcriptSource{kind: transcriptSourceFixed, entryKind: kind})
 }
 
 func (m *chatTUI) removeTranscriptBlock(index int) {
 	if index < 0 || index >= len(m.transcript) {
 		return
 	}
-	m.ensureTranscriptSources()
 	m.transcript = append(m.transcript[:index], m.transcript[index+1:]...)
-	m.transcriptSources = append(m.transcriptSources[:index], m.transcriptSources[index+1:]...)
 	m.invalidateWrapFrom(index)
 }
 
 func (m *chatTUI) truncateTranscriptBlocks(length int) {
 	length = min(max(length, 0), len(m.transcript))
-	m.ensureTranscriptSources()
 	m.transcript = m.transcript[:length]
-	m.transcriptSources = m.transcriptSources[:length]
 	m.invalidateWrapFrom(length)
 }
 
@@ -250,12 +283,12 @@ func renderTurnReceiptBand(receipt string, contentWidth int) string {
 }
 
 func (m *chatTUI) reflowTranscript(terminalWidth int) {
-	m.ensureTranscriptSources()
-	for i, source := range m.transcriptSources {
+	for i := range m.transcript {
+		source := m.transcript[i].source
 		if source.kind == transcriptSourceFixed {
 			continue
 		}
-		m.transcript[i] = m.renderTranscriptSource(source, terminalWidth)
+		m.transcript[i].rendered = m.renderTranscriptSource(source, terminalWidth)
 	}
 }
 
@@ -274,13 +307,13 @@ type transcriptResizeAnchor struct {
 	valid    bool
 }
 
-func captureTranscriptResizeAnchor(blocks []string, width, yOffset int) transcriptResizeAnchor {
+func captureTranscriptResizeAnchor(blocks []transcriptBlock, width, yOffset int) transcriptResizeAnchor {
 	if width <= 0 || len(blocks) == 0 {
 		return transcriptResizeAnchor{}
 	}
 	remaining := max(yOffset, 0)
 	for i, block := range blocks {
-		lines := transcriptBlockLineCount(block, width)
+		lines := transcriptBlockLineCount(block.rendered, width)
 		if remaining < lines {
 			fraction := 0.0
 			if lines > 1 {
@@ -293,16 +326,16 @@ func captureTranscriptResizeAnchor(blocks []string, width, yOffset int) transcri
 	return transcriptResizeAnchor{block: len(blocks) - 1, fraction: 1, valid: true}
 }
 
-func (a transcriptResizeAnchor) yOffset(blocks []string, width int) int {
+func (a transcriptResizeAnchor) yOffset(blocks []transcriptBlock, width int) int {
 	if !a.valid || len(blocks) == 0 || width <= 0 {
 		return 0
 	}
 	block := min(max(a.block, 0), len(blocks)-1)
 	offset := 0
 	for i := range block {
-		offset += transcriptBlockLineCount(blocks[i], width)
+		offset += transcriptBlockLineCount(blocks[i].rendered, width)
 	}
-	lines := transcriptBlockLineCount(blocks[block], width)
+	lines := transcriptBlockLineCount(blocks[block].rendered, width)
 	if lines > 1 {
 		offset += int(math.Round(a.fraction * float64(lines-1)))
 	}
@@ -349,14 +382,14 @@ func remoteClipboardSession() bool {
 // wrapTranscriptEntries wraps transcript entries independently and records which
 // original transcript entry produced each visual row. Click handlers use the
 // mapping to toggle folded blocks without guessing from styled terminal text.
-func wrapTranscriptEntries(entries []string, width int) (string, []int) {
+func wrapTranscriptEntries(entries []transcriptBlock, width int) (string, []int) {
 	if len(entries) == 0 {
 		return "", []int{-1}
 	}
 	wrapped := make([]string, 0, len(entries))
 	lineToEntry := make([]int, 0, len(entries))
 	for i, entry := range entries {
-		rendered := wrapTranscript(entry, width)
+		rendered := wrapTranscript(entry.rendered, width)
 		lines := strings.Split(rendered, "\n")
 		wrapped = append(wrapped, lines...)
 		for range lines {
@@ -364,6 +397,14 @@ func wrapTranscriptEntries(entries []string, width int) (string, []int) {
 		}
 	}
 	return strings.Join(wrapped, "\n"), lineToEntry
+}
+
+func renderedTranscriptBlocks(entries []transcriptBlock) []string {
+	rendered := make([]string, len(entries))
+	for i := range entries {
+		rendered[i] = entries[i].rendered
+	}
+	return rendered
 }
 
 func copyToClipboard(text string) tea.Cmd {

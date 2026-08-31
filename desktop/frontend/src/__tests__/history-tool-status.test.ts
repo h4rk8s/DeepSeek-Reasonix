@@ -170,5 +170,19 @@ eq(
   true,
   "repeated __reasonix_local_only__ toolCallIds uniquify so transcript row keys cannot collide after restart",
 );
+
+const semanticItems = historyMessagesToItems([
+  { kind: "user_prompt", role: "legacy-unknown", content: "semantic user" },
+  { kind: "assistant", role: "legacy-unknown", content: "semantic answer" },
+  { kind: "recovery_notice", role: "legacy-unknown", content: "recovered" },
+] as HistoryMessage[], "semantic").items;
+eq(semanticItems[0]?.kind, "user", "canonical user kind drives hydration independently of legacy role");
+eq(semanticItems[1]?.kind, "assistant", "canonical assistant kind drives hydration independently of legacy role");
+eq(semanticItems[2]?.kind, "notice", "canonical recovery kind drives hydration independently of legacy role");
+
+const legacyRoleItem = historyMessagesToItems([
+  { role: "user", content: "legacy user" },
+] as HistoryMessage[], "legacy").items[0];
+eq(legacyRoleItem?.kind, "user", "legacy role-only history remains compatible");
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

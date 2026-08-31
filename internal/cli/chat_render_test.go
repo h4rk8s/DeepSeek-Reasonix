@@ -3,6 +3,7 @@ package cli
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/viewport"
@@ -81,6 +82,64 @@ func subagentPreview(id, channel, text string, truncated bool) event.Event {
 	return event.Event{Kind: event.ToolProgress, Tool: event.Tool{ID: id, Name: channel, Output: text, Truncated: truncated}}
 }
 
+func TestNativeReasoningCommitRegistersLazyDisclosure(t *testing.T) {
+	m := newTestChatTUI()
+	m.lazyReasoning = true
+	m.reasoningNative = true
+	m.thinkStart = time.Now().Add(-time.Second)
+	m.reasoning.WriteString("native provider reasoning body")
+	m.commitLine("before")
+
+	m.commitReasoning()
+
+	idx := firstTranscriptIndexContaining(m.transcript, "Thought for")
+	if idx < 0 {
+		t.Fatalf("native reasoning summary missing: %q", renderedTranscriptBlocks(m.transcript))
+	}
+	if !m.toggleReasoningAtTranscriptIdx(idx) {
+		t.Fatal("native reasoning summary is not registered as a disclosure")
+	}
+	expanded := ansi.Strip(m.transcript[idx].rendered)
+	if !strings.Contains(expanded, "native provider reasoning body") {
+		t.Fatalf("expanded native reasoning missing raw body: %q", expanded)
+	}
+	if strings.Contains(expanded, "Thought for") {
+		t.Fatalf("expanded native reasoning should replace its summary: %q", expanded)
+	}
+	if !m.toggleReasoningAtTranscriptIdx(idx) {
+		t.Fatal("native reasoning disclosure did not collapse")
+	}
+	if !hasThoughtFor(m.transcript[idx].rendered) {
+		t.Fatalf("collapsed native reasoning summary was not restored: %q", m.transcript[idx].rendered)
+	}
+}
+
+func TestNativeReasoningCommitKeepsExpandedDisclosureInteractive(t *testing.T) {
+	m := newTestChatTUI()
+	m.lazyReasoning = true
+	m.showReasoning = true
+	m.reasoningNative = true
+	m.thinkStart = time.Now().Add(-time.Second)
+	m.reasoning.WriteString("expanded native provider reasoning")
+
+	m.commitReasoning()
+
+	idx := firstTranscriptIndexContaining(m.transcript, "expanded native provider reasoning")
+	if idx < 0 {
+		t.Fatalf("expanded native reasoning missing: %q", renderedTranscriptBlocks(m.transcript))
+	}
+	if !m.toggleReasoningAtTranscriptIdx(idx) {
+		t.Fatal("expanded native reasoning is not registered as a disclosure")
+	}
+	collapsed := ansi.Strip(m.transcript[idx].rendered)
+	if !strings.Contains(collapsed, "Thought for") {
+		t.Fatalf("expanded native reasoning did not collapse to its summary: %q", collapsed)
+	}
+	if strings.Contains(collapsed, "expanded native provider reasoning") {
+		t.Fatalf("collapsed native reasoning still contains its body: %q", collapsed)
+	}
+}
+
 func TestCacheRateLabelKeepsTwoDecimals(t *testing.T) {
 	if got := cacheRateLabel("hit %s", 998, 1000); got != "hit 99.80%" {
 		t.Fatalf("cacheRateLabel = %q, want hit 99.80%%", got)
@@ -101,21 +160,21 @@ func TestIngestSeparatesReasoningFromAnswer(t *testing.T) {
 	m := newTestChatTUI()
 
 	m.ingestEvent(event.Event{Kind: event.Reasoning, Text: "…reasoning…"}) // thinking → marker + live text
-	if len(m.transcript) != 2 || !strings.Contains(m.transcript[0], "thinking") {
+	if len(m.transcript) != 2 || !strings.Contains(m.transcript[0].rendered, "thinking") {
 		t.Fatalf("thinking marker should appear at once, transcript=%v", m.transcript)
 	}
-	if !strings.Contains(m.transcript[1], "…reasoning…") {
+	if !strings.Contains(m.transcript[1].rendered, "…reasoning…") {
 		t.Fatalf("reasoning text should stream live below the marker, transcript=%v", m.transcript)
 	}
 
 	m.ingestEvent(event.Event{Kind: event.Text, Text: "Hello answer"}) // answer begins → block collapses
-	if len(m.transcript) != 2 || !hasThoughtFor(m.transcript[0]) {
+	if len(m.transcript) != 2 || !hasThoughtFor(m.transcript[0].rendered) {
 		t.Fatalf("block should collapse to a duration summary plus answer separator, transcript=%v", m.transcript)
 	}
-	if strings.TrimSpace(m.transcript[1]) != "" {
-		t.Fatalf("reasoning/answer separator = %q, want one blank block", m.transcript[1])
+	if strings.TrimSpace(m.transcript[1].rendered) != "" {
+		t.Fatalf("reasoning/answer separator = %q, want one blank block", m.transcript[1].rendered)
 	}
-	if strings.Contains(strings.Join(m.transcript, "\n"), "…reasoning…") {
+	if strings.Contains(strings.Join(renderedTranscriptBlocks(m.transcript), "\n"), "…reasoning…") {
 		t.Fatalf("collapsed reasoning text should be removed, transcript=%v", m.transcript)
 	}
 	if m.pending.String() != "Hello answer" {
@@ -126,11 +185,11 @@ func TestIngestSeparatesReasoningFromAnswer(t *testing.T) {
 	}
 
 	m.commitPending() // turn end
-	if len(m.transcript) != 3 || !strings.Contains(m.transcript[2], "Hello") {
+	if len(m.transcript) != 3 || !strings.Contains(m.transcript[2].rendered, "Hello") {
 		t.Fatalf("answer should commit as a separate entry, transcript=%v", m.transcript)
 	}
-	if plain := ansi.Strip(m.transcript[2]); !strings.HasPrefix(plain, "  ◆ Reasonix\n\n  Hello answer") {
-		t.Fatalf("answer should have an explicit assistant identity and indented body, got %q", plain)
+	if plain := ansi.Strip(m.transcript[2].rendered); !strings.HasPrefix(plain, "◆ Reasonix\n\nHello answer") {
+		t.Fatalf("answer should have an explicit assistant identity aligned with the transcript, got %q", plain)
 	}
 }
 
@@ -142,7 +201,7 @@ func TestAssistantAnswerWithoutReasoningHasNoLeadingSpacer(t *testing.T) {
 	if len(m.transcript) != 1 {
 		t.Fatalf("direct answer should remain one compact block, got %d: %v", len(m.transcript), m.transcript)
 	}
-	if plain := ansi.Strip(m.transcript[0]); !strings.HasPrefix(plain, "  ◆ Reasonix\n\n  Direct answer") {
+	if plain := ansi.Strip(m.transcript[0].rendered); !strings.HasPrefix(plain, "◆ Reasonix\n\nDirect answer") {
 		t.Fatalf("direct answer block = %q", plain)
 	}
 }
@@ -158,11 +217,11 @@ func TestTurnReceiptLeavesOneBlankRowAfterAssistantAnswer(t *testing.T) {
 	if len(m.transcript) != 3 {
 		t.Fatalf("answer + spacer + receipt should be three blocks, got %d: %v", len(m.transcript), m.transcript)
 	}
-	if strings.TrimSpace(m.transcript[1]) != "" {
-		t.Fatalf("answer/receipt separator = %q, want one blank block", m.transcript[1])
+	if strings.TrimSpace(m.transcript[1].rendered) != "" {
+		t.Fatalf("answer/receipt separator = %q, want one blank block", m.transcript[1].rendered)
 	}
-	if !strings.Contains(ansi.Strip(m.transcript[2]), "TURN") {
-		t.Fatalf("last block should be the turn receipt, got %q", m.transcript[2])
+	if !strings.Contains(ansi.Strip(m.transcript[2].rendered), "TURN") {
+		t.Fatalf("last block should be the turn receipt, got %q", m.transcript[2].rendered)
 	}
 }
 
@@ -196,14 +255,14 @@ func TestVerboseReasoningInsertsTextUnderSummary(t *testing.T) {
 	if len(m.transcript) != 3 {
 		t.Fatalf("verbose block should be summary + text + answer separator, transcript=%v", m.transcript)
 	}
-	if !hasThoughtFor(m.transcript[0]) {
-		t.Errorf("first line should be the duration summary, got %q", m.transcript[0])
+	if !hasThoughtFor(m.transcript[0].rendered) {
+		t.Errorf("first line should be the duration summary, got %q", m.transcript[0].rendered)
 	}
-	if !strings.Contains(m.transcript[1], "step one") || !strings.Contains(m.transcript[1], "step two") {
-		t.Errorf("verbose text should appear under the summary, got %q", m.transcript[1])
+	if !strings.Contains(m.transcript[1].rendered, "step one") || !strings.Contains(m.transcript[1].rendered, "step two") {
+		t.Errorf("verbose text should appear under the summary, got %q", m.transcript[1].rendered)
 	}
-	if strings.TrimSpace(m.transcript[2]) != "" {
-		t.Errorf("verbose reasoning/answer separator = %q, want blank block", m.transcript[2])
+	if strings.TrimSpace(m.transcript[2].rendered) != "" {
+		t.Errorf("verbose reasoning/answer separator = %q, want blank block", m.transcript[2].rendered)
 	}
 }
 
@@ -214,7 +273,7 @@ func TestLazyReasoningTogglesCompletedThinking(t *testing.T) {
 	m.ingestEvent(event.Event{Kind: event.Reasoning, Text: "step one\nstep two"})
 	m.ingestEvent(event.Event{Kind: event.Text, Text: "Answer"}) // closes the block
 
-	if len(m.transcript) != 1 || strings.Contains(strings.Join(m.transcript, "\n"), "step one") {
+	if len(m.transcript) != 1 || strings.Contains(strings.Join(renderedTranscriptBlocks(m.transcript), "\n"), "step one") {
 		t.Fatalf("lazy reasoning should start collapsed, transcript=%v", m.transcript)
 	}
 	if !m.toggleReasoningAtTranscriptIdx(0) {
@@ -223,15 +282,15 @@ func TestLazyReasoningTogglesCompletedThinking(t *testing.T) {
 	if len(m.transcript) != 1 {
 		t.Fatalf("expanded reasoning should replace the summary entry in place, transcript=%v", m.transcript)
 	}
-	if hasThoughtFor(m.transcript[0]) {
+	if hasThoughtFor(m.transcript[0].rendered) {
 		t.Fatalf("expanded reasoning should not keep the collapsed summary visible: %v", m.transcript)
 	}
-	if !strings.Contains(m.transcript[0], "step one") || !strings.Contains(m.transcript[0], "step two") {
+	if !strings.Contains(m.transcript[0].rendered, "step one") || !strings.Contains(m.transcript[0].rendered, "step two") {
 		t.Fatalf("expanded reasoning body missing text: %v", m.transcript)
 	}
-	expandedLines := strings.Split(ansi.Strip(m.transcript[0]), "\n")
+	expandedLines := strings.Split(ansi.Strip(m.transcript[0].rendered), "\n")
 	if len(expandedLines) < 4 {
-		t.Fatalf("expanded reasoning should include breathing room around the body: %q", ansi.Strip(m.transcript[0]))
+		t.Fatalf("expanded reasoning should include breathing room around the body: %q", ansi.Strip(m.transcript[0].rendered))
 	}
 	if strings.TrimSpace(expandedLines[0]) != "" {
 		t.Fatalf("expanded reasoning should start with a blank line, got first line %q", expandedLines[0])
@@ -242,13 +301,13 @@ func TestLazyReasoningTogglesCompletedThinking(t *testing.T) {
 	if strings.TrimSpace(expandedLines[len(expandedLines)-1]) != "" {
 		t.Fatalf("expanded reasoning should end with a blank line, got last line %q", expandedLines[len(expandedLines)-1])
 	}
-	if strings.Contains(ansi.Strip(m.transcript[0]), "⎿") {
-		t.Fatalf("expanded lazy reasoning should render as its own block, not a tool-output gutter: %q", m.transcript[0])
+	if strings.Contains(ansi.Strip(m.transcript[0].rendered), "⎿") {
+		t.Fatalf("expanded lazy reasoning should render as its own block, not a tool-output gutter: %q", m.transcript[0].rendered)
 	}
 	if !m.toggleReasoningAtTranscriptIdx(0) {
 		t.Fatalf("expected body click to collapse reasoning")
 	}
-	if len(m.transcript) != 1 || strings.Contains(strings.Join(m.transcript, "\n"), "step one") {
+	if len(m.transcript) != 1 || strings.Contains(strings.Join(renderedTranscriptBlocks(m.transcript), "\n"), "step one") {
 		t.Fatalf("collapsed reasoning should remove body again, transcript=%v", m.transcript)
 	}
 }
@@ -271,7 +330,7 @@ confidence: medium
 </image-understanding>`,
 	})
 
-	joined := ansi.Strip(strings.Join(m.transcript, "\n"))
+	joined := ansi.Strip(strings.Join(renderedTranscriptBlocks(m.transcript), "\n"))
 	if !strings.Contains(joined, "Image understood · 2 images · OCR + UI state · 0.8s") {
 		t.Fatalf("summary missing:\n%s", joined)
 	}
@@ -284,7 +343,7 @@ confidence: medium
 	if !m.toggleReasoningAtTranscriptIdx(0) {
 		t.Fatalf("expected image disclosure click to expand")
 	}
-	expanded := ansi.Strip(strings.Join(m.transcript, "\n"))
+	expanded := ansi.Strip(strings.Join(renderedTranscriptBlocks(m.transcript), "\n"))
 	if !strings.Contains(expanded, "Image #1") || !strings.Contains(expanded, "Image #2") {
 		t.Fatalf("expanded detail should split multiple images:\n%s", expanded)
 	}
@@ -294,7 +353,7 @@ confidence: medium
 	if !m.toggleReasoningAtTranscriptIdx(0) {
 		t.Fatalf("expected image disclosure click to collapse")
 	}
-	collapsed := ansi.Strip(strings.Join(m.transcript, "\n"))
+	collapsed := ansi.Strip(strings.Join(renderedTranscriptBlocks(m.transcript), "\n"))
 	if strings.Contains(collapsed, "first screenshot") {
 		t.Fatalf("collapsed image detail leaked:\n%s", collapsed)
 	}
@@ -322,7 +381,7 @@ confidence: medium
 	if !m.toggleReasoningAtTranscriptIdx(0) {
 		t.Fatalf("expected image disclosure click to expand")
 	}
-	expanded := ansi.Strip(strings.Join(m.transcript, "\n"))
+	expanded := ansi.Strip(strings.Join(renderedTranscriptBlocks(m.transcript), "\n"))
 	if !strings.Contains(expanded, "Image understanding") {
 		t.Fatalf("single image should use single-image heading:\n%s", expanded)
 	}
@@ -347,7 +406,7 @@ func TestReplayHistoryCollapsesReasoningContent(t *testing.T) {
 		},
 	}, m.width)
 
-	joined := strings.Join(m.transcript, "\n")
+	joined := strings.Join(renderedTranscriptBlocks(m.transcript), "\n")
 	if !hasThoughtFor(joined) {
 		t.Fatalf("replayed reasoning should render a collapsed summary:\n%s", joined)
 	}
@@ -368,13 +427,13 @@ func TestReplayHistoryCollapsesReasoningContent(t *testing.T) {
 	if !m.toggleReasoningAtTranscriptIdx(idx) {
 		t.Fatalf("expected replayed reasoning summary to expand")
 	}
-	if got := strings.Join(m.transcript, "\n"); !strings.Contains(got, "private step one") {
+	if got := strings.Join(renderedTranscriptBlocks(m.transcript), "\n"); !strings.Contains(got, "private step one") {
 		t.Fatalf("expanded replayed reasoning missing body:\n%s", got)
 	}
 	if !m.toggleReasoningAtTranscriptIdx(idx) {
 		t.Fatalf("expected replayed reasoning body to collapse")
 	}
-	if got := strings.Join(m.transcript, "\n"); strings.Contains(got, "private step one") {
+	if got := strings.Join(renderedTranscriptBlocks(m.transcript), "\n"); strings.Contains(got, "private step one") {
 		t.Fatalf("collapsed replayed reasoning leaked body:\n%s", got)
 	}
 }
@@ -392,7 +451,7 @@ func TestReplayHistorySuppressesReasoningForHiddenAssistantMessages(t *testing.T
 		{Role: provider.RoleAssistant, Content: "visible answer"},
 	}, m.width)
 
-	joined := strings.Join(m.transcript, "\n")
+	joined := strings.Join(renderedTranscriptBlocks(m.transcript), "\n")
 	if hasThoughtFor(joined) || strings.Contains(joined, "private handoff reasoning") {
 		t.Fatalf("hidden assistant history should not leave reasoning summaries:\n%s", joined)
 	}
@@ -424,7 +483,7 @@ Referenced context:
 		{Role: provider.RoleUser, Content: content},
 	}, m.width)
 
-	joined := strings.Join(m.transcript, "\n")
+	joined := strings.Join(renderedTranscriptBlocks(m.transcript), "\n")
 	for _, unwanted := range []string{
 		"Image understanding context",
 		"<image-understanding",
@@ -460,7 +519,7 @@ Referenced context:
 		{Role: provider.RoleUser, Content: content},
 	}, m.width)
 
-	joined := strings.Join(m.transcript, "\n")
+	joined := strings.Join(renderedTranscriptBlocks(m.transcript), "\n")
 	for _, unwanted := range []string{
 		"reasoning-language",
 		"可见推理",
@@ -504,7 +563,7 @@ ui_state: internal UI state
 		{Role: provider.RoleUser, Content: content},
 	}, m.width)
 
-	joined := strings.Join(m.transcript, "\n")
+	joined := strings.Join(renderedTranscriptBlocks(m.transcript), "\n")
 	for _, unwanted := range []string{
 		"Image understanding context",
 		"<image-understanding",
@@ -526,7 +585,7 @@ ui_state: internal UI state
 	}
 
 	var summaryIdx = -1
-	for idx, line := range m.transcript {
+	for idx, line := range renderedTranscriptBlocks(m.transcript) {
 		if strings.Contains(line, "Image understood") {
 			summaryIdx = idx
 			break
@@ -570,8 +629,8 @@ ui_state: same UI
 		{Role: provider.RoleUser, Content: "Image understanding context:\n\n" + detail + "\n\n[image1] same prompt"},
 	}, replay.width)
 
-	liveCollapsed := ansi.Strip(strings.Join(live.transcript, "\n"))
-	replayCollapsed := ansi.Strip(strings.Join(replay.transcript, "\n"))
+	liveCollapsed := ansi.Strip(strings.Join(renderedTranscriptBlocks(live.transcript), "\n"))
+	replayCollapsed := ansi.Strip(strings.Join(renderedTranscriptBlocks(replay.transcript), "\n"))
 	if !strings.Contains(liveCollapsed, "Image understood · 1 image · OCR + UI state") {
 		t.Fatalf("live summary missing:\n%s", liveCollapsed)
 	}
@@ -593,8 +652,8 @@ ui_state: same UI
 	if !replay.toggleReasoningAtTranscriptIdx(replayIdx) {
 		t.Fatalf("replay disclosure did not expand")
 	}
-	liveExpanded := ansi.Strip(strings.Join(live.transcript, "\n"))
-	replayExpanded := ansi.Strip(strings.Join(replay.transcript, "\n"))
+	liveExpanded := ansi.Strip(strings.Join(renderedTranscriptBlocks(live.transcript), "\n"))
+	replayExpanded := ansi.Strip(strings.Join(renderedTranscriptBlocks(replay.transcript), "\n"))
 	for _, want := range []string{"Image understanding", "<image-understanding", "same OCR", "same UI"} {
 		if !strings.Contains(liveExpanded, want) {
 			t.Fatalf("live expanded missing %q:\n%s", want, liveExpanded)
@@ -605,9 +664,9 @@ ui_state: same UI
 	}
 }
 
-func firstTranscriptIndexContaining(lines []string, needle string) int {
-	for idx, line := range lines {
-		if strings.Contains(line, needle) {
+func firstTranscriptIndexContaining(blocks []transcriptBlock, needle string) int {
+	for idx, block := range blocks {
+		if strings.Contains(block.rendered, needle) {
 			return idx
 		}
 	}
@@ -627,7 +686,7 @@ func TestReplayHistoryLazyReasoningIgnoresShowReasoning(t *testing.T) {
 		},
 	}, m.width)
 
-	joined := strings.Join(m.transcript, "\n")
+	joined := strings.Join(renderedTranscriptBlocks(m.transcript), "\n")
 	if !hasThoughtFor(joined) {
 		t.Fatalf("replayed reasoning should render a collapsed summary:\n%s", joined)
 	}
@@ -652,7 +711,7 @@ func TestReplayHistoryKeepsTurnStructure(t *testing.T) {
 		{Role: provider.RoleAssistant, Content: "second answer"},
 	}, m.width)
 
-	joined := ansi.Strip(strings.Join(m.transcript, "\n"))
+	joined := ansi.Strip(strings.Join(renderedTranscriptBlocks(m.transcript), "\n"))
 	if strings.Count(joined, "› ") != 2 {
 		t.Fatalf("replayed user turns should remain visible as separate bubbles:\n%s", joined)
 	}
@@ -683,7 +742,7 @@ func TestReplayHistorySkipsSyntheticExecutorHandoff(t *testing.T) {
 		{Role: provider.RoleAssistant, Content: "visible answer"},
 	}, m.width)
 
-	joined := strings.Join(m.transcript, "\n")
+	joined := strings.Join(renderedTranscriptBlocks(m.transcript), "\n")
 	if strings.Contains(joined, "executor phase") || strings.Contains(joined, "planner's read-only limitations") {
 		t.Fatalf("replayed history leaked synthetic executor handoff:\n%s", joined)
 	}
@@ -709,7 +768,7 @@ func TestReplayHistorySkipsAssistantExecutorHandoff(t *testing.T) {
 		{Role: provider.RoleAssistant, Content: "visible answer"},
 	}, m.width)
 
-	joined := strings.Join(m.transcript, "\n")
+	joined := strings.Join(renderedTranscriptBlocks(m.transcript), "\n")
 	for _, unwanted := range []string{
 		"Reasonix executor handoff",
 		"Planner output",
@@ -745,7 +804,7 @@ func TestReplayHistoryDisplaysExecutorHandoffOriginalTask(t *testing.T) {
 		{Role: provider.RoleAssistant, Content: "visible answer"},
 	}, m.width)
 
-	joined := strings.Join(m.transcript, "\n")
+	joined := strings.Join(renderedTranscriptBlocks(m.transcript), "\n")
 	for _, unwanted := range []string{
 		"Reasonix executor handoff",
 		"Planner output",
@@ -779,7 +838,7 @@ func TestReplayHistoryRestoresToolCallCards(t *testing.T) {
 		{Role: provider.RoleAssistant, Content: "done"},
 	}, m.width)
 
-	joined := ansi.Strip(strings.Join(m.transcript, "\n"))
+	joined := ansi.Strip(strings.Join(renderedTranscriptBlocks(m.transcript), "\n"))
 	if !strings.Contains(joined, "› inspect") {
 		t.Fatalf("user turn missing:\n%s", joined)
 	}
@@ -810,7 +869,7 @@ func TestReplayHistoryRestoresToolErrorCards(t *testing.T) {
 		{Role: provider.RoleTool, ToolCallID: "call_1", Name: "bash", Content: "error: command exited: status 2\n"},
 	}, m.width)
 
-	joined := ansi.Strip(strings.Join(m.transcript, "\n"))
+	joined := ansi.Strip(strings.Join(renderedTranscriptBlocks(m.transcript), "\n"))
 	if !strings.Contains(joined, "Bash(make test)") {
 		t.Fatalf("replayed bash dispatch missing:\n%s", joined)
 	}
@@ -858,10 +917,10 @@ func TestLazyReasoningToggleShiftsStreamingAnswer(t *testing.T) {
 	if m.answerIdx < 0 || m.answerIdx >= len(m.transcript) {
 		t.Fatalf("answerIdx out of range after streaming more text: idx=%d len=%d", m.answerIdx, len(m.transcript))
 	}
-	if strings.Contains(m.transcript[0], "second paragraph") {
+	if strings.Contains(m.transcript[0].rendered, "second paragraph") {
 		t.Fatalf("streaming answer overwrote expanded reasoning body: transcript=%v", m.transcript)
 	}
-	if !strings.Contains(m.transcript[m.answerIdx], "second paragraph") {
+	if !strings.Contains(m.transcript[m.answerIdx].rendered, "second paragraph") {
 		t.Fatalf("streaming answer did not update answer block: idx=%d transcript=%v", m.answerIdx, m.transcript)
 	}
 
@@ -875,7 +934,7 @@ func TestLazyReasoningToggleShiftsStreamingAnswer(t *testing.T) {
 	if m.answerIdx < 0 || m.answerIdx >= len(m.transcript) {
 		t.Fatalf("answerIdx out of range after collapsing reasoning: idx=%d len=%d", m.answerIdx, len(m.transcript))
 	}
-	if !strings.Contains(m.transcript[m.answerIdx], "third paragraph") {
+	if !strings.Contains(m.transcript[m.answerIdx].rendered, "third paragraph") {
 		t.Fatalf("streaming answer missing third paragraph: idx=%d transcript=%v", m.answerIdx, m.transcript)
 	}
 }
@@ -917,31 +976,31 @@ func TestLazyReasoningHoverRestylesSummaryButNotExpandedBody(t *testing.T) {
 
 	m.ingestEvent(event.Event{Kind: event.Reasoning, Text: "step one\nstep two"})
 	m.ingestEvent(event.Event{Kind: event.Text, Text: "Answer"})
-	collapsed := m.transcript[0]
+	collapsed := m.transcript[0].rendered
 	if !m.setTranscriptHover(0, transcriptHoverReasoning) {
 		t.Fatal("expected hover to restyle the collapsed reasoning summary")
 	}
-	if m.transcript[0] == collapsed {
+	if m.transcript[0].rendered == collapsed {
 		t.Fatalf("hover should change the rendered summary style")
 	}
-	if !hasThoughtFor(m.transcript[0]) {
-		t.Fatalf("hover should preserve summary text: %q", m.transcript[0])
+	if !hasThoughtFor(m.transcript[0].rendered) {
+		t.Fatalf("hover should preserve summary text: %q", m.transcript[0].rendered)
 	}
-	if strings.Contains(ansi.Strip(m.transcript[0]), "\n") {
-		t.Fatalf("hovered summary should stay a single-line clickable target: %q", m.transcript[0])
+	if strings.Contains(ansi.Strip(m.transcript[0].rendered), "\n") {
+		t.Fatalf("hovered summary should stay a single-line clickable target: %q", m.transcript[0].rendered)
 	}
 	if !m.toggleReasoningAtTranscriptIdx(0) {
 		t.Fatal("expected reasoning to expand")
 	}
-	body := m.transcript[0]
+	body := m.transcript[0].rendered
 	if m.setTranscriptHover(0, transcriptHoverReasoning) {
 		t.Fatal("hover over expanded reasoning body should not re-render")
 	}
-	if m.transcript[0] != body {
+	if m.transcript[0].rendered != body {
 		t.Fatalf("expanded reasoning body should not visually change on hover")
 	}
-	if !strings.Contains(ansi.Strip(m.transcript[0]), "step two") {
-		t.Fatalf("hover should preserve body text: %q", m.transcript[0])
+	if !strings.Contains(ansi.Strip(m.transcript[0].rendered), "step two") {
+		t.Fatalf("hover should preserve body text: %q", m.transcript[0].rendered)
 	}
 }
 
@@ -996,8 +1055,8 @@ func TestLazyReasoningExpandedPlainClickCollapsesButDragSelectionDoesNot(t *test
 	if !drag.reasoningExpandedAtTranscriptIdx(0) {
 		t.Fatal("drag selection over expanded reasoning should not collapse it")
 	}
-	if !strings.Contains(ansi.Strip(drag.transcript[0]), "step two") {
-		t.Fatalf("drag selection should preserve expanded body, got %q", drag.transcript[0])
+	if !strings.Contains(ansi.Strip(drag.transcript[0].rendered), "step two") {
+		t.Fatalf("drag selection should preserve expanded body, got %q", drag.transcript[0].rendered)
 	}
 }
 
@@ -1013,10 +1072,10 @@ func TestShellClickTogglesTargetOutput(t *testing.T) {
 	}, "\n")
 	m.shellTranscriptIdx["shell-1"] = 0
 	m.shellTranscriptIdx["shell-2"] = 1
-	m.transcript = []string{
+	m.transcript = fixedTranscriptBlocks(
 		m.renderShellOutputBlock("shell-1", false),
 		m.renderShellOutputBlock("shell-2", false),
-	}
+	)
 	wrapped, lineMap := wrapTranscriptEntries(m.transcript, 80)
 	m.wrappedLines = strings.Split(wrapped, "\n")
 	m.wrappedLineTranscriptIdx = lineMap
@@ -1070,7 +1129,7 @@ func TestStreamAnswerFlushesCompletedParagraphs(t *testing.T) {
 	if m.answerIdx < 0 {
 		t.Fatalf("a completed paragraph should open a streamed answer block")
 	}
-	joined := strings.Join(m.transcript, "\n")
+	joined := strings.Join(renderedTranscriptBlocks(m.transcript), "\n")
 	if !strings.Contains(joined, "First paragraph.") {
 		t.Errorf("completed paragraph should be on screen, transcript=%v", m.transcript)
 	}
@@ -1080,7 +1139,7 @@ func TestStreamAnswerFlushesCompletedParagraphs(t *testing.T) {
 
 	m.ingestEvent(event.Event{Kind: event.Text, Text: "is done now."})
 	m.ingestEvent(event.Event{Kind: event.Message})
-	final := strings.Join(m.transcript, "\n")
+	final := strings.Join(renderedTranscriptBlocks(m.transcript), "\n")
 	if !strings.Contains(final, "First paragraph.") || !strings.Contains(final, "Second para is done now.") {
 		t.Errorf("turn end should flush the whole answer, transcript=%v", m.transcript)
 	}
@@ -1117,7 +1176,7 @@ func TestToolProgressStreamsThenCollapses(t *testing.T) {
 	m.ingestEvent(event.Event{Kind: event.ToolProgress, Tool: event.Tool{ID: "b1", Output: "ok pkg/a\n"}})
 	m.ingestEvent(event.Event{Kind: event.ToolProgress, Tool: event.Tool{ID: "b1", Output: "ok pkg/b\n"}})
 
-	joined := strings.Join(m.transcript, "\n")
+	joined := strings.Join(renderedTranscriptBlocks(m.transcript), "\n")
 	if !strings.Contains(joined, "ok pkg/a") || !strings.Contains(joined, "ok pkg/b") {
 		t.Fatalf("live output should be visible while running:\n%s", joined)
 	}
@@ -1126,7 +1185,7 @@ func TestToolProgressStreamsThenCollapses(t *testing.T) {
 	}
 
 	m.ingestEvent(event.Event{Kind: event.ToolResult, Tool: event.Tool{ID: "b1", Name: "bash", Output: "ok pkg/a\nok pkg/b\n"}})
-	joined = strings.Join(m.transcript, "\n")
+	joined = strings.Join(renderedTranscriptBlocks(m.transcript), "\n")
 	if strings.Contains(joined, "ok pkg/a") {
 		t.Fatalf("output should collapse after completion:\n%s", joined)
 	}
@@ -1144,13 +1203,13 @@ func TestToolWorkingLineThenClears(t *testing.T) {
 	m.ingestEvent(event.Event{Kind: event.ToolDispatch, Tool: event.Tool{ID: "c1", Name: "symbol_context", Args: `{"q":"x"}`}})
 
 	m.tickToolRunning() // one elapsed tick fills the placeholder
-	joined := strings.Join(m.transcript, "\n")
+	joined := strings.Join(renderedTranscriptBlocks(m.transcript), "\n")
 	if !strings.Contains(joined, "⎿") || !strings.Contains(joined, "working") {
 		t.Fatalf("a running tool should show a 'working' progress line:\n%s", joined)
 	}
 
 	m.ingestEvent(event.Event{Kind: event.ToolResult, Tool: event.Tool{ID: "c1", Name: "symbol_context"}})
-	joined = strings.Join(m.transcript, "\n")
+	joined = strings.Join(renderedTranscriptBlocks(m.transcript), "\n")
 	if strings.Contains(joined, "working") {
 		t.Fatalf("working line should clear after the result:\n%s", joined)
 	}
@@ -1198,7 +1257,7 @@ func TestConsecutiveToolCallsKeepMarkersUnderOwnCard(t *testing.T) {
 	// card. Without the fix the late progress overwrites the last slot
 	// in place (or appends), so the first card's slot is left holding
 	// only the first live chunk, and both markers end up at the tail.
-	transcript := m.transcript
+	transcript := renderedTranscriptBlocks(m.transcript)
 	idx1, idx2 := -1, -1
 	for i, ln := range transcript {
 		if idx1 == -1 && strings.Contains(ln, "git status") {
@@ -1280,11 +1339,11 @@ func TestCollapsedShellHintUsesKeyboardShortcutOnly(t *testing.T) {
 	}
 	output := strings.Join(lines, "\n") + "\n"
 	m.shellOutputs[id] = output
-	m.transcript = []string{""}
+	m.transcript = fixedTranscriptBlocks("")
 
 	m.collapseShellSlot(id, 0, output)
 
-	got := m.transcript[0]
+	got := m.transcript[0].rendered
 	if !strings.Contains(got, "more lines (Ctrl+B)") {
 		t.Fatalf("collapsed shell hint should mention Ctrl+B, got %q", got)
 	}
@@ -1316,7 +1375,7 @@ func TestConsecutiveNonShellToolsDoNotRenderNegativeLineCount(t *testing.T) {
 	m.ingestEvent(event.Event{Kind: event.ToolResult, Tool: event.Tool{ID: "read_file-1", Name: "read_file", Output: "a.txt contents"}})
 	m.ingestEvent(event.Event{Kind: event.ToolResult, Tool: event.Tool{ID: "read_file-2", Name: "read_file", Output: "b.txt contents"}})
 
-	transcript := m.transcript
+	transcript := renderedTranscriptBlocks(m.transcript)
 	// The "-1 lines" bug surfaced literally as that text, so assert its
 	// absence first as a clear regression marker.
 	if joined := strings.Join(transcript, "\n"); strings.Contains(joined, "-1 lines") {
@@ -1358,7 +1417,7 @@ func TestToolProgressTailCap(t *testing.T) {
 	for i := range toolStreamTailLines + 5 {
 		m.ingestEvent(event.Event{Kind: event.ToolProgress, Tool: event.Tool{ID: "b1", Output: "line" + string(rune('A'+i)) + "\n"}})
 	}
-	block := m.transcript[m.toolStreamIdx]
+	block := m.transcript[m.toolStreamIdx].rendered
 	if got := strings.Count(block, "\n") + 1; got > toolStreamTailLines {
 		t.Fatalf("live block kept %d lines, want <= %d:\n%s", got, toolStreamTailLines, block)
 	}
@@ -1377,7 +1436,7 @@ func TestReasoningViewBounded(t *testing.T) {
 	if len(m.reasoningView) > reasoningViewMax {
 		t.Fatalf("reasoningView unbounded: %d > %d", len(m.reasoningView), reasoningViewMax)
 	}
-	if c := strings.Count(m.transcript[m.reasoningTextIdx], "\n") + 1; c > reasoningTailLines {
+	if c := strings.Count(m.transcript[m.reasoningTextIdx].rendered, "\n") + 1; c > reasoningTailLines {
 		t.Fatalf("live reasoning block kept %d lines, want <= %d", c, reasoningTailLines)
 	}
 }
@@ -1391,7 +1450,7 @@ func TestSubagentProgressBlockShowsPhaseElapsedActivity(t *testing.T) {
 	m.ingestEvent(subagentPreview("task-1", event.SubagentProgressReasoningName, "secret thinking", false))
 	m.ingestEvent(subagentStatus("task-1", "reasoning"))
 
-	joined := strings.Join(m.transcript, "\n")
+	joined := strings.Join(renderedTranscriptBlocks(m.transcript), "\n")
 	if !strings.Contains(joined, "running") && !strings.Contains(joined, "reasoning") {
 		t.Fatalf("progress block should show the phase:\n%s", joined)
 	}
@@ -1414,7 +1473,7 @@ func TestSubagentProgressVerboseShowsBoundedTails(t *testing.T) {
 	m.ingestEvent(subagentPreview("task-1", event.SubagentProgressTextName, "draft answer", false))
 	m.ingestEvent(subagentPreview("task-1", event.SubagentProgressNoticeName, "heads up", true))
 
-	joined := strings.Join(m.transcript, "\n")
+	joined := strings.Join(renderedTranscriptBlocks(m.transcript), "\n")
 	for _, want := range []string{"chain of thought", "draft answer", "heads up", "truncated"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("verbose block should show %q:\n%s", want, joined)
@@ -1423,7 +1482,7 @@ func TestSubagentProgressVerboseShowsBoundedTails(t *testing.T) {
 
 	// Tails are bounded: a huge reasoning body keeps only the recent tail.
 	m.ingestEvent(subagentPreview("task-1", event.SubagentProgressReasoningName, strings.Repeat("x", subagentPreviewMax*2)+"END", false))
-	joined = strings.Join(m.transcript, "\n")
+	joined = strings.Join(renderedTranscriptBlocks(m.transcript), "\n")
 	if !strings.Contains(joined, "END") || strings.Contains(joined, strings.Repeat("x", subagentPreviewMax)) {
 		t.Fatalf("verbose reasoning should keep a bounded tail:\n%s", joined)
 	}
@@ -1439,7 +1498,7 @@ func TestSubagentProgressTerminalCollapsesToOneLine(t *testing.T) {
 	m.ingestEvent(subagentPreview("task-1", event.SubagentProgressTextName, "answer body", false))
 	m.ingestEvent(subagentStatus("task-1", "completed"))
 
-	joined := strings.Join(m.transcript, "\n")
+	joined := strings.Join(renderedTranscriptBlocks(m.transcript), "\n")
 	if strings.Contains(joined, "answer body") {
 		t.Fatalf("terminal block must collapse the preview away:\n%s", joined)
 	}
@@ -1453,7 +1512,7 @@ func TestSubagentProgressTerminalCollapsesToOneLine(t *testing.T) {
 	m2.ingestEvent(event.Event{Kind: event.ToolDispatch, Tool: event.Tool{ID: "task-1", Name: "task", Args: `{"prompt":"work"}`}})
 	m2.ingestEvent(subagentPreview("task-1", event.SubagentProgressTextName, "answer body", false))
 	m2.ingestEvent(subagentStatus("task-1", "failed"))
-	joined = strings.Join(m2.transcript, "\n")
+	joined = strings.Join(renderedTranscriptBlocks(m2.transcript), "\n")
 	if !strings.Contains(joined, "answer body") || !strings.Contains(joined, "failed") {
 		t.Fatalf("verbose terminal block should keep the preview:\n%s", joined)
 	}
@@ -1482,19 +1541,19 @@ func TestSubagentProgressChildrenDoNotCrossStream(t *testing.T) {
 	if !ok1 || !ok2 || idx1 == idx2 {
 		t.Fatalf("children should own distinct fixed slots: %d %d", idx1, idx2)
 	}
-	if strings.Contains(m.transcript[idx1], "BBBB") || strings.Contains(m.transcript[idx2], "AAAA") {
-		t.Fatalf("children cross-streamed:\nidx1=%s\nidx2=%s", m.transcript[idx1], m.transcript[idx2])
+	if strings.Contains(m.transcript[idx1].rendered, "BBBB") || strings.Contains(m.transcript[idx2].rendered, "AAAA") {
+		t.Fatalf("children cross-streamed:\nidx1=%s\nidx2=%s", m.transcript[idx1].rendered, m.transcript[idx2].rendered)
 	}
-	if strings.Contains(m.transcript[idx1], "child two text") {
-		t.Fatalf("late child-2 content must never land in child-1's block:\n%s", m.transcript[idx1])
+	if strings.Contains(m.transcript[idx1].rendered, "child two text") {
+		t.Fatalf("late child-2 content must never land in child-1's block:\n%s", m.transcript[idx1].rendered)
 	}
 	// The late preview is attributed to the right child in memory (the default
 	// collapsed view hides bodies after terminal, verbose shows them again).
 	if got := m.subagentProgress["p-1/sub-2"]; got == nil || got.text != "child two text" {
 		t.Fatalf("late child-2 text = %+v, want it stored on child 2", got)
 	}
-	if strings.Contains(m.transcript[idx2], "BBBB") || !strings.Contains(m.transcript[idx2], "completed") {
-		t.Fatalf("child-2 terminal block = %q, want its own completed summary", m.transcript[idx2])
+	if strings.Contains(m.transcript[idx2].rendered, "BBBB") || !strings.Contains(m.transcript[idx2].rendered, "completed") {
+		t.Fatalf("child-2 terminal block = %q, want its own completed summary", m.transcript[idx2].rendered)
 	}
 }
 
@@ -1504,7 +1563,7 @@ func TestSubagentProgressOrdinaryToolProgressUnaffected(t *testing.T) {
 	m := newTestChatTUI()
 	m.ingestEvent(event.Event{Kind: event.ToolDispatch, Tool: event.Tool{ID: "b1", Name: "bash", Args: `{"command":"ls"}`}})
 	m.ingestEvent(event.Event{Kind: event.ToolProgress, Tool: event.Tool{ID: "b1", Output: "file.txt\n"}})
-	if joined := strings.Join(m.transcript, "\n"); !strings.Contains(joined, "file.txt") {
+	if joined := strings.Join(renderedTranscriptBlocks(m.transcript), "\n"); !strings.Contains(joined, "file.txt") {
 		t.Fatalf("ordinary tool progress must still stream:\n%s", joined)
 	}
 	if len(m.subagentProgress) != 0 {
@@ -1519,7 +1578,7 @@ func TestSubagentProgressUnknownReservedChannelIgnored(t *testing.T) {
 	m := newTestChatTUI()
 	m.ingestEvent(subagentPreview("task-1", event.SubagentProgressPrefix+"future", "must stay hidden", false))
 
-	if got := strings.Join(m.transcript, "\n"); got != "" {
+	if got := strings.Join(renderedTranscriptBlocks(m.transcript), "\n"); got != "" {
 		t.Fatalf("unknown reserved progress entered the transcript: %q", got)
 	}
 	if m.toolStreamID != "" || m.toolLineCount != 0 || m.toolPartial != "" {

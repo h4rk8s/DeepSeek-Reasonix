@@ -832,6 +832,7 @@ export interface HistoryMessage {
 	readCompletion?: import("../generated/desktopContract.generated").ReadCompletion;
 	turnId?: string;
 	readPause?: import("./readPause").WireReadPause;
+  kind?: TranscriptEntryKind;
   role: string;
   content: string;
   detail?: string;
@@ -858,8 +859,25 @@ export interface HistoryMessage {
   readiness?: WireFinalReadiness;
   protocolRecovery?: { id: string };
   diagnostic?: { kind: string; status?: number; traceId?: string; providerId?: string; providerDisplayName?: string; protocol?: string; requestPath?: string };
+  missing?: string[];
   serverSearch?: HistoryServerSearch[];
 }
+
+export type TranscriptEntryKind =
+  | "turn_boundary"
+  | "user_prompt"
+  | "planner_phase"
+  | "thinking_disclosure"
+  | "tool_activity"
+  | "image_disclosure"
+  | "assistant"
+  | "recap"
+  | "turn_metrics"
+  | "recovery_notice"
+  | "notice"
+  | "compaction"
+  | "extension"
+  | "unknown";
 
 export interface HistoryToolCall {
   id: string;

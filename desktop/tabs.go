@@ -24,6 +24,7 @@ import (
 	"reasonix/internal/notify"
 	"reasonix/internal/provider"
 	"reasonix/internal/store"
+	"reasonix/internal/transcript"
 	"reasonix/internal/turnevent"
 	"slices"
 	"sort"
@@ -1298,7 +1299,7 @@ func (t *WorkspaceTab) takeDisplayTurn(cancelled bool) []HistoryMessage {
 	}
 	state.planner.reset()
 	state.executor.reset()
-	return out
+	return transcript.NormalizeAll(out)
 }
 
 func enqueuePendingDisplayWrite(state *tabDisplayState, write *pendingDisplayWrite) {

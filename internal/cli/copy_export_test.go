@@ -227,7 +227,7 @@ func TestSlashExportDoesNotWriteEmptyMarkdown(t *testing.T) {
 			if exported := sessionExportFiles(t, dir); len(exported) != 0 {
 				t.Fatalf("exported files = %v, want none", exported)
 			}
-			if out := strings.Join(m.transcript, "\n"); !strings.Contains(out, "no messages to export") {
+			if out := strings.Join(renderedTranscriptBlocks(m.transcript), "\n"); !strings.Contains(out, "no messages to export") {
 				t.Fatalf("missing empty-export notice in transcript:\n%s", out)
 			}
 		})

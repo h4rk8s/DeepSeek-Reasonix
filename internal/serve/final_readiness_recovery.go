@@ -4,7 +4,9 @@ import (
 	"errors"
 
 	"reasonix/internal/control"
+	"reasonix/internal/event"
 	"reasonix/internal/provider"
+	"reasonix/internal/transcript"
 )
 
 func validateSubmitAction(format, action string) error {
@@ -38,7 +40,10 @@ func submitWithAction(ctrl control.SessionAPI, input, format, action string, rec
 func finalReadinessHistoryMessage(m provider.Message) ([]historyMessage, bool) {
 	if m.LocalOnly && len(m.ProtocolRecovery) > 0 {
 		if r, ok := provider.DecodeProtocolRecovery(m.ProtocolRecovery); ok && r.State == "pending" {
-			return []historyMessage{{Role: "protocol_recovery", ProtocolRecovery: &provider.ProtocolRecoveryAction{ID: r.ID}}}, true
+			return []historyMessage{{
+				Kind: transcript.KindRecoveryNotice, Role: "protocol_recovery", Code: control.ProtocolRecoveryAction,
+				Pending: true, ProtocolRecovery: &provider.ProtocolRecoveryAction{ID: r.ID},
+			}}, true
 		}
 		return nil, true
 	}
@@ -49,6 +54,7 @@ func finalReadinessHistoryMessage(m provider.Message) ([]historyMessage, bool) {
 		return nil, true
 	}
 	return []historyMessage{{
-		Role: "final_readiness", Missing: append([]string(nil), m.FinalReadinessRecovery.Missing...),
+		Kind: transcript.KindRecoveryNotice, Role: "final_readiness", Code: event.NoticeCodeFinalReadiness,
+		Pending: true, Missing: append([]string(nil), m.FinalReadinessRecovery.Missing...),
 	}}, true
 }

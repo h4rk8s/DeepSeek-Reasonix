@@ -15,9 +15,12 @@ import (
 	"reasonix/internal/boot"
 	"reasonix/internal/control"
 	"reasonix/internal/event"
+	"reasonix/internal/eventwire"
 	"reasonix/internal/provider"
 	"reasonix/internal/store"
 	"reasonix/internal/tool"
+	"reasonix/internal/transcript"
+	"reasonix/internal/turnevent"
 )
 
 func TestHistoryMessagesIncludeAssistantReasoning(t *testing.T) {
@@ -41,6 +44,9 @@ func TestHistoryMessagesIncludeAssistantReasoning(t *testing.T) {
 
 	if len(got) != len(msgs) {
 		t.Fatalf("history length = %d, want %d", len(got), len(msgs))
+	}
+	if got[0].Kind != transcript.KindUserPrompt || got[1].Kind != transcript.KindAssistant || got[2].Kind != transcript.KindToolActivity {
+		t.Fatalf("history semantic kinds = %q, %q, %q", got[0].Kind, got[1].Kind, got[2].Kind)
 	}
 	if got[0].Content != "display prompt" {
 		t.Fatalf("user display content = %q, want display prompt", got[0].Content)
@@ -74,6 +80,22 @@ func TestHistoryMessagesIncludeAssistantReasoning(t *testing.T) {
 	}
 	if got[3].Reasoning != "tool-call-only thinking" {
 		t.Fatalf("empty-content assistant reasoning = %q, want tool-call-only thinking", got[3].Reasoning)
+	}
+}
+
+func TestInterruptedProjectionCarriesRecoverySemanticKind(t *testing.T) {
+	got := displayMessagesFromProjection(turnevent.PendingProjection{
+		Status: event.TurnInterrupted,
+		Events: []turnevent.Envelope{{
+			Kind:  "message",
+			Event: eventwire.Event{Text: "partial"},
+		}},
+	})
+	if len(got) < 2 {
+		t.Fatalf("history length = %d, want partial output and recovery notice", len(got))
+	}
+	if last := got[len(got)-1]; last.Kind != transcript.KindRecoveryNotice {
+		t.Fatalf("recovery kind = %q, want %q", last.Kind, transcript.KindRecoveryNotice)
 	}
 }
 

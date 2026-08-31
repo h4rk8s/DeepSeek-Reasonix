@@ -844,15 +844,16 @@ export function historyMessagesToItems(messages: HistoryMessage[], idPrefix: str
 	const uniqueItemID = createUniqueItemIDAllocator();
   for (let messageIndex = 0; messageIndex < messages.length; messageIndex += 1) {
     const m = messages[messageIndex];
+    const entryKind = historyMessageKind(m);
     if (m.role === "system") continue;
-    if (m.role === "phase") {
+    if (entryKind === "planner_phase") {
       if (m.content.trim() !== "") {
         items.push({ kind: "phase", id: `${idPrefix}${seq}`, text: m.content });
         seq++;
       }
       continue;
     }
-    if (m.role === "notice") {
+    if (entryKind === "notice" || entryKind === "recovery_notice" || entryKind === "image_disclosure") {
       if (m.code === "read_completion") {
         const next = appendNoticeItem(items, seq, `${idPrefix}${seq}`, "info", m.content, m.detail, m.code);
         items = next.items;
@@ -894,7 +895,7 @@ export function historyMessagesToItems(messages: HistoryMessage[], idPrefix: str
       }
       continue;
     }
-    if (m.role === "compaction") {
+    if (entryKind === "compaction") {
       items.push({
         kind: "compaction",
         id: `${idPrefix}${seq}`,
@@ -907,13 +908,13 @@ export function historyMessagesToItems(messages: HistoryMessage[], idPrefix: str
       seq++;
       continue;
     }
-    if (m.role === "user") {
+    if (entryKind === "user_prompt") {
       if (m.content.trim() === "") continue;
       items.push({ kind: "user", id: `${idPrefix}${seq}`, text: m.content, submitText: m.submitText, createdAt: m.createdAt, checkpointTurn: m.checkpointTurn });
       seq++;
       continue;
     }
-    if (m.role === "assistant") {
+    if (entryKind === "assistant" || entryKind === "thinking_disclosure") {
       const memoryCitations = asArray<MemoryCitation>(m.memoryCitations);
       const built = historySearchAndAnswer(`${idPrefix}${seq}`, {
         content: m.content,
@@ -959,7 +960,7 @@ export function historyMessagesToItems(messages: HistoryMessage[], idPrefix: str
       }
       continue;
     }
-    if (m.role === "tool") {
+    if (entryKind === "tool_activity") {
       if ((m.toolCallId && consumedToolIDs.has(m.toolCallId)) || consumedPositionalToolIndexes.has(messageIndex)) continue;
       const output = m.toolResultArchived ? undefined : m.content;
       const error = m.toolResultError || (output ? historyToolError(output) : undefined);
@@ -981,6 +982,19 @@ export function historyMessagesToItems(messages: HistoryMessage[], idPrefix: str
     }
   }
   return { items, seq };
+}
+
+function historyMessageKind(message: HistoryMessage): NonNullable<HistoryMessage["kind"]> {
+  if (message.kind && message.kind !== "unknown") return message.kind;
+  switch (message.role) {
+    case "user": return "user_prompt";
+    case "assistant": return "assistant";
+    case "tool": return "tool_activity";
+    case "phase": return "planner_phase";
+    case "notice": return "notice";
+    case "compaction": return "compaction";
+    default: return "unknown";
+  }
 }
 
 function applyTurnCheckpoint(items: Item[], submissionId: string | undefined, turn: number | undefined): Item[] {

@@ -4,6 +4,7 @@ import (
 	"reasonix/internal/event"
 	"reasonix/internal/eventwire"
 	"reasonix/internal/provider"
+	"reasonix/internal/transcript"
 	"reasonix/internal/turnevent"
 	"strings"
 )
@@ -73,7 +74,7 @@ func (m *bufferedHistoryMessage) materialize() HistoryMessage {
 	if len(out.ToolCalls) > 0 {
 		out.ToolCalls = append([]HistoryToolCall(nil), out.ToolCalls...)
 	}
-	return out
+	return transcript.Normalize(out)
 }
 
 type displayTurnBuffer struct {
@@ -95,7 +96,7 @@ func (b *displayTurnBuffer) resultMessages() []HistoryMessage {
 			out = append(out, m.materialize())
 		}
 	}
-	return out
+	return transcript.NormalizeAll(out)
 }
 
 func (b *displayTurnBuffer) materialize() []HistoryMessage {
@@ -106,7 +107,7 @@ func (b *displayTurnBuffer) materialize() []HistoryMessage {
 	for _, message := range b.messages {
 		out = append(out, message.materialize())
 	}
-	return out
+	return transcript.NormalizeAll(out)
 }
 
 func recordHistoryDisplayEvent(buffer *displayTurnBuffer, e event.Event) {
@@ -283,7 +284,7 @@ func displayMessagesFromProjection(projection turnevent.PendingProjection) []His
 			})
 		}
 	}
-	return out
+	return transcript.NormalizeAll(out)
 }
 
 func recordHistoryToolDispatch(buffer *displayTurnBuffer, e event.Event) {

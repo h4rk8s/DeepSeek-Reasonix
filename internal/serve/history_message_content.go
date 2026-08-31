@@ -3,6 +3,7 @@ package serve
 import (
 	"reasonix/internal/agent"
 	"reasonix/internal/provider"
+	"reasonix/internal/transcript"
 )
 
 func historyMessageContent(message provider.Message) string {
@@ -12,23 +13,9 @@ func historyMessageContent(message provider.Message) string {
 	return message.Content
 }
 
-type historyToolCall struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Arguments string `json:"arguments"`
-}
+type historyToolCall = transcript.ToolCall
 
-type historyMessage struct {
-	ServerSearch     []provider.ServerSearchCall      `json:"serverSearch,omitempty"`
-	ProtocolRecovery *provider.ProtocolRecoveryAction `json:"protocolRecovery,omitempty"`
-	Role             string                           `json:"role"`
-	Content          string                           `json:"content"`
-	Missing          []string                         `json:"missing,omitempty"`
-	Reasoning        string                           `json:"reasoning,omitempty"`
-	ToolCalls        []historyToolCall                `json:"toolCalls,omitempty"`
-	ToolCallID       string                           `json:"toolCallId,omitempty"`
-	ToolName         string                           `json:"toolName,omitempty"`
-}
+type historyMessage = transcript.Entry
 
 func historyMessages(msgs []provider.Message) []historyMessage {
 	out := make([]historyMessage, 0, len(msgs))
@@ -66,5 +53,5 @@ func historyMessages(msgs []provider.Message) []historyMessage {
 		}
 		out = append(out, hm)
 	}
-	return out
+	return transcript.NormalizeAll(out)
 }

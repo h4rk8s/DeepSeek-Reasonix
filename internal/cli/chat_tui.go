@@ -42,6 +42,7 @@ import (
 	"reasonix/internal/sessioninbox"
 	"reasonix/internal/skill"
 	"reasonix/internal/tool"
+	transcriptmodel "reasonix/internal/transcript"
 )
 
 // chatTUI is a bubbletea Model that normally owns the terminal with an
@@ -245,15 +246,10 @@ type chatTUI struct {
 	eventCh    chan event.Event
 	started    bool // banner + resumed history committed once
 
-	// transcript holds every finalized line commitLine emits; the viewport
-	// renders a scrollable window of it (alt-screen owns the grid, so there's no
-	// native terminal scrollback). sel is the live left-drag text selection.
-	transcript []string
-	// transcriptSources runs parallel to transcript and retains raw, semantic
-	// content for blocks whose layout depends on terminal width. Fixed blocks
-	// keep their already-rendered text; markdown, user bubbles, reasoning, tool
-	// cards, and replay bundles are regenerated after a resize.
-	transcriptSources []transcriptSource
+	// transcript owns both every finalized rendered block and its semantic
+	// source. The viewport projects this typed store; sel is the live left-drag
+	// text selection.
+	transcript []transcriptBlock
 	// wrappedLines is the viewport line cache; wrapBlockLines / wrapWidth /
 	// wrapBlockCount support append-only updates without re-wrapping the full
 	// history on every streaming commit (#6978).
@@ -2348,7 +2344,6 @@ func (m *chatTUI) clearTranscriptDisplay() {
 		*m.pendingCommit = (*m.pendingCommit)[:0]
 	}
 	m.transcript = nil
-	m.transcriptSources = nil
 	m.clearWrapCache()
 	m.viewport.SetContent("")
 	m.resetCompletedReasoning()
@@ -2423,7 +2418,7 @@ func (m *chatTUI) commitLine(s string) {
 // the previous one with a single blank line, skipping it at the top of the
 // transcript or when a blank already trails so spacers never double up.
 func (m *chatTUI) commitSpacer() {
-	if n := len(m.transcript); n > 0 && strings.TrimSpace(m.transcript[n-1]) != "" {
+	if n := len(m.transcript); n > 0 && strings.TrimSpace(m.transcript[n-1].rendered) != "" {
 		m.commitLine("")
 	}
 }
@@ -3071,11 +3066,11 @@ func (m *chatTUI) collapsedDisclosureWidth(idx int) int {
 	}
 	block := m.completedReasoning[id]
 	if block == nil || block.expanded {
-		return ansi.StringWidth(ansi.Strip(m.transcript[idx]))
+		return ansi.StringWidth(ansi.Strip(m.transcript[idx].rendered))
 	}
 	summary := strings.TrimSpace(block.summary)
 	if summary == "" {
-		summary = strings.TrimSpace(ansi.Strip(m.transcript[idx]))
+		summary = strings.TrimSpace(ansi.Strip(m.transcript[idx].rendered))
 	}
 	return ansi.StringWidth(summary)
 }
@@ -3134,7 +3129,7 @@ func (m *chatTUI) renderTranscriptHover(idx int, kind transcriptHoverKind, hover
 	if idx < 0 || idx >= len(m.transcript) {
 		return false
 	}
-	before := m.transcript[idx]
+	before := m.transcript[idx].rendered
 	switch kind {
 	case transcriptHoverReasoning:
 		id, ok := m.reasoningIndex[idx]
@@ -3151,15 +3146,15 @@ func (m *chatTUI) renderTranscriptHover(idx int, kind transcriptHoverKind, hover
 			}
 			summary := block.summary
 			if strings.TrimSpace(summary) == "" {
-				summary = ansi.Strip(m.transcript[idx])
+				summary = ansi.Strip(m.transcript[idx].rendered)
 			}
-			m.transcript[idx] = m.renderTranscriptDisclosureSummary(block, summary, hover)
-			return m.transcript[idx] != before
+			m.transcript[idx].rendered = m.renderTranscriptDisclosureSummary(block, summary, hover)
+			return m.transcript[idx].rendered != before
 		}
 	case transcriptHoverShell:
 		if id, ok := m.shellOutputIDAtTranscriptIdx(idx); ok {
-			m.transcript[idx] = m.renderShellOutputBlock(id, hover)
-			return m.transcript[idx] != before
+			m.transcript[idx].rendered = m.renderShellOutputBlock(id, hover)
+			return m.transcript[idx].rendered != before
 		}
 	}
 	return false
@@ -3215,7 +3210,7 @@ func (m *chatTUI) toggleReasoningAtTranscriptIdx(transcriptIdx int) bool {
 		return false
 	}
 	contentW := transcriptContentWidth(m.width, m.nativeScrollback)
-	oldRows := transcriptEntryLineCount(m.transcript[block.summaryIdx], contentW)
+	oldRows := transcriptEntryLineCount(m.transcript[block.summaryIdx].rendered, contentW)
 	if block.expanded {
 		block.expanded = false
 		m.rewriteTranscriptBlock(block.summaryIdx, m.renderTranscriptDisclosureSummary(block, block.summary, false))
@@ -3223,7 +3218,7 @@ func (m *chatTUI) toggleReasoningAtTranscriptIdx(transcriptIdx int) bool {
 		block.expanded = true
 		m.rewriteTranscriptBlock(block.summaryIdx, m.renderTranscriptDisclosureBody(block, false))
 	}
-	newRows := transcriptEntryLineCount(m.transcript[block.summaryIdx], contentW)
+	newRows := transcriptEntryLineCount(m.transcript[block.summaryIdx].rendered, contentW)
 	if delta := newRows - oldRows; delta != 0 {
 		m.viewportAnchorDelta += delta
 	}
@@ -3809,7 +3804,7 @@ func (m *chatTUI) toggleShellOutputID(id string) bool {
 	m.rewriteTranscriptBlock(idx, m.renderShellOutputBlock(id, m.hoverTranscriptIdx == idx && m.hoverKind == transcriptHoverShell))
 	m.transcriptDirty = true
 	if m.nativeScrollback {
-		m.commitLine(m.transcript[idx])
+		m.commitLine(m.transcript[idx].rendered)
 	}
 	return true
 }
@@ -3873,10 +3868,22 @@ func (m *chatTUI) commitReasoning() {
 		raw := m.reasoning.String()
 		if strings.TrimSpace(raw) != "" {
 			secs := int(time.Since(m.thinkStart).Seconds())
+			summary := formatReasoningSummary(secs)
 			m.commitSpacer()
-			m.commitLine(dim(formatReasoningSummary(secs)))
-			if m.showReasoning && strings.TrimSpace(raw) != "" {
-				m.commitLine(reasoningBlock(raw, m.width, 0))
+			summaryIdx := len(m.transcript)
+			if m.lazyReasoning {
+				expanded := m.showReasoning
+				if expanded {
+					m.commitSemanticLine(reasoningBlockStyled(raw, m.width, 0, true, false), transcriptmodel.KindThinkingDisclosure)
+				} else {
+					m.commitSemanticLine(renderReasoningSummary(summary, m.width, false), transcriptmodel.KindThinkingDisclosure)
+				}
+				m.rememberCompletedReasoning(summaryIdx, summary, raw, expanded)
+			} else {
+				m.commitSemanticLine(dim(summary), transcriptmodel.KindThinkingDisclosure)
+				if m.showReasoning {
+					m.commitLine(reasoningBlock(raw, m.width, 0))
+				}
 			}
 		}
 		m.reasoning.Reset()
@@ -3906,7 +3913,7 @@ func (m *chatTUI) commitReasoning() {
 	}
 	secs := int(time.Since(m.thinkStart).Seconds())
 	summary := formatReasoningSummary(secs)
-	m.setTranscriptBlock(m.reasoningLineIdx, renderReasoningSummary(summary, m.width, false), transcriptSource{kind: transcriptSourceFixed})
+	m.setTranscriptBlock(m.reasoningLineIdx, renderReasoningSummary(summary, m.width, false), transcriptSource{kind: transcriptSourceFixed, entryKind: transcriptmodel.KindThinkingDisclosure})
 	if m.lazyReasoning {
 		expanded := m.showReasoning && hasRaw
 		if expanded {
@@ -6320,7 +6327,7 @@ func (m *chatTUI) replayHistory(history []provider.Message, width int) {
 			if imageUnderstanding != "" {
 				summary := imageUnderstandingSummaryFromRaw(imageUnderstanding)
 				idx := len(m.transcript)
-				m.commitLine(renderImageUnderstandingSummary(summary, width, false))
+				m.commitSemanticLine(renderImageUnderstandingSummary(summary, width, false), transcriptmodel.KindImageDisclosure)
 				m.rememberImageUnderstanding(idx, summary, imageUnderstanding)
 			}
 		case provider.RoleAssistant:
@@ -6344,10 +6351,10 @@ func (m *chatTUI) replayHistory(history []provider.Message, width int) {
 				summary := formatReasoningSummary(0)
 				idx := len(m.transcript)
 				if m.lazyReasoning {
-					m.commitLine(renderReasoningSummary(summary, width, false))
+					m.commitSemanticLine(renderReasoningSummary(summary, width, false), transcriptmodel.KindThinkingDisclosure)
 					m.rememberCompletedReasoning(idx, summary, reasoning, false)
 				} else {
-					m.commitLine(dim(summary))
+					m.commitSemanticLine(dim(summary), transcriptmodel.KindThinkingDisclosure)
 					if m.showReasoning {
 						m.commitTranscriptSource(transcriptSource{kind: transcriptSourceReasoning, raw: reasoning})
 					}
@@ -6369,7 +6376,7 @@ func (m *chatTUI) replayHistory(history []provider.Message, width int) {
 				continue
 			}
 			if block := replayToolResultBlock(msg.Content, width); block != "" {
-				m.commitLine(block)
+				m.commitSemanticLine(block, transcriptmodel.KindToolActivity)
 			}
 		}
 	}

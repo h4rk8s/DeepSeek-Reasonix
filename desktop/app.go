@@ -37,7 +37,6 @@ import (
 	"reasonix/internal/config"
 	"reasonix/internal/control"
 	"reasonix/internal/event"
-	"reasonix/internal/eventwire"
 	"reasonix/internal/evidence"
 	"reasonix/internal/extension/providerext"
 	"reasonix/internal/fileref"
@@ -58,6 +57,7 @@ import (
 	"reasonix/internal/taskcatalog"
 	"reasonix/internal/taskmonitor"
 	"reasonix/internal/tool"
+	"reasonix/internal/transcript"
 )
 
 // sessionTempFromController returns the logical-session private temporary
@@ -4961,44 +4961,9 @@ func (a *App) SwitchWorkspace(dir string) (string, error) {
 	return meta.WorkspaceRoot, nil
 }
 
-// HistoryMessage is one prior turn, for the frontend to repopulate its transcript
-// after a reload.
-type HistoryMessage struct {
-	CompletionReceipt  *eventwire.CompletionReceipt `json:"completionReceipt,omitempty"`
-	CompletionSummary  *eventwire.CompletionSummary `json:"completionSummary,omitempty"`
-	TurnID             string                       `json:"turnId,omitempty"`
-	Role               string                       `json:"role"`
-	Content            string                       `json:"content"`
-	Detail             string                       `json:"detail,omitempty"`
-	Code               string                       `json:"code,omitempty"`
-	SubmitText         string                       `json:"submitText,omitempty"`
-	CheckpointTurn     *int                         `json:"checkpointTurn,omitempty"`
-	CreatedAt          int64                        `json:"createdAt,omitempty"`
-	Reasoning          string                       `json:"reasoning,omitempty"`
-	MemoryCitations    []provider.MemoryCitation    `json:"memoryCitations,omitempty"`
-	WorkDurationMs     int64                        `json:"workDurationMs,omitempty"`
-	Level              string                       `json:"level,omitempty"`
-	ToolCalls          []HistoryToolCall            `json:"toolCalls,omitempty"`
-	ToolCallID         string                       `json:"toolCallId,omitempty"`
-	ToolName           string                       `json:"toolName,omitempty"`
-	ToolResultArchived bool                         `json:"toolResultArchived,omitempty"`
-	ToolResultError    string                       `json:"toolResultError,omitempty"`
-	// Execution is local shell metadata restored onto ToolCards after history
-	// reload. Omitted when absent so older frontends ignore it safely.
-	Execution        *provider.ToolExecution          `json:"execution,omitempty"`
-	Pending          bool                             `json:"pending,omitempty"`
-	Trigger          string                           `json:"trigger,omitempty"`
-	Messages         int                              `json:"messages,omitempty"`
-	Summary          string                           `json:"summary,omitempty"`
-	Archive          string                           `json:"archive,omitempty"`
-	DecisionReceipt  *provider.DecisionReceipt        `json:"decisionReceipt,omitempty"`
-	Readiness        *event.FinalReadiness            `json:"readiness,omitempty"`
-	ReadPause        *provider.ReadPause              `json:"readPause,omitempty"`
-	ReadCompletion   *provider.ReadCompletion         `json:"readCompletion,omitempty"`
-	ProtocolRecovery *provider.ProtocolRecoveryAction `json:"protocolRecovery,omitempty"`
-	Diagnostic       *provider.FailureDiagnostic      `json:"diagnostic,omitempty"`
-	ServerSearch     []provider.ServerSearchCall      `json:"serverSearch,omitempty"`
-}
+// HistoryMessage is the shared semantic transcript projection used by every
+// frontend. New fields remain additive so older Desktop clients can ignore them.
+type HistoryMessage = transcript.Entry
 
 func interruptedTurnHistoryNotice(recovery *provider.InterruptedTurnRecovery) HistoryMessage {
 	if recovery != nil && recovery.TerminalStatus == "failed" {
@@ -5024,20 +4989,7 @@ func interruptedTurnHistoryNotice(recovery *provider.InterruptedTurnRecovery) Hi
 	}
 }
 
-type HistoryToolCall struct {
-	ID                string `json:"id"`
-	Name              string `json:"name"`
-	Arguments         string `json:"arguments"`
-	ResolvedName      string `json:"resolvedName,omitempty"`
-	CapabilityID      string `json:"capabilityId,omitempty"`
-	ResolvedReadOnly  *bool  `json:"resolvedReadOnly,omitempty"`
-	Subject           string `json:"subject,omitempty"`
-	Summary           string `json:"summary,omitempty"`
-	Diff              string `json:"diff,omitempty"`
-	Added             int    `json:"added,omitempty"`
-	Removed           int    `json:"removed,omitempty"`
-	ArgumentsArchived bool   `json:"argumentsArchived,omitempty"`
-}
+type HistoryToolCall = transcript.ToolCall
 
 const (
 	defaultHistoryPageTurns = 60
@@ -5398,8 +5350,8 @@ func (state *historyMessageConvertState) convertHistoryMessage(
 	checkpointTurns map[int]int,
 	replayedTodoArgs map[string]string,
 	toolResults map[string]provider.Message,
-) []HistoryMessage {
-	var out []HistoryMessage
+) (out []HistoryMessage) {
+	defer func() { out = transcript.NormalizeAll(out) }()
 	if m.DecisionReceipt != nil {
 		return append(out, HistoryMessage{
 			Role:            "notice",

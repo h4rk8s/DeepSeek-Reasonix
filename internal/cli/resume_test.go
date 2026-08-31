@@ -38,7 +38,7 @@ func TestResumeDispatchOpensPicker(t *testing.T) {
 	if len(m.resumePick.entries) != 2 {
 		t.Fatalf("picker should have 2 sessions, got %d", len(m.resumePick.entries))
 	}
-	out := strings.Join(m.transcript, "\n")
+	out := strings.Join(renderedTranscriptBlocks(m.transcript), "\n")
 	if strings.Contains(out, "alpha prompt") || strings.Contains(out, "beta prompt") {
 		t.Fatalf("picker previews should not be duplicated in scrollback:\n%s", out)
 	}
@@ -264,7 +264,7 @@ func TestResumePickerNavigateAndSelect(t *testing.T) {
 	if got := ctrl.SessionPath(); got != bPath {
 		t.Fatalf("session path = %q, want %q", got, bPath)
 	}
-	if out := strings.Join(m.transcript, "\n"); !strings.Contains(out, "SECOND-SESSION-PROMPT") {
+	if out := strings.Join(renderedTranscriptBlocks(m.transcript), "\n"); !strings.Contains(out, "SECOND-SESSION-PROMPT") {
 		t.Fatalf("transcript should replay the resumed session:\n%s", out)
 	}
 	if m.resumePick != nil {
@@ -330,7 +330,7 @@ func TestResumeDispatchSwitchesAndReplays(t *testing.T) {
 	if got := ctrl.SessionPath(); got != otherPath {
 		t.Fatalf("session path = %q, want %q", got, otherPath)
 	}
-	if out := strings.Join(m.transcript, "\n"); !strings.Contains(out, "OTHER-SESSION-PROMPT") {
+	if out := strings.Join(renderedTranscriptBlocks(m.transcript), "\n"); !strings.Contains(out, "OTHER-SESSION-PROMPT") {
 		t.Fatalf("transcript should replay the resumed session:\n%s", out)
 	}
 }
@@ -386,7 +386,7 @@ func TestResumeWhileScrolledUpPinsViewportToBottom(t *testing.T) {
 	if got := ctrl.SessionPath(); got != otherPath {
 		t.Fatalf("session path = %q, want %q", got, otherPath)
 	}
-	out := strings.Join(cur.transcript, "\n")
+	out := strings.Join(renderedTranscriptBlocks(cur.transcript), "\n")
 	if !strings.Contains(out, "OTHER-SESSION-PROMPT") {
 		t.Fatalf("transcript should replay the resumed session:\n%s", out)
 	}

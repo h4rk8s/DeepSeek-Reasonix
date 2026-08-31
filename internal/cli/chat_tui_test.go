@@ -194,9 +194,9 @@ func TestTranscriptMirrorsCommits(t *testing.T) {
 	if len(m.transcript) != len(*m.pendingCommit) {
 		t.Fatalf("transcript (%d) and pendingCommit (%d) should hold the same lines", len(m.transcript), len(*m.pendingCommit))
 	}
-	for i := range m.transcript {
-		if m.transcript[i] != (*m.pendingCommit)[i] {
-			t.Errorf("line %d mismatch: transcript=%q pendingCommit=%q", i, m.transcript[i], (*m.pendingCommit)[i])
+	for i := range renderedTranscriptBlocks(m.transcript) {
+		if m.transcript[i].rendered != (*m.pendingCommit)[i] {
+			t.Errorf("line %d mismatch: transcript=%q pendingCommit=%q", i, m.transcript[i].rendered, (*m.pendingCommit)[i])
 		}
 	}
 }
@@ -655,12 +655,12 @@ func TestTranscriptResizeRerendersCommittedMarkdownAtNewWidth(t *testing.T) {
 	m.pending.WriteString(raw)
 	m.commitPending()
 	answer := len(m.transcript) - 1
-	oldRendered := ansi.Strip(m.transcript[answer])
+	oldRendered := ansi.Strip(m.transcript[answer].rendered)
 	oldLines := strings.Count(oldRendered, "\n") + 1
 
 	m0, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 14})
 	m = m0.(chatTUI)
-	newRendered := ansi.Strip(m.transcript[answer])
+	newRendered := ansi.Strip(m.transcript[answer].rendered)
 	newLines := strings.Count(newRendered, "\n") + 1
 
 	ruleWidth := 0
@@ -677,7 +677,7 @@ func TestTranscriptResizeRerendersCommittedMarkdownAtNewWidth(t *testing.T) {
 	if newLines >= oldLines {
 		t.Fatalf("wider transcript kept old hard wrapping: old lines=%d new lines=%d\n%s", oldLines, newLines, newRendered)
 	}
-	if got := m.transcriptSources[answer]; got.kind != transcriptSourceAssistant || got.raw != raw {
+	if got := m.transcript[answer].source; got.kind != transcriptSourceAssistant || got.raw != raw {
 		t.Fatalf("committed answer lost assistant source: %+v", got)
 	}
 }
@@ -700,7 +700,7 @@ func TestTranscriptResizeKeepsScrolledReaderOnSameBlock(t *testing.T) {
 	m = m0.(chatTUI)
 
 	contentWidth := transcriptContentWidth(m.width, false)
-	secondBlockStart := transcriptBlockLineCount(m.transcript[0], contentWidth)
+	secondBlockStart := transcriptBlockLineCount(m.transcript[0].rendered, contentWidth)
 	m.viewport.SetYOffset(secondBlockStart)
 	m.markUserScrolled() // explicit leave-tail; production paths do this via wheel/PgUp
 	if m.viewport.AtBottom() {
@@ -710,8 +710,8 @@ func TestTranscriptResizeKeepsScrolledReaderOnSameBlock(t *testing.T) {
 	m0, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 12})
 	m = m0.(chatTUI)
 	newContentWidth := transcriptContentWidth(m.width, false)
-	newSecondBlockStart := transcriptBlockLineCount(m.transcript[0], newContentWidth)
-	newThirdBlockStart := newSecondBlockStart + transcriptBlockLineCount(m.transcript[1], newContentWidth)
+	newSecondBlockStart := transcriptBlockLineCount(m.transcript[0].rendered, newContentWidth)
+	newThirdBlockStart := newSecondBlockStart + transcriptBlockLineCount(m.transcript[1].rendered, newContentWidth)
 	if offset := m.viewport.YOffset(); offset < newSecondBlockStart || offset >= newThirdBlockStart {
 		t.Fatalf("resize moved reader outside ANCHOR-1 block: offset=%d block=[%d,%d)", offset, newSecondBlockStart, newThirdBlockStart)
 	}
@@ -900,7 +900,7 @@ func TestClearCommandRequiresConfirmationAndDiscardsSession(t *testing.T) {
 	if len(current) != 1 || current[0].Role != provider.RoleSystem || current[0].Content != "sys" {
 		t.Fatalf("cleared context = %+v, want only system prompt", current)
 	}
-	if len(m.transcript) == 0 || strings.Contains(strings.Join(m.transcript, "\n"), "old context") {
+	if len(m.transcript) == 0 || strings.Contains(strings.Join(renderedTranscriptBlocks(m.transcript), "\n"), "old context") {
 		t.Fatalf("TUI transcript was not reset after /clear: %+v", m.transcript)
 	}
 	if len(m.shellTranscriptIdx) != 0 || len(m.shellOutputs) != 0 || len(m.shellExpanded) != 0 {
@@ -985,7 +985,7 @@ func TestClearCommandFailureKeepsDisplayAndDoesNotClearScreen(t *testing.T) {
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("failed /clear should preserve the session file: %v", err)
 	}
-	if !strings.Contains(strings.Join(m.transcript, "\n"), "visible transcript sentinel") {
+	if !strings.Contains(strings.Join(renderedTranscriptBlocks(m.transcript), "\n"), "visible transcript sentinel") {
 		t.Fatalf("failed /clear erased the visible transcript: %+v", m.transcript)
 	}
 	if m.shellOutputs["shell-old"] == "" || !m.shellExpanded["shell-old"] {
@@ -996,7 +996,7 @@ func TestClearCommandFailureKeepsDisplayAndDoesNotClearScreen(t *testing.T) {
 func TestClsClearsTranscriptDisplayState(t *testing.T) {
 	m := newTestChatTUI()
 	*m.pendingCommit = append(*m.pendingCommit, "stale pending")
-	m.transcript = []string{"banner", "shell card", "old shell output"}
+	m.transcript = fixedTranscriptBlocks("banner", "shell card", "old shell output")
 	m.wrappedLines = []string{"banner", "shell card", "old shell output"}
 	m.shellOutputs["shell-old"] = strings.Repeat("old shell output\n", shellPreviewLines+1)
 	m.shellExpanded["shell-old"] = false
@@ -1024,9 +1024,9 @@ func TestClsClearsTranscriptDisplayState(t *testing.T) {
 			m.toolLineCountByID, m.toolStreamID, m.toolStreamIdx, m.toolTail, m.toolPartial, m.toolLineCount)
 	}
 
-	before := strings.Join(m.transcript, "\n")
+	before := strings.Join(renderedTranscriptBlocks(m.transcript), "\n")
 	m.toggleShellOutput()
-	if after := strings.Join(m.transcript, "\n"); after != before {
+	if after := strings.Join(renderedTranscriptBlocks(m.transcript), "\n"); after != before {
 		t.Fatalf("Ctrl+B after /cls should not rewrite the cleared transcript:\nbefore=%s\nafter=%s", before, after)
 	}
 	if strings.Contains(before, "old shell output") || strings.Contains(before, "/cls") {
@@ -1078,9 +1078,9 @@ func TestMarkdownDividerFitsTranscriptContentWidth(t *testing.T) {
 }
 
 func TestWrapTranscriptEntriesMatchesJoinedTranscript(t *testing.T) {
-	entries := []string{"first", "second\nthird", ""}
+	entries := fixedTranscriptBlocks("first", "second\nthird", "")
 	wrapped, lineMap := wrapTranscriptEntries(entries, 80)
-	want := wrapTranscript(strings.Join(entries, "\n"), 80)
+	want := wrapTranscript(strings.Join(renderedTranscriptBlocks(entries), "\n"), 80)
 	if wrapped != want {
 		t.Fatalf("wrapped entries differ from joined transcript:\nwant %q\ngot  %q", want, wrapped)
 	}
@@ -1459,7 +1459,7 @@ func TestStatusCommandShowsRuntimeDetails(t *testing.T) {
 	m.effortLevel = "max"
 	m.balance = "$10.00"
 	m.runSlashCommand("/status")
-	out := ansi.Strip(strings.Join(m.transcript, "\n"))
+	out := ansi.Strip(strings.Join(renderedTranscriptBlocks(m.transcript), "\n"))
 	for _, want := range []string{"Session status", "provider/model", "effort max", "$10.00"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("/status output missing %q:\n%s", want, out)
@@ -1533,10 +1533,10 @@ func TestIngestEventRoutesByKind(t *testing.T) {
 	// Reasoning shows a marker plus the live thinking text streamed below it.
 	m := newTestChatTUI()
 	m.ingestEvent(event.Event{Kind: event.Reasoning, Text: "weighing options"})
-	if len(m.transcript) != 2 || !strings.Contains(m.transcript[0], "thinking") {
+	if len(m.transcript) != 2 || !strings.Contains(m.transcript[0].rendered, "thinking") {
 		t.Errorf("reasoning should show a live marker, transcript=%v", m.transcript)
 	}
-	if !strings.Contains(m.transcript[1], "weighing options") {
+	if !strings.Contains(m.transcript[1].rendered, "weighing options") {
 		t.Errorf("reasoning text should stream live, transcript=%v", m.transcript)
 	}
 
@@ -1615,7 +1615,7 @@ func TestUserBubbleEchoedImmediately(t *testing.T) {
 	m.bubblePending = true
 	m.state = tuiRunning
 
-	if !strings.Contains(strings.Join(m.transcript, "\n"), "hello world") {
+	if !strings.Contains(strings.Join(renderedTranscriptBlocks(m.transcript), "\n"), "hello world") {
 		t.Fatalf("bubble should be echoed to scrollback immediately, got %v", m.transcript)
 	}
 
@@ -1631,7 +1631,7 @@ func TestUserBubbleEchoedImmediately(t *testing.T) {
 	if m.bubblePending {
 		t.Fatalf("first packet should confirm the send")
 	}
-	if !strings.Contains(strings.Join(m.transcript, "\n"), "thinking") {
+	if !strings.Contains(strings.Join(renderedTranscriptBlocks(m.transcript), "\n"), "thinking") {
 		t.Errorf("reasoning packet should show the thinking marker, got %v", m.transcript)
 	}
 }
@@ -2093,14 +2093,14 @@ func TestLazyReasoningExpandKeepsLowerViewportAnchor(t *testing.T) {
 	cur.lazyReasoning = true
 	summary := formatReasoningSummary(1)
 	cur.transcript = cur.transcript[:0]
-	for i := 0; i < 10; i++ {
-		cur.transcript = append(cur.transcript, fmt.Sprintf("before-%02d", i))
+	for i := range 10 {
+		cur.transcript = append(cur.transcript, fixedTranscriptBlock(fmt.Sprintf("before-%02d", i)))
 	}
 	reasoningIdx := len(cur.transcript)
-	cur.transcript = append(cur.transcript, renderReasoningSummary(summary, cur.width, false))
-	cur.transcript = append(cur.transcript, "anchor below reasoning")
-	for i := 0; i < 20; i++ {
-		cur.transcript = append(cur.transcript, fmt.Sprintf("tail-%02d", i))
+	cur.transcript = append(cur.transcript, fixedTranscriptBlock(renderReasoningSummary(summary, cur.width, false)))
+	cur.transcript = append(cur.transcript, fixedTranscriptBlock("anchor below reasoning"))
+	for i := range 20 {
+		cur.transcript = append(cur.transcript, fixedTranscriptBlock(fmt.Sprintf("tail-%02d", i)))
 	}
 	cur.completedReasoning = map[int]*completedReasoningBlock{
 		0: {
@@ -2164,14 +2164,14 @@ func TestLazyReasoningMouseClickKeepsLowerViewportAnchor(t *testing.T) {
 	cur.lazyReasoning = true
 	summary := formatReasoningSummary(1)
 	cur.transcript = cur.transcript[:0]
-	for i := 0; i < 10; i++ {
-		cur.transcript = append(cur.transcript, fmt.Sprintf("before-%02d", i))
+	for i := range 10 {
+		cur.transcript = append(cur.transcript, fixedTranscriptBlock(fmt.Sprintf("before-%02d", i)))
 	}
 	reasoningIdx := len(cur.transcript)
-	cur.transcript = append(cur.transcript, renderReasoningSummary(summary, cur.width, false))
-	cur.transcript = append(cur.transcript, "anchor below reasoning")
-	for i := 0; i < 20; i++ {
-		cur.transcript = append(cur.transcript, fmt.Sprintf("tail-%02d", i))
+	cur.transcript = append(cur.transcript, fixedTranscriptBlock(renderReasoningSummary(summary, cur.width, false)))
+	cur.transcript = append(cur.transcript, fixedTranscriptBlock("anchor below reasoning"))
+	for i := range 20 {
+		cur.transcript = append(cur.transcript, fixedTranscriptBlock(fmt.Sprintf("tail-%02d", i)))
 	}
 	cur.completedReasoning = map[int]*completedReasoningBlock{
 		0: {
@@ -2207,10 +2207,10 @@ func TestLazyReasoningCollapsedHoverOnlyHitsSummaryText(t *testing.T) {
 	m := newTestChatTUI()
 	m.lazyReasoning = true
 	summary := formatReasoningSummary(0)
-	m.transcript = []string{
+	m.transcript = fixedTranscriptBlocks(
 		renderReasoningSummary(summary, m.width, false),
 		"answer below",
-	}
+	)
 	m.completedReasoning = map[int]*completedReasoningBlock{
 		0: {
 			raw:        "line one\nline two",
@@ -2272,14 +2272,14 @@ func TestLazyReasoningHoverThenMouseClickKeepsLowerViewportAnchor(t *testing.T) 
 	cur.lazyReasoning = true
 	summary := formatReasoningSummary(1)
 	cur.transcript = cur.transcript[:0]
-	for i := 0; i < 10; i++ {
-		cur.transcript = append(cur.transcript, fmt.Sprintf("before-%02d", i))
+	for i := range 10 {
+		cur.transcript = append(cur.transcript, fixedTranscriptBlock(fmt.Sprintf("before-%02d", i)))
 	}
 	reasoningIdx := len(cur.transcript)
-	cur.transcript = append(cur.transcript, renderReasoningSummary(summary, cur.width, false))
-	cur.transcript = append(cur.transcript, "anchor below reasoning")
-	for i := 0; i < 20; i++ {
-		cur.transcript = append(cur.transcript, fmt.Sprintf("tail-%02d", i))
+	cur.transcript = append(cur.transcript, fixedTranscriptBlock(renderReasoningSummary(summary, cur.width, false)))
+	cur.transcript = append(cur.transcript, fixedTranscriptBlock("anchor below reasoning"))
+	for i := range 20 {
+		cur.transcript = append(cur.transcript, fixedTranscriptBlock(fmt.Sprintf("tail-%02d", i)))
 	}
 	cur.completedReasoning = map[int]*completedReasoningBlock{
 		0: {
@@ -2339,11 +2339,11 @@ func TestLazyReasoningMouseClickKeepsAnchorWhenTranscriptDoesNotOverflow(t *test
 	cur := adv(newChatTUI(ctrl, "", ch, 80), tea.WindowSizeMsg{Width: 80, Height: 18})
 	cur.lazyReasoning = true
 	summary := formatReasoningSummary(0)
-	cur.transcript = []string{
+	cur.transcript = fixedTranscriptBlocks(
 		renderUserBubble("hello", cur.width, false),
 		renderReasoningSummary(summary, cur.width, false),
 		"anchor answer below reasoning",
-	}
+	)
 	cur.completedReasoning = map[int]*completedReasoningBlock{
 		0: {
 			raw:        "line one\nline two\nline three\nline four\nline five",
@@ -2598,7 +2598,7 @@ func TestMouseRightClickPasteOverSSHDoesNotReadRemoteClipboard(t *testing.T) {
 	if got := m.input.Value(); got != "before " {
 		t.Fatalf("SSH right-click paste changed composer to %q", got)
 	}
-	if got := strings.Join(m.transcript, "\n"); !strings.Contains(got, i18n.M.ClipboardTextPasteRemoteHint) {
+	if got := strings.Join(renderedTranscriptBlocks(m.transcript), "\n"); !strings.Contains(got, i18n.M.ClipboardTextPasteRemoteHint) {
 		t.Fatalf("SSH right-click paste notice = %q, want %q", got, i18n.M.ClipboardTextPasteRemoteHint)
 	}
 }
@@ -2716,7 +2716,7 @@ func TestMouseMiddleClickPasteOverSSHDoesNotReadRemotePrimary(t *testing.T) {
 
 	next, _ = m.Update(result)
 	m = next.(chatTUI)
-	if got := strings.Join(m.transcript, "\n"); !strings.Contains(got, i18n.M.ClipboardTextPasteRemoteHint) {
+	if got := strings.Join(renderedTranscriptBlocks(m.transcript), "\n"); !strings.Contains(got, i18n.M.ClipboardTextPasteRemoteHint) {
 		t.Fatalf("SSH middle-click paste notice = %q, want %q", got, i18n.M.ClipboardTextPasteRemoteHint)
 	}
 }
@@ -2820,7 +2820,7 @@ func TestReadPrimarySelectionRequestsTextAndPreservesNewlines(t *testing.T) {
 func TestMouseDragReleaseAutoCopies(t *testing.T) {
 	setLocalClipboardSession(t)
 	m := newTestChatTUI()
-	m.transcript = []string{"hello world"}
+	m.transcript = fixedTranscriptBlocks("hello world")
 	m.wrappedLines = []string{"hello world"}
 	m.sel = selection{active: true, anchor: selPos{line: 0, col: 0}, head: selPos{line: 0, col: 5}}
 
@@ -2862,7 +2862,7 @@ func TestMouseDragReleaseAutoCopies(t *testing.T) {
 func TestCtrlInsertCopiesTranscriptSelection(t *testing.T) {
 	setLocalClipboardSession(t)
 	m := newTestChatTUI()
-	m.transcript = []string{"hello world"}
+	m.transcript = fixedTranscriptBlocks("hello world")
 	m.wrappedLines = []string{"hello world"}
 	m.sel = selection{active: true, anchor: selPos{line: 0, col: 0}, head: selPos{line: 0, col: 5}}
 
@@ -2940,7 +2940,7 @@ func TestCtrlInsertWithoutSelectionIsNoOp(t *testing.T) {
 // copied notice — only clears the zero-width selection, as before.
 func TestMousePlainClickReleaseDoesNotCopy(t *testing.T) {
 	m := newTestChatTUI()
-	m.transcript = []string{"hello world"}
+	m.transcript = fixedTranscriptBlocks("hello world")
 	m.wrappedLines = []string{"hello world"}
 	at := selPos{line: 0, col: 3}
 	m.sel = selection{active: true, anchor: at, head: at} // empty: anchor == head
@@ -3019,7 +3019,7 @@ func TestImagePastePendingAppearsInFooter(t *testing.T) {
 // terminal starts intercepting the events that would have finished it.
 func TestToggleMouseCaptureFlipsModeAndClearsGestures(t *testing.T) {
 	m := newTestChatTUI()
-	m.transcript = []string{"hello world"}
+	m.transcript = fixedTranscriptBlocks("hello world")
 	m.wrappedLines = []string{"hello world"}
 	m.sel = selection{active: true, anchor: selPos{line: 0, col: 0}, head: selPos{line: 0, col: 5}}
 	m.selecting = true
@@ -4035,7 +4035,7 @@ func TestTextOnlyModelSendsPastedImageRefsForToolUse(t *testing.T) {
 	if !strings.Contains(runner.inputs[0], "OCR/image/vision tool") {
 		t.Fatalf("runner input should mention tool-based image handling, got %q", runner.inputs[0])
 	}
-	if got := strings.Join(m.transcript, "\n"); strings.Contains(got, "will not receive images directly") {
+	if got := strings.Join(renderedTranscriptBlocks(m.transcript), "\n"); strings.Contains(got, "will not receive images directly") {
 		t.Fatalf("text-only model should not block image refs that tools can read, transcript=%q", got)
 	}
 }
@@ -4078,7 +4078,7 @@ func TestVisionModelAllowsSendingPastedImageRefs(t *testing.T) {
 	if !strings.Contains(runner.inputs[0], "@"+path) {
 		t.Fatalf("runner input should retain the image ref context, got %q", runner.inputs[0])
 	}
-	if got := strings.Join(m.transcript, "\n"); strings.Contains(got, "will not receive images directly") {
+	if got := strings.Join(renderedTranscriptBlocks(m.transcript), "\n"); strings.Contains(got, "will not receive images directly") {
 		t.Fatalf("vision-capable model should not warn about image input, transcript=%q", got)
 	}
 }
@@ -4212,7 +4212,7 @@ func TestUnknownSlashCommandStartsOrdinaryTurnWithNotice(t *testing.T) {
 	if len(r.inputs) != 1 || r.inputs[0] != input {
 		t.Fatalf("unknown slash command should start one ordinary turn, inputs=%q", r.inputs)
 	}
-	if got := strings.Join(m.transcript, "\n"); !strings.Contains(got, "unknown command") {
+	if got := strings.Join(renderedTranscriptBlocks(m.transcript), "\n"); !strings.Contains(got, "unknown command") {
 		t.Fatalf("unknown slash command should be reported in transcript, got:\n%s", got)
 	}
 }
@@ -4232,7 +4232,7 @@ func TestSlashDocsShowsLocalOverviewWithoutStartingTurn(t *testing.T) {
 	if len(r.inputs) != 0 {
 		t.Fatalf("bare /docs should not start a model turn, inputs=%q", r.inputs)
 	}
-	transcript := strings.Join(m.transcript, "\n")
+	transcript := strings.Join(renderedTranscriptBlocks(m.transcript), "\n")
 	if !strings.Contains(transcript, "digest=sha256:") || !strings.Contains(transcript, "/docs") {
 		t.Fatalf("bare /docs transcript missing corpus identity or usage:\n%s", transcript)
 	}
@@ -4258,7 +4258,7 @@ func TestQualifiedSlashDocsBypassesConflictingCustomCommand(t *testing.T) {
 	if len(r.inputs) != 0 {
 		t.Fatalf("bare /reasonix:docs should not start a model turn, inputs=%q", r.inputs)
 	}
-	transcript := strings.Join(m.transcript, "\n")
+	transcript := strings.Join(renderedTranscriptBlocks(m.transcript), "\n")
 	if !strings.Contains(transcript, "digest=sha256:") || !strings.Contains(transcript, "Usage: /reasonix:docs <question>") || strings.Contains(transcript, "legacy docs") {
 		t.Fatalf("qualified built-in docs was shadowed:\n%s", transcript)
 	}
@@ -4440,7 +4440,7 @@ func TestSlashSubagentWithoutTaskStaysIdleWithUsageHint(t *testing.T) {
 	if m.state != tuiIdle {
 		t.Fatalf("taskless subagent slash left TUI state=%v, want idle", m.state)
 	}
-	if out := strings.Join(m.transcript, "\n"); !strings.Contains(out, "usage: /helper <task>") {
+	if out := strings.Join(renderedTranscriptBlocks(m.transcript), "\n"); !strings.Contains(out, "usage: /helper <task>") {
 		t.Fatalf("missing task usage hint:\n%s", out)
 	}
 }
@@ -4452,7 +4452,7 @@ func TestSlashMigrateShowsProgress(t *testing.T) {
 	if cmd := m.runSlashCommand("/migrate"); cmd != nil {
 		t.Fatal("/migrate should run locally without returning a command")
 	}
-	out := strings.Join(m.transcript, "\n")
+	out := strings.Join(renderedTranscriptBlocks(m.transcript), "\n")
 	for _, want := range []string{
 		"/migrate",
 		"migration rescue: checking legacy config and credentials",
@@ -4481,7 +4481,7 @@ func TestSlashMigrateFromImportsExplicitSessions(t *testing.T) {
 	if cmd := m.runSlashCommand(input); cmd != nil {
 		t.Fatal("/migrate --from should run locally without returning a command")
 	}
-	out := strings.Join(m.transcript, "\n")
+	out := strings.Join(renderedTranscriptBlocks(m.transcript), "\n")
 	for _, want := range []string{
 		input,
 		"migration rescue: scanning explicit legacy sessions from " + filepath.Dir(legacySessions),
@@ -4671,7 +4671,7 @@ func TestCtrlCCopySelection(t *testing.T) {
 
 	// Set up an active selection: anchor < head so there's something to copy.
 	// selection uses content-line coordinates; transcript needs at least one line.
-	m.transcript = []string{"hello world"}
+	m.transcript = fixedTranscriptBlocks("hello world")
 	m.wrappedLines = []string{"hello world"}
 	m.sel = selection{active: true, anchor: selPos{line: 0, col: 0}, head: selPos{line: 0, col: 5}}
 
@@ -4784,7 +4784,7 @@ func TestTruncateSubject(t *testing.T) {
 func TestCtrlCCopyBeatsClearInput(t *testing.T) {
 	m := newTestChatTUI()
 	m.input.SetValue("draft I'm typing") // non-empty composer
-	m.transcript = []string{"selected text"}
+	m.transcript = fixedTranscriptBlocks("selected text")
 	m.wrappedLines = []string{"selected text"}
 	m.sel = selection{active: true, anchor: selPos{line: 0, col: 0}, head: selPos{line: 0, col: 8}}
 
@@ -5082,7 +5082,7 @@ func TestMessageEventReplacesStreamedAnswer(t *testing.T) {
 	m.ingestEvent(event.Event{Kind: event.Text, Text: "answer <autoresearch-evidence>{\"id\":\"e1\"}</autoresearch-evidence> tail"})
 	m.ingestEvent(event.Event{Kind: event.Message, Text: "answer  tail"})
 
-	joined := strings.Join(m.transcript, "\n")
+	joined := strings.Join(renderedTranscriptBlocks(m.transcript), "\n")
 	if strings.Contains(joined, "autoresearch-evidence") {
 		t.Fatalf("committed transcript still contains evidence block:\n%s", joined)
 	}

@@ -159,7 +159,7 @@ func TestSkillsListRendersScrollback(t *testing.T) {
 	if len(m.transcript) == 0 {
 		t.Fatal("/skills list should commit a list to scrollback")
 	}
-	got := strings.Join(m.transcript, "\n")
+	got := strings.Join(renderedTranscriptBlocks(m.transcript), "\n")
 	if !strings.Contains(got, "skills") || !strings.Contains(got, "/review") {
 		t.Fatalf("/skills list output missing expected content:\n%s", got)
 	}
