@@ -203,7 +203,7 @@ func TestRunSlashCommandInvokesExtensionAction(t *testing.T) {
 		t.Fatal("extension action returned no cmd")
 	}
 	// The command line echoes synchronously; the invocation itself is async.
-	if plain := ansi.Strip(strings.Join(m.transcript, "\n")); !strings.Contains(plain, "› /alpha:act1 k=v extra") {
+	if plain := ansi.Strip(strings.Join(renderedTranscriptBlocks(m.transcript), "\n")); !strings.Contains(plain, "› /alpha:act1 k=v extra") {
 		t.Fatalf("echo missing, transcript = %q", plain)
 	}
 	msg, ok := cmd().(extensionActionMsg)
@@ -245,7 +245,7 @@ func TestRunSlashCommandResolutionOrder(t *testing.T) {
 	if cmd := m2.runSlashCommand("/alpha:act1"); cmd == nil {
 		t.Fatal("unknown slash should start a regular-message turn")
 	}
-	if plain := ansi.Strip(strings.Join(m2.transcript, "\n")); !strings.Contains(plain, "unknown command: /alpha:act1") {
+	if plain := ansi.Strip(strings.Join(renderedTranscriptBlocks(m2.transcript), "\n")); !strings.Contains(plain, "unknown command: /alpha:act1") {
 		t.Fatalf("unknown notice missing, transcript = %q", plain)
 	}
 	if m2.pendingRestore != "/alpha:act1" {
@@ -265,7 +265,7 @@ func TestIngestExtensionEvents(t *testing.T) {
 		Notification: &event.ExtensionNotificationView{Title: "heads up", Severity: "error"},
 	}})
 
-	plain := ansi.Strip(strings.Join(m.transcript, "\n"))
+	plain := ansi.Strip(strings.Join(renderedTranscriptBlocks(m.transcript), "\n"))
 	for _, want := range []string{"! [alpha] building: 3 of 9", "◆ CI", "green", "✗ [alpha] heads up"} {
 		if !strings.Contains(plain, want) {
 			t.Errorf("transcript missing %q:\n%s", want, plain)

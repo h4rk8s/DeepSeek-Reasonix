@@ -101,7 +101,7 @@ func (buffer *Buffer) ResultMessages() []Message {
 			out = append(out, m.materialize())
 		}
 	}
-	return out
+	return NormalizeAll(out)
 }
 
 func (buffer *Buffer) Messages() []Message {
@@ -112,7 +112,7 @@ func (buffer *Buffer) Messages() []Message {
 	for _, message := range buffer.messages {
 		out = append(out, message.materialize())
 	}
-	return out
+	return NormalizeAll(out)
 }
 
 func (buffer *Buffer) attachTurnStats(turnID string, usage *TurnUsage, durationMs, completedAt int64) {

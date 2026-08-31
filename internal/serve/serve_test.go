@@ -23,6 +23,7 @@ import (
 	"reasonix/internal/permission"
 	"reasonix/internal/provider"
 	"reasonix/internal/tool"
+	"reasonix/internal/transcript"
 )
 
 func TestTitlePromptRequiresUserMessageLanguage(t *testing.T) {
@@ -268,6 +269,9 @@ func TestHistoryMessagesPreserveToolDetails(t *testing.T) {
 
 	if len(got) != 3 {
 		t.Fatalf("history length = %d, want 3", len(got))
+	}
+	if got[0].Kind != transcript.KindUserPrompt || got[1].Kind != transcript.KindAssistant || got[2].Kind != transcript.KindToolActivity {
+		t.Fatalf("history semantic kinds = %q, %q, %q", got[0].Kind, got[1].Kind, got[2].Kind)
 	}
 	if got[1].Reasoning != "think" {
 		t.Fatalf("assistant reasoning = %q, want think", got[1].Reasoning)

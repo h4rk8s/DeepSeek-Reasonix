@@ -48,7 +48,7 @@ func (m *chatTUI) syncWrappedLines(contentW int, forceFull bool) bool {
 	}
 	// Suffix-only: re-wrap mutated/new blocks from wrapBlockCount..n.
 	for i := m.wrapBlockCount; i < n; i++ {
-		blockLines := wrapBlockLines(m.transcript[i], contentW)
+		blockLines := wrapBlockLines(m.transcript[i].rendered, contentW)
 		m.wrapBlockLines = append(m.wrapBlockLines, blockLines)
 	}
 	// Rebuild the flat list from the (prefix-stable + new suffix) block wraps
@@ -67,7 +67,7 @@ func (m *chatTUI) rebuildWrappedLinesFull(contentW int) bool {
 	n := len(m.transcript)
 	m.wrapBlockLines = make([][]string, n)
 	for i := range n {
-		m.wrapBlockLines[i] = wrapBlockLines(m.transcript[i], contentW)
+		m.wrapBlockLines[i] = wrapBlockLines(m.transcript[i].rendered, contentW)
 	}
 	// Prefer per-block flatten over join-then-wrap so streaming suffix rebuilds
 	// stay consistent with append-only updates (both use wrapBlockLines).
@@ -176,6 +176,5 @@ func (m *chatTUI) rewriteTranscriptBlock(index int, rendered string) {
 	if index < 0 || index >= len(m.transcript) {
 		return
 	}
-	m.ensureTranscriptSources()
-	m.setTranscriptBlock(index, rendered, m.transcriptSources[index])
+	m.setTranscriptBlock(index, rendered, m.transcript[index].source)
 }

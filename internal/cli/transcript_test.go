@@ -167,8 +167,7 @@ func TestSelectedTextRestoresMathWithoutReusingRawColumns(t *testing.T) {
 	m.viewport.SetWidth(contentWidth)
 	source := transcriptSource{kind: transcriptSourceMarkdown, raw: `before $\alpha$ after`}
 	rendered := m.renderTranscriptSource(source, m.width)
-	m.transcript = []string{rendered}
-	m.transcriptSources = []transcriptSource{source}
+	m.transcript = []transcriptBlock{{rendered: rendered, source: source}}
 	m.wrappedLines = strings.Split(wrapTranscript(rendered, contentWidth), "\n")
 
 	lineIndex := -1
@@ -227,8 +226,7 @@ func TestSelectedTextRestoresMathFromReplayBundle(t *testing.T) {
 		},
 	}
 	rendered := m.renderTranscriptSource(source, m.width)
-	m.transcript = []string{rendered}
-	m.transcriptSources = []transcriptSource{source}
+	m.transcript = []transcriptBlock{{rendered: rendered, source: source}}
 	m.wrappedLines = strings.Split(wrapTranscript(rendered, contentWidth), "\n")
 
 	lineIndex := -1
@@ -294,8 +292,7 @@ func TestSelectedTextPreservesProseAroundMath(t *testing.T) {
 	m.viewport.SetWidth(contentWidth)
 	source := transcriptSource{kind: transcriptSourceMarkdown, raw: `before $\frac{1}{2}$ after`}
 	rendered := m.renderTranscriptSource(source, m.width)
-	m.transcript = []string{rendered}
-	m.transcriptSources = []transcriptSource{source}
+	m.transcript = []transcriptBlock{{rendered: rendered, source: source}}
 	m.wrappedLines = strings.Split(wrapTranscript(rendered, contentWidth), "\n")
 
 	for i, line := range m.wrappedLines {
@@ -332,8 +329,7 @@ func TestSelectedTextRestoresMathWrappedAcrossDisplayLinesOnce(t *testing.T) {
 	const latex = `\alpha+\beta+\gamma+\delta+\epsilon+\zeta`
 	source := transcriptSource{kind: transcriptSourceMarkdown, raw: `$` + latex + `$`}
 	rendered := m.renderTranscriptSource(source, m.width)
-	m.transcript = []string{rendered}
-	m.transcriptSources = []transcriptSource{source}
+	m.transcript = []transcriptBlock{{rendered: rendered, source: source}}
 	m.wrappedLines = strings.Split(wrapTranscript(rendered, contentWidth), "\n")
 
 	copyLines, ok := m.copyTranscriptLines()
