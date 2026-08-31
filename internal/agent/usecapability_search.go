@@ -31,9 +31,36 @@ func (t *UseCapabilityTool) searchCapabilities(ctx context.Context, query string
 		limit = 5
 	}
 	query = strings.TrimSpace(query)
+	cat := t.currentCatalog()
+	results, total := t.searchCapabilityResultsFromCatalog(cat, query, limit)
+	payload := struct {
+		Query          string                   `json:"query"`
+		Results        []capabilitySearchResult `json:"results"`
+		CatalogVersion string                   `json:"catalog_version"`
+		Truncated      bool                     `json:"truncated"`
+		SnapshotStale  bool                     `json:"snapshot_stale"`
+		Incomplete     bool                     `json:"incomplete"`
+		Note           string                   `json:"note"`
+	}{
+		Query: query, Results: results, CatalogVersion: cat.Fingerprint,
+		Truncated: total > len(results), SnapshotStale: cat.Stale, Incomplete: cat.Incomplete,
+		Note: "Local catalog search only; no MCP process, network request, or tools/list call was made. Inspect one exact capability_id before calling when its argument contract is unfamiliar.",
+	}
+	b, err := json.MarshalIndent(payload, "", "  ")
+	return string(b), len(results), err
+}
+
+func (t *UseCapabilityTool) searchCapabilityResults(query string, limit int) []capabilitySearchResult {
+	results, _ := t.searchCapabilityResultsFromCatalog(t.currentCatalog(), strings.TrimSpace(query), limit)
+	return results
+}
+
+func (t *UseCapabilityTool) searchCapabilityResultsFromCatalog(cat capability.Catalog, query string, limit int) ([]capabilitySearchResult, int) {
+	if limit <= 0 {
+		limit = 5
+	}
 	queryNorm := normalizeSearchText(query)
 	queryTokens := searchTokens(query)
-	cat := t.currentCatalog()
 	mcpSchemas := t.mcpSearchSchemaIndex()
 	results := make([]capabilitySearchResult, 0, len(cat.Entries))
 	for _, entry := range cat.Entries {
@@ -70,21 +97,7 @@ func (t *UseCapabilityTool) searchCapabilities(ctx context.Context, query string
 	if total > limit {
 		results = results[:limit]
 	}
-	payload := struct {
-		Query          string                   `json:"query"`
-		Results        []capabilitySearchResult `json:"results"`
-		CatalogVersion string                   `json:"catalog_version"`
-		Truncated      bool                     `json:"truncated"`
-		SnapshotStale  bool                     `json:"snapshot_stale"`
-		Incomplete     bool                     `json:"incomplete"`
-		Note           string                   `json:"note"`
-	}{
-		Query: query, Results: results, CatalogVersion: cat.Fingerprint,
-		Truncated: total > len(results), SnapshotStale: cat.Stale, Incomplete: cat.Incomplete,
-		Note: "Local catalog search only; no MCP process, network request, or tools/list call was made. Inspect one exact capability_id before calling when its argument contract is unfamiliar.",
-	}
-	b, err := json.MarshalIndent(payload, "", "  ")
-	return string(b), len(results), err
+	return results, total
 }
 
 func capabilitySearchScore(entry capability.Entry, document, queryNorm string, queryTokens []string) int {
@@ -121,6 +134,10 @@ func capabilitySearchScore(entry capability.Entry, document, queryNorm string, q
 }
 
 func (t *UseCapabilityTool) capabilitySchemaSearchData(entry capability.Entry, mcpSchemas map[string]plugin.CachedTool) ([]string, string) {
+	return schemaSearchData(t.capabilitySchema(entry, mcpSchemas))
+}
+
+func (t *UseCapabilityTool) capabilitySchema(entry capability.Entry, mcpSchemas map[string]plugin.CachedTool) json.RawMessage {
 	var schema json.RawMessage
 	if entry.Kind == capability.KindMCPTool {
 		server, raw, err := parseMCPCapabilityID(entry.ID)
@@ -142,7 +159,7 @@ func (t *UseCapabilityTool) capabilitySchemaSearchData(entry capability.Entry, m
 			schema = target.Schema()
 		}
 	}
-	return schemaSearchData(schema)
+	return schema
 }
 
 // mcpSearchSchemaIndex takes one local snapshot per search. The old per-entry

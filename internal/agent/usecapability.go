@@ -647,6 +647,18 @@ func (t *UseCapabilityTool) ResolveCall(ctx context.Context, args json.RawMessag
 	if err != nil {
 		return tool.ResolvedCall{}, &capabilityInputError{err}
 	}
+	if action == "call" || action == "inspect" || action == "decline" {
+		id, err = t.resolveCapabilityReference(action, id, p)
+		if err != nil {
+			return tool.ResolvedCall{}, err
+		}
+	}
+	if action == "call" && strings.HasPrefix(id, "mcp-tool:") {
+		p.Arguments, err = normalizeMCPToolArguments(p.Arguments)
+		if err != nil {
+			return tool.ResolvedCall{}, &capabilityInputError{err}
+		}
+	}
 	base := tool.ResolvedCall{
 		DisplayName:  "use_capability",
 		ProxyAction:  action,

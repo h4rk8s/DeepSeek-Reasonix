@@ -35,13 +35,6 @@ func parseUseCapabilityArgs(raw json.RawMessage) (useCapabilityArgs, string, str
 	if args.Limit < 0 || action == "search" && args.Limit > 8 || action == "list" && args.Limit > 100 {
 		return args, "", "", fmt.Errorf("limit must be 1..8 for search or 1..100 for list when provided")
 	}
-	if action == "call" && strings.HasPrefix(id, "mcp-tool:") {
-		normalized, err := normalizeMCPToolArguments(args.Arguments)
-		if err != nil {
-			return args, "", "", err
-		}
-		args.Arguments = normalized
-	}
 	return args, action, id, nil
 }
 
