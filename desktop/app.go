@@ -4933,9 +4933,9 @@ func (a *App) SwitchWorkspace(dir string) (string, error) {
 	return meta.WorkspaceRoot, nil
 }
 
-// HistoryMessage is one prior turn, for the frontend to repopulate its transcript
-// after a reload.
-type HistoryMessage = transcript.Message
+// HistoryMessage is the shared semantic transcript projection used by every
+// frontend. New fields remain additive so older Desktop clients can ignore them.
+type HistoryMessage = transcript.Entry
 
 func interruptedTurnHistoryNotice(recovery *provider.InterruptedTurnRecovery) HistoryMessage {
 	if recovery != nil && recovery.TerminalStatus == "failed" {
@@ -5397,8 +5397,8 @@ func (state *historyMessageConvertState) convertHistoryMessage(
 	resolveUserContent func(string) string,
 	checkpointTurns map[int]int,
 	toolResults map[string]provider.Message,
-) []HistoryMessage {
-	var out []HistoryMessage
+) (out []HistoryMessage) {
+	defer func() { out = transcript.NormalizeAll(out) }()
 	if m.Role == provider.Role("compaction") {
 		return maintenanceHistoryMessage(m)
 	}

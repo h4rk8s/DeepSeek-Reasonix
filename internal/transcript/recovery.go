@@ -34,7 +34,7 @@ func PendingDisplayMessages(projection turnevent.PendingProjection, format Forma
 				Content: "This turn was interrupted. Partial output is kept for reference; only completed tool pairs and a bounded recovery summary enter the next model turn. Inspect the workspace before continuing or reverting changes."})
 		}
 	}
-	return out
+	return NormalizeAll(out)
 }
 
 // Legacy sidecars supplement provider history. User rows already have a
@@ -51,5 +51,5 @@ func LegacyDisplayMessages(messages []Message) []Message {
 		}
 		out = append(out, message)
 	}
-	return out
+	return NormalizeAll(out)
 }

@@ -28,7 +28,7 @@ func TestPluginsSlashShowsInstalledPluginDetails(t *testing.T) {
 	if cmd := m.runSlashCommand("/plugins show superpowers"); cmd != nil {
 		t.Fatal("/plugins show should render locally")
 	}
-	out := strings.Join(m.transcript, "\n")
+	out := strings.Join(renderedTranscriptBlocks(m.transcript), "\n")
 	for _, want := range []string{"plugin superpowers [enabled]", "/superpowers:plan", "usage: enabled plugins load into new sessions"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("/plugins show output missing %q:\n%s", want, out)

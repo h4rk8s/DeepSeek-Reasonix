@@ -28,7 +28,7 @@ func TestMathStreamingEndToEnd(t *testing.T) {
 	}
 	for _, c := range chunks {
 		m.ingestEvent(event.Event{Kind: event.Text, Text: c})
-		mid := strings.Join(m.transcript, "\n")
+		mid := strings.Join(renderedTranscriptBlocks(m.transcript), "\n")
 		for _, leak := range []string{`\pi`, `\sum`, `\frac`, `\infty`, `$e^{`, `$$\`} {
 			if strings.Contains(mid, leak) {
 				t.Fatalf("raw LaTeX %q leaked into a mid-stream flush: %q", leak, mid)
@@ -38,7 +38,7 @@ func TestMathStreamingEndToEnd(t *testing.T) {
 
 	m.ingestEvent(event.Event{Kind: event.Message})
 
-	out := strings.Join(m.transcript, "\n")
+	out := strings.Join(renderedTranscriptBlocks(m.transcript), "\n")
 	for _, want := range []string{"e^(iπ) + 1 = 0", "∑", "1/(n²)", "(π²)/6", "That is all."} {
 		if !strings.Contains(out, want) {
 			t.Errorf("final transcript missing %q:\n%s", want, out)
@@ -61,7 +61,7 @@ func TestMathStreamingStyledPath(t *testing.T) {
 	m.ingestEvent(event.Event{Kind: event.Text, Text: `The relation $a^2 + b^2 = c^2$ holds.`})
 	m.ingestEvent(event.Event{Kind: event.Message})
 
-	out := strings.Join(m.transcript, "\n")
+	out := strings.Join(renderedTranscriptBlocks(m.transcript), "\n")
 	if !strings.Contains(out, "\x1b[") {
 		t.Errorf("expected ANSI escapes in coloured output, got %q", out)
 	}

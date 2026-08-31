@@ -34,12 +34,10 @@ func copyOmitSpan(rendered string) string {
 // The visible text stays byte-for-byte equivalent after ANSI stripping, while
 // copy spans retain math source and identify render-only decorations.
 func (m chatTUI) buildCopyTranscript(contentWidth int) (string, int, bool) {
-	if len(m.transcriptSources) != len(m.transcript) {
-		return "", 0, false
-	}
 	var b strings.Builder
 	markers := 0
-	for i, source := range m.transcriptSources {
+	for i, block := range m.transcript {
+		source := block.source
 		if i > 0 {
 			b.WriteByte('\n')
 		}
@@ -59,7 +57,7 @@ func (m chatTUI) buildCopyTranscript(contentWidth int) (string, int, bool) {
 		case transcriptSourceReasoning:
 			rendered = reasoningBlockCopy(source.raw, m.width, source.maxLines)
 		default:
-			rendered = m.transcript[i]
+			rendered = block.rendered
 			if source.copyRendered != "" {
 				rendered = source.copyRendered
 			}
@@ -307,8 +305,7 @@ func (m *chatTUI) rewriteConnectorBlock(index int, lines []string) {
 	if index < 0 || index >= len(m.transcript) {
 		return
 	}
-	m.ensureTranscriptSources()
-	source := m.transcriptSources[index]
+	source := m.transcript[index].source
 	source.copyRendered = connectorBlockCopy(lines)
 	m.setTranscriptBlock(index, connectorBlock(lines), source)
 }

@@ -50,21 +50,22 @@ export function historyMessagesToItems(messages: HistoryMessage[], idPrefix: str
   let items: Item[] = [];
   let seq = startSeq;
   const consumedToolIDs = new Set<string>();
-	const uniqueItemID = createUniqueItemIDAllocator();
+  const uniqueItemID = createUniqueItemIDAllocator();
   for (let messageIndex = 0; messageIndex < messages.length; messageIndex += 1) {
     const m = messages[messageIndex];
-		const noticeMessageID = m.role === "notice" ? historyMessageIdentity(m) : undefined;
+		const entryKind = historyMessageKind(m);
+		const noticeMessageID = entryKind === "notice" ? historyMessageIdentity(m) : undefined;
 		const recordItemId = noticeMessageID ? `he:m:${noticeMessageID}`
       : m.recordId ? `record:${m.recordId}` : `${idPrefix}${seq}`;
     if (m.role === "system") continue;
-    if (m.role === "phase") {
+    if (entryKind === "planner_phase") {
       if (m.content.trim() !== "") {
         items.push({ kind: "phase", id: recordItemId, text: m.content });
         seq++;
       }
       continue;
     }
-    if (m.role === "notice") {
+    if (entryKind === "notice" || entryKind === "recovery_notice" || entryKind === "image_disclosure") {
       if (m.code === "read_completion") {
         const next = appendNoticeItem(items, seq, recordItemId, "info", m.content, m.detail, m.code);
         items = next.items;
@@ -116,6 +117,8 @@ export function historyMessagesToItems(messages: HistoryMessage[], idPrefix: str
         if (updated.inserted) seq++;
         continue;
       }
+    }
+    if (entryKind === "compaction" || m.role === "compaction") {
       items.push({
         kind: "compaction",
         id: recordItemId,
@@ -132,13 +135,13 @@ export function historyMessagesToItems(messages: HistoryMessage[], idPrefix: str
       seq++;
       continue;
     }
-    if (m.role === "user") {
+    if (entryKind === "user_prompt") {
       if (m.content.trim() === "") continue;
       items.push({ kind: "user", id: m.messageId ? `m:${m.messageId}` : recordItemId, messageId: m.messageId, submissionId: m.submissionId, turnId: m.turnId, text: appendHistoryAttachmentRefs(m.content, m.attachments), submitText: m.submitText, createdAt: m.createdAt, checkpointTurn: m.checkpointTurn, historyTurn: m.historyTurn });
       seq++;
       continue;
     }
-    if (m.role === "assistant") {
+    if (entryKind === "assistant" || entryKind === "thinking_disclosure") {
       const memoryCitations = asArray<MemoryCitation>(m.memoryCitations);
       const messageItemId = m.messageId ? `m:${m.messageId}` : m.recordId ? recordItemId : undefined;
       const built = historySearchAndAnswer(messageItemId ?? `${idPrefix}${seq}`, {
@@ -199,7 +202,7 @@ export function historyMessagesToItems(messages: HistoryMessage[], idPrefix: str
       }
       continue;
     }
-    if (m.role === "tool") {
+    if (entryKind === "tool_activity") {
       if ((m.toolCallId && consumedToolIDs.has(m.toolCallId)) || consumedPositionalToolIndexes.has(messageIndex)) continue;
       const output = m.toolResultArchived ? undefined : m.content;
       const error = m.toolResultError || (output ? historyToolError(output) : undefined);
@@ -222,6 +225,19 @@ export function historyMessagesToItems(messages: HistoryMessage[], idPrefix: str
     }
   }
   return { items, seq };
+}
+
+function historyMessageKind(message: HistoryMessage): NonNullable<HistoryMessage["kind"]> {
+  if (message.kind && message.kind !== "unknown") return message.kind;
+  switch (message.role) {
+    case "user": return "user_prompt";
+    case "assistant": return "assistant";
+    case "tool": return "tool_activity";
+    case "phase": return "planner_phase";
+    case "notice": return "notice";
+    case "compaction": return "compaction";
+    default: return "unknown";
+  }
 }
 
 export function applyTurnCheckpoint(items: Item[], submissionId: string | undefined, turn: number | undefined): Item[] {

@@ -827,6 +827,7 @@ export interface HistoryMessage extends TranscriptTurnMetadata {
 	readCompletion?: import("../generated/desktopContract.generated").ReadCompletion;
 	turnId?: string;
 	readPause?: import("./readPause").WireReadPause;
+  kind?: TranscriptEntryKind;
   role: string;
   content: string;
   detail?: string;
@@ -866,8 +867,45 @@ export interface HistoryMessage extends TranscriptTurnMetadata {
   readiness?: WireFinalReadiness;
   protocolRecovery?: { id: string };
   diagnostic?: { kind: string; status?: number; traceId?: string; providerId?: string; providerDisplayName?: string; protocol?: string; requestPath?: string };
+  missing?: string[];
   serverSearch?: HistoryServerSearch[];
   attachments?: Array<{ kind?: string; digest?: string; name?: string; mime?: string; width?: number; height?: number; bytes?: number }>;
+}
+
+export type TranscriptEntryKind =
+  | "turn_boundary"
+  | "user_prompt"
+  | "planner_phase"
+  | "thinking_disclosure"
+  | "tool_activity"
+  | "image_disclosure"
+  | "assistant"
+  | "recap"
+  | "turn_metrics"
+  | "recovery_notice"
+  | "notice"
+  | "compaction"
+  | "extension"
+  | "unknown";
+
+export interface HistoryToolCall {
+	partial?: boolean;
+	pending?: boolean;
+	parentId?: string;
+	argChars?: number;
+	startedAt?: number;
+  id: string;
+  name: string;
+  arguments: string;
+  resolvedName?: string;
+  capabilityId?: string;
+  resolvedReadOnly?: boolean;
+  subject?: string;
+  summary?: string;
+  diff?: string;
+  added?: number;
+  removed?: number;
+  argumentsArchived?: boolean;
 }
 
 export interface HistoryPage {
