@@ -409,6 +409,13 @@ func (a *Agent) handleToolRound(ctx context.Context, state *turnRuntime, step in
 		a.contextManager().ObserveUsage(usage)
 		return false, a.gracePause(state)
 	}
+	// Every result in the batch is paired at this point. Maintain the complete
+	// view before a budget boundary can pause the run or ordinary continuation
+	// starts a new model round, so large tool output cannot strand an oversized
+	// session between turns.
+	if err := a.contextManager().MaintainAfterToolPlacement(ctx); err != nil {
+		return false, err
+	}
 	// The prompt only grows from here; compact before the next turn so it
 	// stays within the model's window.
 	a.contextManager().ObserveUsage(usage)
