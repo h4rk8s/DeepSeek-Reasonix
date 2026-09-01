@@ -68,6 +68,21 @@ func (m ContextManager) ObserveUsage(u *provider.Usage) {
 	_ = u
 }
 
+// MaintainAfterToolPlacement moves pressure maintenance to the last safe
+// boundary before another model round. The caller has already paired the whole
+// tool batch, so a summary can never observe a partial multi-tool exchange.
+func (m ContextManager) MaintainAfterToolPlacement(ctx context.Context) error {
+	if m.agent == nil || m.agent.contextWindow <= 0 {
+		return nil
+	}
+	visible := m.agent.modelVisibleMessages()
+	if m.agent.estimatedVisibleRequestTokens(visible) < m.agent.compactTrigger() {
+		return nil
+	}
+	_, err := m.Prepare(ctx, ContextPreparePolicy{Trigger: CompactionTriggerPressure})
+	return err
+}
+
 // Prepare is the sole automatic maintenance entry. Below compact_ratio it does
 // nothing. At or above the trigger it runs one single-flight prune/summary
 // transaction, with at most two successful summary attempts under pressure.

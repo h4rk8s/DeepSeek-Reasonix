@@ -125,14 +125,15 @@ func indexOfMessage(msgs []provider.Message, target provider.Message) int {
 // message count is recorded so merge-grouping tests can assert the merge
 // request never carried the whole fragment set.
 type extractStubProvider struct {
-	mu        sync.Mutex
-	calls     int
-	failFirst int
-	streamErr error
-	reply     string
-	msgLens   []int
-	reqEsts   []int
-	requests  []provider.Request
+	mu                sync.Mutex
+	calls             int
+	failFirst         int
+	contextLimitFirst int
+	streamErr         error
+	reply             string
+	msgLens           []int
+	reqEsts           []int
+	requests          []provider.Request
 }
 
 func (p *extractStubProvider) Name() string { return "extract-stub" }
@@ -150,6 +151,12 @@ func (p *extractStubProvider) Stream(_ context.Context, req provider.Request) (<
 	ch := make(chan provider.Chunk, 3)
 	if p.streamErr != nil {
 		ch <- provider.Chunk{Type: provider.ChunkError, Err: p.streamErr}
+		close(ch)
+		return ch, nil
+	}
+	if n <= p.contextLimitFirst {
+		apiErr := &provider.APIError{Status: 400, Body: `{"error":{"message":"This model's maximum context length is 1048576 tokens. However, you requested 1240242 tokens (1232050 in the messages, 8192 in the completion)."}}`}
+		ch <- provider.Chunk{Type: provider.ChunkError, Err: provider.ParseContextLimitError(apiErr)}
 		close(ch)
 		return ch, nil
 	}
@@ -223,6 +230,21 @@ func TestChunkedFoldSummarySplitsOnOutputTruncation(t *testing.T) {
 	// 1 failing root + 2 half fragments + 1 merge = 4 calls.
 	if prov.calls != 4 {
 		t.Fatalf("provider calls = %d, want 4 (fail, two halves, merge)", prov.calls)
+	}
+}
+
+func TestChunkedFoldSummarySplitsOnProviderContextLimit(t *testing.T) {
+	prov := &extractStubProvider{contextLimitFirst: 1, reply: "digest"}
+	a := New(prov, tool.NewRegistry(), extractStubSession(), Options{}, event.Discard)
+	res, err := a.chunkedFoldSummary(context.Background(), a.Session().Snapshot(), compactionInstruction, nil)
+	if err != nil {
+		t.Fatalf("chunkedFoldSummary: %v", err)
+	}
+	if strings.TrimSpace(res.Text) == "" {
+		t.Fatal("empty summary after provider context-limit split recovery")
+	}
+	if prov.calls != 4 {
+		t.Fatalf("provider calls = %d, want 4 (overflow, two halves, merge)", prov.calls)
 	}
 }
 
@@ -526,5 +548,27 @@ func TestCompactFallsBackToChunkedSummaryOnTruncation(t *testing.T) {
 	}
 	if prov.calls < 4 {
 		t.Fatalf("provider calls = %d, want the failed single request plus chunks and merge (>=4)", prov.calls)
+	}
+}
+
+func TestCompactFallsBackToChunkedSummaryOnProviderContextLimit(t *testing.T) {
+	// Local estimates can undercount mixed CJK/code/tool-schema prompts. When
+	// the provider supplies its authoritative context-limit error, /compact must
+	// recover in place through chunks rather than leaving the session stranded.
+	prov := &extractStubProvider{contextLimitFirst: 1, reply: "digest"}
+	sess := NewSession("sys")
+	for range 12 {
+		sess.Add(provider.Message{Role: provider.RoleUser, Content: strings.Repeat("中code", 1500)})
+		sess.Add(provider.Message{Role: provider.RoleAssistant, Content: strings.Repeat("答tool", 1500)})
+	}
+	a := New(prov, tool.NewRegistry(), sess, Options{ContextWindow: 1_000_000, RecentKeep: 2, ArchiveDir: t.TempDir()}, event.Discard)
+	if err := a.CompactNow(context.Background(), ""); err != nil {
+		t.Fatalf("CompactNow after provider context limit: %v", err)
+	}
+	if len(a.sess.compactionState.Projection.Messages) == 0 {
+		t.Fatal("projection not installed after provider context-limit fallback")
+	}
+	if prov.calls < 2 {
+		t.Fatalf("provider calls = %d, want failed single request plus chunked recovery", prov.calls)
 	}
 }

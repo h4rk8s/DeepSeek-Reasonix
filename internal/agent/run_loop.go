@@ -526,6 +526,12 @@ func (a *Agent) handleToolRound(ctx context.Context, state *turnRuntime, step in
 		a.contextManager().ObserveUsage(usage)
 		return false, a.gracePause(state)
 	}
+	// Every result in the batch is paired at this point. Maintain the complete
+	// view before any recovery nudge or ordinary continuation starts a new model
+	// round, so large tool output cannot jump from below the soft line to overflow.
+	if err := a.contextManager().MaintainAfterToolPlacement(ctx); err != nil {
+		return false, err
+	}
 	if len(unavailableContextTools) > 0 {
 		// First violation: legal tools already ran once. Co-streamed answer
 		// text cannot skip repair; only a later clean round may validate.
