@@ -111,6 +111,7 @@ func (m *chatTUI) endSlashArgSnapshotForKey(key string) string {
 
 func (m *chatTUI) resetComposerInput() {
 	m.input.Reset()
+	m.clearActiveComposerParts()
 	m.endSlashArgSnapshot()
 }
 
