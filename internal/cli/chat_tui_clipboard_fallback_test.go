@@ -195,7 +195,7 @@ func TestOverlappingCtrlVStillAttachesImageOnce(t *testing.T) {
 
 	next, _ = m.Update(clipboardImageMsg{path: ".reasonix/attachments/test.png"})
 	m = next.(chatTUI)
-	if got, want := m.input.Value(), "[image #1] "; got != want {
+	if got, want := m.input.Value(), "[Image #1] "; got != want {
 		t.Fatalf("overlapping image paste produced %q, want %q", got, want)
 	}
 	if m.clipboardImagePending || m.clipboardImageRequests != 0 {

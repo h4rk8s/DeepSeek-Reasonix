@@ -20,11 +20,13 @@ import (
 )
 
 func TestExpandPastedBlocksImage(t *testing.T) {
-	m := &chatTUI{pastedBlocks: []pastedBlock{
-		{label: "[image #1]", text: "@.reasonix/attachments/clipboard-20260601-010203.000001.png", image: true},
-		{label: "[Pasted text #2 · 3 lines]", text: "a\nb\nc"},
-	}}
-	got := m.expandPastedBlocks("look at [image #1] and [Pasted text #2 · 3 lines]")
+	value := "look at [image #1] and [Pasted text #2 · 3 lines]"
+	m := newTestChatTUI()
+	installTestComposerParts(t, &m, value,
+		pastedBlock{label: "[image #1]", payload: "@.reasonix/attachments/clipboard-20260601-010203.000001.png", kind: composerPartImage},
+		pastedBlock{label: "[Pasted text #2 · 3 lines]", payload: "a\nb\nc", kind: composerPartFoldedText},
+	)
+	got := m.expandPastedBlocks(value)
 	want := "look at @.reasonix/attachments/clipboard-20260601-010203.000001.png and " +
 		renderFoldedPasteBlock(m.pastedBlocks[1])
 	if got != want {
@@ -37,8 +39,8 @@ func TestExpandPastedBlocksImage(t *testing.T) {
 
 func TestRecoverOrphanedPasteLabelFromHistory(t *testing.T) {
 	block := pastedBlock{
-		label: "[Pasted text #4 · 2 lines]",
-		text:  "old\nbody",
+		label:   "[Pasted text #4 · 2 lines]",
+		payload: "old\nbody",
 	}
 	history := []provider.Message{{
 		Role:    provider.RoleUser,
@@ -54,8 +56,8 @@ func TestRecoverOrphanedPasteLabelFromHistory(t *testing.T) {
 
 func TestRecoverOrphanedPasteLabelPreservesOriginalWhitespace(t *testing.T) {
 	block := pastedBlock{
-		label: "[Pasted text #5 · 5 lines]",
-		text:  "\n  first line\nsecond line  \n\n",
+		label:   "[Pasted text #5 · 5 lines]",
+		payload: "\n  first line\nsecond line  \n\n",
 	}
 	history := []provider.Message{{
 		Role:    provider.RoleUser,
@@ -72,8 +74,8 @@ func TestRecoverOrphanedPasteLabelPreservesOriginalWhitespace(t *testing.T) {
 func TestRecoverOrphanedPasteLabelPreservesEmbeddedEndMarker(t *testing.T) {
 	label := "[Pasted text #4 · 3 lines]"
 	block := pastedBlock{
-		label: label,
-		text:  "first\n--- End " + label + " ---\nlast",
+		label:   label,
+		payload: "first\n--- End " + label + " ---\nlast",
 	}
 	history := []provider.Message{{
 		Role:    provider.RoleUser,
@@ -90,9 +92,9 @@ func TestRecoverOrphanedPasteLabelPreservesEmbeddedEndMarker(t *testing.T) {
 func TestRecoverOrphanedPasteLabelLeavesConflictingExpansionsUnchanged(t *testing.T) {
 	label := "[Pasted text #4 · 2 lines]"
 	history := []provider.Message{
-		{Role: provider.RoleUser, Content: renderFoldedPasteBlock(pastedBlock{label: label, text: "old\nbody"})},
-		{Role: provider.RoleAssistant, Content: renderFoldedPasteBlock(pastedBlock{label: label, text: "untrusted\nbody"})},
-		{Role: provider.RoleUser, Content: renderFoldedPasteBlock(pastedBlock{label: label, text: "new\nbody"})},
+		{Role: provider.RoleUser, Content: renderFoldedPasteBlock(pastedBlock{label: label, payload: "old\nbody"})},
+		{Role: provider.RoleAssistant, Content: renderFoldedPasteBlock(pastedBlock{label: label, payload: "untrusted\nbody"})},
+		{Role: provider.RoleUser, Content: renderFoldedPasteBlock(pastedBlock{label: label, payload: "new\nbody"})},
 	}
 
 	if got := recoverOrphanedPasteLabelsFromHistory(label, nil, history); got != label {
@@ -102,10 +104,10 @@ func TestRecoverOrphanedPasteLabelLeavesConflictingExpansionsUnchanged(t *testin
 
 func TestRecoverOrphanedPasteLabelAcceptsRepeatedIdenticalExpansion(t *testing.T) {
 	label := "[Pasted text #4 · 2 lines]"
-	block := pastedBlock{label: label, text: "same\nbody"}
+	block := pastedBlock{label: label, payload: "same\nbody"}
 	history := []provider.Message{
 		{Role: provider.RoleUser, Content: renderFoldedPasteBlock(block)},
-		{Role: provider.RoleAssistant, Content: renderFoldedPasteBlock(pastedBlock{label: label, text: "untrusted\nbody"})},
+		{Role: provider.RoleAssistant, Content: renderFoldedPasteBlock(pastedBlock{label: label, payload: "untrusted\nbody"})},
 		{Role: provider.RoleUser, Content: renderFoldedPasteBlock(block)},
 	}
 
@@ -120,7 +122,7 @@ func TestRecoverOrphanedPasteLabelLeavesUnverifiedTextUnchanged(t *testing.T) {
 	sent := "explain [Pasted text #9 · 10 lines] syntax"
 	history := []provider.Message{{
 		Role:    provider.RoleAssistant,
-		Content: renderFoldedPasteBlock(pastedBlock{label: "[Pasted text #9 · 10 lines]", text: "assistant\ncontent"}),
+		Content: renderFoldedPasteBlock(pastedBlock{label: "[Pasted text #9 · 10 lines]", payload: "assistant\ncontent"}),
 	}}
 
 	if got := recoverOrphanedPasteLabelsFromHistory(sent, nil, history); got != sent {
@@ -129,7 +131,7 @@ func TestRecoverOrphanedPasteLabelLeavesUnverifiedTextUnchanged(t *testing.T) {
 }
 
 func TestRecoverOrphanedPasteLabelIgnoresPinnedRevision(t *testing.T) {
-	block := pastedBlock{label: "[Pasted text #9 · 2 lines]", text: "private\nbody"}
+	block := pastedBlock{label: "[Pasted text #9 · 2 lines]", payload: "private\nbody"}
 	history := []provider.Message{{
 		Role: provider.RoleUser, Origin: provider.MessageOriginHost,
 		Content: "<pinned_context_revision>" + renderFoldedPasteBlock(block) + "</pinned_context_revision>",
@@ -140,7 +142,7 @@ func TestRecoverOrphanedPasteLabelIgnoresPinnedRevision(t *testing.T) {
 }
 
 func TestRecoverOrphanedPasteLabelDoesNotReexpandRenderedBlock(t *testing.T) {
-	block := pastedBlock{label: "[Pasted text #4 · 2 lines]", text: "old\nbody"}
+	block := pastedBlock{label: "[Pasted text #4 · 2 lines]", payload: "old\nbody"}
 	rendered := renderFoldedPasteBlock(block)
 	history := []provider.Message{{Role: provider.RoleUser, Content: rendered}}
 
@@ -179,7 +181,7 @@ func TestTakeNextPasteIDSkipsUsedIDsAcrossWrap(t *testing.T) {
 		{Role: provider.RoleAssistant, Content: foldedPasteLabel(math.MaxInt, 1)},
 	}
 	next, used := pasteIDStateForHistory(history)
-	m := &chatTUI{nextPasteID: next, usedPasteIDs: used}
+	m := &chatTUI{composerModel: composerModel{nextPasteID: next, usedPasteIDs: used}}
 
 	if got := m.takeNextPasteID(); got != 2 {
 		t.Fatalf("takeNextPasteID = %d, want first unused ID 2", got)
@@ -190,7 +192,7 @@ func TestTakeNextPasteIDSkipsUsedIDsAcrossWrap(t *testing.T) {
 }
 
 func TestTakeNextPasteIDWrapsAfterMaxInt(t *testing.T) {
-	m := &chatTUI{nextPasteID: math.MaxInt}
+	m := &chatTUI{composerModel: composerModel{nextPasteID: math.MaxInt}}
 	if got := m.takeNextPasteID(); got != math.MaxInt {
 		t.Fatalf("first takeNextPasteID = %d, want %d", got, math.MaxInt)
 	}
@@ -200,7 +202,7 @@ func TestTakeNextPasteIDWrapsAfterMaxInt(t *testing.T) {
 }
 
 func TestTakeNextPasteIDSynchronizesAdoptedControllerHistory(t *testing.T) {
-	first := pastedBlock{label: "[Pasted text #1 · 1 lines]", text: "first"}
+	first := pastedBlock{label: "[Pasted text #1 · 1 lines]", payload: "first"}
 	session := agent.NewSession("system")
 	session.Add(provider.Message{Role: provider.RoleUser, Content: renderFoldedPasteBlock(first)})
 	executor := agent.New(nil, nil, session, agent.Options{}, event.Discard)
@@ -209,7 +211,7 @@ func TestTakeNextPasteIDSynchronizesAdoptedControllerHistory(t *testing.T) {
 
 	m := newChatTUI(ctrl, "", make(chan event.Event), 80)
 
-	second := pastedBlock{label: "[Pasted text #2 · 1 lines]", text: "second"}
+	second := pastedBlock{label: "[Pasted text #2 · 1 lines]", payload: "second"}
 	adopted := agent.NewSession("system")
 	adopted.Add(provider.Message{Role: provider.RoleUser, Content: renderFoldedPasteBlock(first)})
 	adopted.Add(provider.Message{Role: provider.RoleUser, Content: renderFoldedPasteBlock(second)})
@@ -401,13 +403,13 @@ func writeTinyPNG(t *testing.T, path string) {
 
 func assertSingleImageToken(t *testing.T, updated chatTUI) {
 	t.Helper()
-	if got := updated.input.Value(); got != "[image #1] " {
+	if got := updated.input.Value(); got != "[Image #1] " {
 		t.Fatalf("input after paste = %q, want image token", got)
 	}
-	if len(updated.pastedBlocks) != 1 || !updated.pastedBlocks[0].image {
+	if len(updated.pastedBlocks) != 1 || updated.pastedBlocks[0].kind != composerPartImage {
 		t.Fatalf("pastedBlocks = %+v, want one image block", updated.pastedBlocks)
 	}
-	if text := updated.pastedBlocks[0].text; !strings.HasPrefix(text, "@.reasonix/attachments/clipboard-") || !strings.HasSuffix(text, ".png") {
+	if text := updated.pastedBlocks[0].payload; !strings.HasPrefix(text, "@.reasonix/attachments/clipboard-") || !strings.HasSuffix(text, ".png") {
 		t.Fatalf("image block text = %q, want saved attachment ref", text)
 	}
 }
@@ -434,13 +436,13 @@ func TestPasteShellEscapedImagePathInsertsImageToken(t *testing.T) {
 	next, _ := m.Update(tea.PasteMsg{Content: strings.ReplaceAll(path, " ", `\ `)})
 	updated := next.(chatTUI)
 
-	if got := updated.input.Value(); got != "[image #1] " {
+	if got := updated.input.Value(); got != "[Image #1] " {
 		t.Fatalf("input after paste = %q, want image token", got)
 	}
-	if len(updated.pastedBlocks) != 1 || !updated.pastedBlocks[0].image {
+	if len(updated.pastedBlocks) != 1 || updated.pastedBlocks[0].kind != composerPartImage {
 		t.Fatalf("pastedBlocks = %+v, want one image block", updated.pastedBlocks)
 	}
-	if text := updated.pastedBlocks[0].text; !strings.HasPrefix(text, "@.reasonix/attachments/clipboard-") || !strings.HasSuffix(text, ".png") {
+	if text := updated.pastedBlocks[0].payload; !strings.HasPrefix(text, "@.reasonix/attachments/clipboard-") || !strings.HasSuffix(text, ".png") {
 		t.Fatalf("image block text = %q, want saved attachment ref", text)
 	}
 }
@@ -465,13 +467,13 @@ func TestPasteShellEscapedImagePathWithoutWhitespaceInsertsImageToken(t *testing
 	next, _ := m.Update(tea.PasteMsg{Content: escaped})
 	updated := next.(chatTUI)
 
-	if got := updated.input.Value(); got != "[image #1] " {
+	if got := updated.input.Value(); got != "[Image #1] " {
 		t.Fatalf("input after paste = %q, want image token", got)
 	}
-	if len(updated.pastedBlocks) != 1 || !updated.pastedBlocks[0].image {
+	if len(updated.pastedBlocks) != 1 || updated.pastedBlocks[0].kind != composerPartImage {
 		t.Fatalf("pastedBlocks = %+v, want one image block", updated.pastedBlocks)
 	}
-	if text := updated.pastedBlocks[0].text; !strings.HasPrefix(text, "@.reasonix/attachments/clipboard-") || !strings.HasSuffix(text, ".png") {
+	if text := updated.pastedBlocks[0].payload; !strings.HasPrefix(text, "@.reasonix/attachments/clipboard-") || !strings.HasSuffix(text, ".png") {
 		t.Fatalf("image block text = %q, want saved attachment ref", text)
 	}
 }
@@ -495,13 +497,13 @@ func TestPasteUnescapedAtImagePathWithSpacesInsertsImageToken(t *testing.T) {
 	next, _ := m.Update(tea.PasteMsg{Content: "@" + path})
 	updated := next.(chatTUI)
 
-	if got := updated.input.Value(); got != "[image #1] " {
+	if got := updated.input.Value(); got != "[Image #1] " {
 		t.Fatalf("input after paste = %q, want image token", got)
 	}
-	if len(updated.pastedBlocks) != 1 || !updated.pastedBlocks[0].image {
+	if len(updated.pastedBlocks) != 1 || updated.pastedBlocks[0].kind != composerPartImage {
 		t.Fatalf("pastedBlocks = %+v, want one image block", updated.pastedBlocks)
 	}
-	if text := updated.pastedBlocks[0].text; !strings.HasPrefix(text, "@.reasonix/attachments/clipboard-") || !strings.HasSuffix(text, ".png") {
+	if text := updated.pastedBlocks[0].payload; !strings.HasPrefix(text, "@.reasonix/attachments/clipboard-") || !strings.HasSuffix(text, ".png") {
 		t.Fatalf("image block text = %q, want saved attachment ref", text)
 	}
 }
@@ -540,13 +542,13 @@ func TestPasteWrappedUnescapedAtImagePathWithSpacesInsertsImageToken(t *testing.
 	next, _ := m.Update(tea.PasteMsg{Content: pasted})
 	updated := next.(chatTUI)
 
-	if got := updated.input.Value(); got != "[image #1] " {
+	if got := updated.input.Value(); got != "[Image #1] " {
 		t.Fatalf("input after paste = %q, want image token", got)
 	}
-	if len(updated.pastedBlocks) != 1 || !updated.pastedBlocks[0].image {
+	if len(updated.pastedBlocks) != 1 || updated.pastedBlocks[0].kind != composerPartImage {
 		t.Fatalf("pastedBlocks = %+v, want one image block", updated.pastedBlocks)
 	}
-	if text := updated.pastedBlocks[0].text; !strings.HasPrefix(text, "@.reasonix/attachments/clipboard-") || !strings.HasSuffix(text, ".png") {
+	if text := updated.pastedBlocks[0].payload; !strings.HasPrefix(text, "@.reasonix/attachments/clipboard-") || !strings.HasSuffix(text, ".png") {
 		t.Fatalf("image block text = %q, want saved attachment ref", text)
 	}
 }
@@ -649,10 +651,10 @@ func TestPasteMultipleFileURLImagePathsInsertsMultipleImageTokens(t *testing.T) 
 	next, _ := m.Update(tea.PasteMsg{Content: fileURL1 + "\n" + fileURL2})
 	updated := next.(chatTUI)
 
-	if got := updated.input.Value(); got != "[image #1] [image #2] " {
+	if got := updated.input.Value(); got != "[Image #1] [Image #2] " {
 		t.Fatalf("input after paste = %q, want two image tokens", got)
 	}
-	if len(updated.pastedBlocks) != 2 || !updated.pastedBlocks[0].image || !updated.pastedBlocks[1].image {
+	if len(updated.pastedBlocks) != 2 || updated.pastedBlocks[0].kind != composerPartImage || updated.pastedBlocks[1].kind != composerPartImage {
 		t.Fatalf("pastedBlocks = %+v, want two image blocks", updated.pastedBlocks)
 	}
 }
@@ -684,13 +686,13 @@ func TestTypedAtShellEscapedImagePathInsertsImageToken(t *testing.T) {
 	}
 	updated := model.(chatTUI)
 
-	if got := updated.input.Value(); got != "[image #1] " {
+	if got := updated.input.Value(); got != "[Image #1] " {
 		t.Fatalf("input after typed image path = %q, want image token", got)
 	}
-	if len(updated.pastedBlocks) != 1 || !updated.pastedBlocks[0].image {
+	if len(updated.pastedBlocks) != 1 || updated.pastedBlocks[0].kind != composerPartImage {
 		t.Fatalf("pastedBlocks = %+v, want one image block", updated.pastedBlocks)
 	}
-	if text := updated.pastedBlocks[0].text; !strings.HasPrefix(text, "@.reasonix/attachments/clipboard-") || !strings.HasSuffix(text, ".png") {
+	if text := updated.pastedBlocks[0].payload; !strings.HasPrefix(text, "@.reasonix/attachments/clipboard-") || !strings.HasSuffix(text, ".png") {
 		t.Fatalf("image block text = %q, want saved attachment ref", text)
 	}
 }
@@ -718,10 +720,10 @@ func TestPasteMultipleShellEscapedImagePathsInsertsImageTokens(t *testing.T) {
 	next, _ := m.Update(tea.PasteMsg{Content: content})
 	updated := next.(chatTUI)
 
-	if got := updated.input.Value(); got != "[image #1] [image #2] " {
+	if got := updated.input.Value(); got != "[Image #1] [Image #2] " {
 		t.Fatalf("input after paste = %q, want two image tokens", got)
 	}
-	if len(updated.pastedBlocks) != 2 || !updated.pastedBlocks[0].image || !updated.pastedBlocks[1].image {
+	if len(updated.pastedBlocks) != 2 || updated.pastedBlocks[0].kind != composerPartImage || updated.pastedBlocks[1].kind != composerPartImage {
 		t.Fatalf("pastedBlocks = %+v, want two image blocks", updated.pastedBlocks)
 	}
 }

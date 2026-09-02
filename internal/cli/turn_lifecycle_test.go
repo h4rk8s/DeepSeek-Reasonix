@@ -125,8 +125,14 @@ func TestElapsedTickRejectsPriorTurnGeneration(t *testing.T) {
 func TestStartControllerTurnQueuesThroughSessionPort(t *testing.T) {
 	ctrl := &runningQueueController{SessionAPI: control.New(control.Options{})}
 	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 80)
-	m.input.SetValue("next draft")
-	m.pastedBlocks = []pastedBlock{{label: "old paste"}, {label: "next paste"}}
+	m.input.SetValue("next paste")
+	m.composerModel.value = "next paste"
+	m.composerModel.pendingValue = "old paste"
+	m.pendingPartIDs = []composerPartID{1}
+	m.pastedBlocks = []pastedBlock{
+		{id: 1, label: "old paste", payload: "old", state: composerPartPending, span: composerAttachmentRange{partID: 1, start: 0, end: 9}},
+		{id: 2, label: "next paste", payload: "next", state: composerPartActive, span: composerAttachmentRange{partID: 2, start: 0, end: 10}},
+	}
 	started := false
 
 	cmd := m.startControllerTurn("expanded", "old paste", func() { started = true })
@@ -136,7 +142,7 @@ func TestStartControllerTurnQueuesThroughSessionPort(t *testing.T) {
 	if ctrl.req.Display != "expanded" || ctrl.req.Raw != "expanded" || ctrl.req.Submit != "expanded" {
 		t.Fatalf("queued request = %+v, want expanded display/raw/submit", ctrl.req)
 	}
-	if got := m.input.Value(); got != "next draft" {
+	if got := m.input.Value(); got != "next paste" {
 		t.Fatalf("successful queue changed the next draft to %q", got)
 	}
 	if len(m.pastedBlocks) != 1 || m.pastedBlocks[0].label != "next paste" {

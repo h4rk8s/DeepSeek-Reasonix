@@ -208,7 +208,7 @@ func (m chatTUI) commitPreparedRewind() (tea.Model, tea.Cmd) {
 	// Conversation rewind activates the fork and prefills the selected prompt
 	// for editing. Code-only rewind keeps the current transcript on screen.
 	if scope != control.RewindCode && strings.TrimSpace(meta.Prompt) != "" {
-		m.input.SetValue(meta.Prompt)
+		m.replaceComposerDraft(meta.Prompt, nil)
 		m.growInputToFit()
 	}
 	return m, nil

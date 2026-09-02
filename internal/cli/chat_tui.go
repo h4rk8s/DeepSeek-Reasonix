@@ -75,7 +75,8 @@ type chatTUI struct {
 	// since the terminal no longer forwards those events to Reasonix.
 	mouseCaptureOff bool
 
-	input       textarea.Model
+	input textarea.Model
+	composerModel
 	composerSel composerSelection
 	composerMap composerLayoutCache
 	// composerScrollOffset is an independent view offset used after the user
@@ -89,9 +90,6 @@ type chatTUI struct {
 	submittedInputs      []string
 	submittedInputCursor int
 	submittedInputDraft  string
-	pastedBlocks         []pastedBlock
-	nextPasteID          int
-	usedPasteIDs         map[int]struct{}
 
 	state                 tuiState
 	runStart              time.Time
@@ -320,7 +318,6 @@ type chatTUI struct {
 	// the send or it's un-sent; turnDiscarded then swallows the turn's
 	// already-buffered events until its TurnDone settles.
 	pendingRestore string
-	pendingPastes  []string
 	bubbleStartIdx int
 	bubblePending  bool
 	turnDiscarded  bool
@@ -718,19 +715,21 @@ func newChatTUI(ctrl control.SessionAPI, missing string, eventCh chan event.Even
 	nextPasteID, usedPasteIDs := pasteIDStateForHistory(history)
 	renderW := transcriptContentWidth(termW, nativeScrollback)
 	m := chatTUI{
-		ctrl:                       ctrl,
-		label:                      ctrl.Label(),
-		modelRef:                   ctrl.ModelRef(),
-		missing:                    missing,
-		nativeScrollback:           nativeScrollback,
-		legacyScrollClear:          useLegacyViewportScrollClear(runtime.GOOS, os.Environ()),
-		mouseCaptureOff:            mouseCaptureOffByDefault(),
-		input:                      ti,
-		spinner:                    sp,
-		submittedInputCursor:       -1,
-		queueEditCursor:            -1,
-		nextPasteID:                nextPasteID,
-		usedPasteIDs:               usedPasteIDs,
+		ctrl:                 ctrl,
+		label:                ctrl.Label(),
+		modelRef:             ctrl.ModelRef(),
+		missing:              missing,
+		nativeScrollback:     nativeScrollback,
+		legacyScrollClear:    useLegacyViewportScrollClear(runtime.GOOS, os.Environ()),
+		mouseCaptureOff:      mouseCaptureOffByDefault(),
+		input:                ti,
+		spinner:              sp,
+		submittedInputCursor: -1,
+		queueEditCursor:      -1,
+		composerModel: composerModel{
+			nextPasteID:  nextPasteID,
+			usedPasteIDs: usedPasteIDs,
+		},
 		reasoningLineIdx:           -1,
 		reasoningTextIdx:           -1,
 		answerIdx:                  -1,
@@ -863,6 +862,7 @@ func (m *chatTUI) recallSubmittedInput(delta int) bool {
 			return false // first-line Up enters history; lower lines navigate the draft
 		}
 		m.submittedInputDraft = m.input.Value()
+		m.submittedInputDraftParts = m.snapshotActiveComposerParts()
 		cursor = len(m.submittedInputs) - 1
 	} else {
 		cursor += delta
@@ -873,12 +873,12 @@ func (m *chatTUI) recallSubmittedInput(delta int) bool {
 	}
 	if cursor >= len(m.submittedInputs) {
 		m.submittedInputCursor = -1
-		m.input.SetValue(m.submittedInputDraft)
+		m.replaceComposerDraft(m.submittedInputDraft, m.submittedInputDraftParts)
 		m.growInputToFit()
 		return true
 	}
 	m.submittedInputCursor = cursor
-	m.input.SetValue(m.submittedInputs[cursor])
+	m.replaceComposerDraft(m.submittedInputs[cursor], nil)
 	m.growInputToFit()
 	return true
 }
@@ -886,6 +886,7 @@ func (m *chatTUI) recallSubmittedInput(delta int) bool {
 func (m *chatTUI) resetSubmittedInputRecall() {
 	m.submittedInputCursor = -1
 	m.submittedInputDraft = ""
+	m.submittedInputDraftParts = nil
 }
 
 // navigateQueue moves through the durable inbox during tuiRunning.
@@ -903,6 +904,7 @@ func (m *chatTUI) navigateQueue(delta int) bool {
 		}
 		// First ↑: save the current draft and jump to the last queued item.
 		m.queueEditDraft = m.input.Value()
+		m.queueEditDraftParts = m.snapshotActiveComposerParts()
 		cursor = len(items) - 1
 	} else {
 		cursor += delta
@@ -915,7 +917,7 @@ func (m *chatTUI) navigateQueue(delta int) bool {
 		// Past the end: restore the draft the user was composing.
 		m.queueEditCursor = -1
 		m.inboxSelectedID = ""
-		m.input.SetValue(m.queueEditDraft)
+		m.replaceComposerDraft(m.queueEditDraft, m.queueEditDraftParts)
 		m.growInputToFit()
 		return true
 	}
@@ -923,9 +925,9 @@ func (m *chatTUI) navigateQueue(delta int) bool {
 	m.inboxSelectedID = items[cursor].ID
 	// Load body only for the selected item (edit path).
 	if _, env, err := m.ctrl.ReadInboxItem(items[cursor].ID); err == nil {
-		m.input.SetValue(env.SubmitText)
+		m.replaceComposerDraft(env.SubmitText, nil)
 	} else {
-		m.input.SetValue(items[cursor].Preview)
+		m.replaceComposerDraft(items[cursor].Preview, nil)
 	}
 	m.growInputToFit()
 	return true
@@ -937,6 +939,7 @@ func (m *chatTUI) navigateQueue(delta int) bool {
 func (m *chatTUI) resetQueueNavigation() {
 	m.queueEditCursor = -1
 	m.queueEditDraft = ""
+	m.queueEditDraftParts = nil
 	m.inboxSelectedID = ""
 	m.queueConfirmDelete = false
 }
@@ -1060,6 +1063,7 @@ func padWrappedForYOffset(wrapped string, lineMap []int, desiredYOffset, viewpor
 func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 	var inputBeforeSelection string
+	var attachmentEditBefore *composerAttachmentEdit
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -1151,6 +1155,10 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if at, ok := m.composerCaretAt(msg.X, msg.Y, false); ok {
 				m.sel = selection{}
 				m.autoScroll = 0
+				if token, found := m.composerAttachmentAt(at.offset); found {
+					m.selectComposerAttachment(token, at.offset)
+					return m, nil
+				}
 				m.setComposerCursor(at.offset)
 				m.composerSel = composerSelection{
 					active: true, anchor: at.offset, head: at.offset, value: m.input.Value(),
@@ -1202,7 +1210,14 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.MouseMotionMsg:
 		if m.validComposerSelection() {
+			if msg.Button != tea.MouseLeft {
+				return m, nil
+			}
 			if at, ok := m.composerCaretAt(msg.X, msg.Y, true); ok {
+				if m.composerSel.atomic && at.offset != m.composerSel.origin {
+					m.composerSel.anchor = m.composerSel.origin
+					m.composerSel.atomic = false
+				}
 				m.composerSel.head = at.offset
 			}
 			return m, nil
@@ -1262,6 +1277,9 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.MouseReleaseMsg:
 		if msg.Button == tea.MouseLeft && m.validComposerSelection() {
+			if m.composerSel.atomic {
+				return m, nil
+			}
 			if at, ok := m.composerCaretAt(msg.X, msg.Y, true); ok {
 				m.composerSel.head = at.offset
 				m.setComposerCursor(at.offset)
@@ -1339,6 +1357,11 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			default:
 				inputBeforeSelection = m.input.Value()
 				if composerSelectionDeletes(msg, m.input.KeyMap) {
+					if m.deleteSelectedComposerAttachment() {
+						m.growInputToFit()
+						m.updateCompletion()
+						return m, finalize(m, cmds)
+					}
 					m.deleteComposerSelection()
 					m.growInputToFit()
 					m.updateCompletion()
@@ -1348,7 +1371,9 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, finalize(m, cmds)
 				}
 				if composerSelectionReplaces(msg, m.input.KeyMap) {
-					m.deleteComposerSelection()
+					before := m.newComposerAttachmentEdit()
+					attachmentEditBefore = &before
+					m.deleteComposerSelectionUntracked()
 				} else {
 					m.composerSel = composerSelection{}
 				}
@@ -1408,8 +1433,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, finalize(m, cmds)
 				}
 				beforeInput := m.input.Value()
-				var ic tea.Cmd
-				m.input, ic = m.input.Update(msg)
+				ic := m.updateComposerInputTracked(msg, nil)
 				cmds = append(cmds, ic)
 				m.growInputToFit()
 				if shouldClearWideInputChange(beforeInput, m.input.Value()) {
@@ -1492,6 +1516,14 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			}
+		}
+		if composerAttachmentUndoKey(msg.String()) && m.undoComposerAttachmentEdit() {
+			return m, finalize(m, cmds)
+		}
+		if m.deleteComposerAttachmentAtCursor(msg) {
+			m.growInputToFit()
+			m.updateCompletion()
+			return m, finalize(m, cmds)
 		}
 		switch msg.String() {
 		case "up":
@@ -1626,7 +1658,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				} else {
 					m.resetComposerInput()
-					m.pastedBlocks = nil
+					m.clearActiveComposerParts()
 				}
 			}
 			return m, nil
@@ -1686,7 +1718,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// (like Esc); on an empty composer a double-press within 1.5s quits.
 			if strings.TrimSpace(m.input.Value()) != "" {
 				m.resetComposerInput()
-				m.pastedBlocks = nil
+				m.clearActiveComposerParts()
 				m.lastCtrlCAt = time.Time{}
 				return m, nil
 			}
@@ -1703,8 +1735,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.input.Value() != "" {
 				// Delegate to textarea DeleteCharacterForward (bound to
 				// ctrl+d by default) so mid-line forward delete works.
-				var ic tea.Cmd
-				m.input, ic = m.input.Update(msg)
+				ic := m.updateComposerInputTracked(msg, nil)
 				if ic != nil {
 					cmds = append(cmds, ic)
 				}
@@ -1746,7 +1777,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if handled, msg := m.handleQueueSlash(line); handled {
 					m.notice(msg)
 					m.resetComposerInput()
-					m.pastedBlocks = nil
+					m.clearActiveComposerParts()
 					return m, finalize(m, cmds)
 				}
 				body := m.expandPastedBlocks(line)
@@ -1765,7 +1796,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.notice(fmt.Sprintf("queued #%s", shortID(rec.ItemID)))
 				}
 				m.resetComposerInput()
-				m.pastedBlocks = nil
+				m.clearActiveComposerParts()
 				m.resetQueueNavigation()
 				return m, finalize(m, cmds)
 			}
@@ -1780,7 +1811,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if slashRunsWhileRunning(line) {
 					m.rememberSubmittedInput(line)
 					m.input.Reset()
-					m.pastedBlocks = nil
+					m.clearActiveComposerParts()
 					if cmd := m.runSlashCommand(line); cmd != nil {
 						cmds = append(cmds, cmd)
 					}
@@ -1790,7 +1821,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if handled, msg := m.handleQueueSlash(line); handled {
 					m.notice(msg)
 					m.resetComposerInput()
-					m.pastedBlocks = nil
+					m.clearActiveComposerParts()
 					return m, finalize(m, cmds)
 				}
 				body := m.expandPastedBlocks(line)
@@ -1814,7 +1845,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.resetQueueNavigation()
 				}
 				m.resetComposerInput()
-				m.pastedBlocks = nil
+				m.clearActiveComposerParts()
 				return m, finalize(m, cmds)
 			}
 			if m.modelSwitchPending {
@@ -1834,7 +1865,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if handled, msg := m.handleQueueSlash(line); handled {
 				m.notice(msg)
 				m.resetComposerInput()
-				m.pastedBlocks = nil
+				m.clearActiveComposerParts()
 				return m, finalize(m, cmds)
 			}
 			m.rememberSubmittedInput(line)
@@ -1843,7 +1874,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// space keeps "#7" / "#issue" prompts from being swallowed.
 			if note, ok := control.MemoryQuickAddNote(line); ok {
 				m.resetComposerInput()
-				m.pastedBlocks = nil
+				m.clearActiveComposerParts()
 				if note == "" {
 					m.notice(i18n.M.QuickRememberEmpty)
 				} else if path, err := m.ctrl.QuickAdd(memory.ScopeProject, note); err != nil {
@@ -1859,12 +1890,12 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmd := after
 				if strings.TrimSpace(cmd) == "" {
 					m.resetComposerInput()
-					m.pastedBlocks = nil
+					m.clearActiveComposerParts()
 					m.notice(i18n.M.ShellExecEmpty)
 					return m, finalize(m, cmds)
 				}
 				m.resetComposerInput()
-				m.pastedBlocks = nil
+				m.clearActiveComposerParts()
 				m.state = tuiRunning
 				m.runStart = time.Now()
 				m.elapsed = 0
@@ -1894,13 +1925,14 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					line = ref
 				} else {
 					m.resetComposerInput()
-					m.pastedBlocks = nil
+					m.clearActiveComposerParts()
 					cmds = append(cmds, m.runSlashCommand(line))
 					return m, finalize(m, cmds)
 				}
 			}
 
 			sentLine := m.expandPastedBlocks(line)
+			m.stageComposerSubmission(line)
 			m.resetComposerInput()
 
 			// @references (local files / MCP resources, including inline image
@@ -2144,8 +2176,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if inputBeforeSelection != "" {
 		beforeInput = inputBeforeSelection
 	}
-	var ic tea.Cmd
-	m.input, ic = m.input.Update(msg)
+	ic := m.updateComposerInputTracked(msg, attachmentEditBefore)
 	cmds = append(cmds, ic)
 	m.growInputToFit()
 	if beforeInput != m.input.Value() && m.normalizeTypedImagePath() {
@@ -4559,12 +4590,6 @@ const minTranscriptRows = 3
 const foldedPasteMinChars = 1000
 const foldedPasteMinLines = 5
 
-type pastedBlock struct {
-	label string
-	text  string
-	image bool // an image attachment: expands to its bare @ref, not a wrapped block
-}
-
 func (m *chatTUI) chooserTyping() bool {
 	return m.chooser != nil && m.chooser.typing
 }
@@ -4801,14 +4826,13 @@ func (m *chatTUI) toggleMouseCapture() {
 // discarded so its already-buffered events reach nothing. Once a packet has arrived
 // the bubble is confirmed and this path isn't taken (Esc cancels normally instead).
 func (m *chatTUI) unsendPending() {
-	m.input.SetValue(m.pendingRestore)
+	m.restorePendingComposer(m.pendingRestore)
 	m.growInputToFit()
 	m.truncateTranscriptBlocks(m.bubbleStartIdx)
 	m.truncateTranscriptDisclosures(len(m.transcript))
 	m.transcriptDirty = true
 	m.bubblePending = false
 	m.pendingRestore = ""
-	m.pendingPastes = nil
 	m.turnDiscarded = true
 	m.ctrl.Cancel()
 }

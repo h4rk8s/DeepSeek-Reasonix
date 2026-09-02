@@ -19,6 +19,9 @@ type composerSelection struct {
 	active       bool
 	anchor, head int
 	value        string
+	atomic       bool
+	origin       int
+	partID       composerPartID
 }
 
 // composerPromptWidth is reserved by textarea on every visual row. The first
@@ -401,7 +404,7 @@ func (m *chatTUI) setComposerCursor(offset int) {
 	m.input.SetCursorColumn(caret.logicalCol)
 }
 
-func (m *chatTUI) deleteComposerSelection() bool {
+func (m *chatTUI) deleteComposerSelectionUntracked() bool {
 	if !m.validComposerSelection() || m.composerSel.empty() {
 		m.composerSel = composerSelection{}
 		return false
@@ -415,6 +418,16 @@ func (m *chatTUI) deleteComposerSelection() bool {
 	m.input.SetValue(string(runes[:start]) + string(runes[end:]))
 	m.composerSel = composerSelection{}
 	m.setComposerCursor(start)
+	return true
+}
+
+func (m *chatTUI) deleteComposerSelection() bool {
+	before := m.newComposerAttachmentEdit()
+	if !m.deleteComposerSelectionUntracked() {
+		return false
+	}
+	m.composerModel.reconcileEdit(before.beforeValue, m.input.Value())
+	m.recordComposerAttachmentEdit(before)
 	return true
 }
 
@@ -470,10 +483,6 @@ func (m chatTUI) renderComposerInput() string {
 		view = m.renderDetachedComposerInput()
 		visualStart = m.composerViewOffset()
 	}
-	if !m.validComposerSelection() || m.composerSel.empty() {
-		return view
-	}
-	start, end := m.composerSel.ordered()
 	rows := m.composerRowsForRender()
 	lines := strings.Split(view, "\n")
 	for i := range lines {
@@ -481,6 +490,19 @@ func (m chatTUI) renderComposerInput() string {
 		if visualRow >= len(rows) {
 			break
 		}
+		for _, token := range m.composerAttachmentRanges() {
+			if lo, hi, ok := composerRowSelectionSpan(rows[visualRow], token.start, token.end); ok {
+				lines[i] = lipgloss.StyleRanges(lines[i], lipgloss.NewRange(
+					lo+composerPromptWidth,
+					hi+composerPromptWidth,
+					themeStyle(activeCLITheme.info),
+				))
+			}
+		}
+		if !m.validComposerSelection() || m.composerSel.empty() {
+			continue
+		}
+		start, end := m.composerSel.ordered()
 		if lo, hi, ok := composerRowSelectionSpan(rows[visualRow], start, end); ok {
 			lines[i] = lipgloss.StyleRanges(lines[i], lipgloss.NewRange(
 				lo+composerPromptWidth,

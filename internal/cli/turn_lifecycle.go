@@ -44,7 +44,7 @@ func (m *chatTUI) startControllerTurnWithQueue(displayed, restore, queued string
 		if err != nil {
 			m.notice("queue: " + err.Error())
 			if m.input.Value() == "" {
-				m.input.SetValue(restore)
+				m.restorePendingComposer(restore)
 				m.growInputToFit()
 			}
 			return nil
@@ -61,7 +61,6 @@ func (m *chatTUI) startControllerTurnWithQueue(displayed, restore, queued string
 	// pressed, not when the first packet lands: Esc before the reply pops it
 	// back off and restores the text, leaving nothing stranded.
 	m.pendingRestore = restore
-	m.pendingPastes = m.pasteLabelsIn(restore)
 	m.bubbleStartIdx = len(m.transcript)
 	m.commitTurnSeparator()
 	m.commitTranscriptSource(transcriptSource{
@@ -150,19 +149,21 @@ func (m *chatTUI) startRunningTicks() tea.Cmd {
 }
 
 func (m *chatTUI) clearQueuedPastes(restore string) {
-	labels := m.pasteLabelsIn(restore)
-	if len(labels) == 0 {
+	ids := m.composerPartIDsIn(restore)
+	if len(ids) == 0 {
 		return
 	}
-	queued := make(map[string]struct{}, len(labels))
-	for _, label := range labels {
-		queued[label] = struct{}{}
+	queued := make(map[composerPartID]struct{}, len(ids))
+	for _, id := range ids {
+		queued[id] = struct{}{}
 	}
 	kept := m.pastedBlocks[:0]
-	for _, block := range m.pastedBlocks {
-		if _, ok := queued[block.label]; !ok {
-			kept = append(kept, block)
+	for _, part := range m.pastedBlocks {
+		if _, ok := queued[part.id]; !ok {
+			kept = append(kept, part)
 		}
 	}
 	m.pastedBlocks = kept
+	m.pendingPartIDs = nil
+	m.composerModel.pendingValue = ""
 }

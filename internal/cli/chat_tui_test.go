@@ -2658,7 +2658,7 @@ func TestMouseRightClickPasteUsesCanonicalFoldedPastePath(t *testing.T) {
 	if got := m.input.Value(); got != "[Pasted text #1 · 5 lines] " {
 		t.Fatalf("right-click folded paste display = %q", got)
 	}
-	if len(m.pastedBlocks) != 1 || m.pastedBlocks[0].text != pasted {
+	if len(m.pastedBlocks) != 1 || m.pastedBlocks[0].payload != pasted {
 		t.Fatalf("right-click folded paste block = %+v", m.pastedBlocks)
 	}
 }
@@ -4048,8 +4048,9 @@ func TestTextOnlyModelSendsPastedImageRefsForToolUse(t *testing.T) {
 		WorkspaceRoot: workspace,
 		ModelRef:      "custom/text-only",
 	})
-	m.pastedBlocks = []pastedBlock{{label: "[image #1]", text: "@" + path, image: true}}
-	m.input.SetValue("describe [image #1] please")
+	installTestComposerParts(t, &m, "describe [image #1] please", pastedBlock{
+		label: "[image #1]", payload: "@" + path, kind: composerPartImage,
+	})
 
 	model, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = model.(chatTUI)
@@ -4094,8 +4095,9 @@ func TestVisionModelAllowsSendingPastedImageRefs(t *testing.T) {
 		WorkspaceRoot: workspace,
 		ModelRef:      "custom/vision-pro",
 	})
-	m.pastedBlocks = []pastedBlock{{label: "[image #1]", text: "@" + path, image: true}}
-	m.input.SetValue("describe [image #1] please")
+	installTestComposerParts(t, &m, "describe [image #1] please", pastedBlock{
+		label: "[image #1]", payload: "@" + path, kind: composerPartImage,
+	})
 
 	model, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = model.(chatTUI)
