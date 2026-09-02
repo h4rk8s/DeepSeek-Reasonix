@@ -28,9 +28,9 @@ import (
 // This file holds the chat TUI's paste & image-attachment input layer: folding
 // long pasted text into a deletable [Pasted text #N] token, turning
 // dragged/pasted images and file paths into @references, and the clipboard
-// commands behind them. The composer state it operates on (pastedBlocks /
-// nextPasteID / pendingPastes) lives on chatTUI; these are split out of
-// chat_tui.go as a self-contained concern.
+// commands behind them. Semantic part identity lives in the embedded
+// composerModel; visible labels are only projections and are never searched to
+// decide whether text is a real attachment.
 
 func pastedLineCount(s string) int {
 	if s == "" {
@@ -44,7 +44,7 @@ func foldedPasteLabel(id, lines int) string {
 }
 
 func renderFoldedPasteBlock(block pastedBlock) string {
-	return fmt.Sprintf("%s\n\n--- Begin %s ---\n%s\n--- End %s ---", block.label, block.label, block.text, block.label)
+	return fmt.Sprintf("%s\n\n--- Begin %s ---\n%s\n--- End %s ---", block.label, block.label, block.payload, block.label)
 }
 
 func shouldFoldPastedText(s string) bool {
@@ -56,36 +56,73 @@ func (m *chatTUI) shouldFoldPaste(s string) bool {
 }
 
 func (m *chatTUI) insertFoldedPaste(s string) {
-	m.deleteComposerSelection()
 	label := foldedPasteLabel(m.takeNextPasteID(), pastedLineCount(s))
-	m.pastedBlocks = append(m.pastedBlocks, pastedBlock{label: label, text: s})
-	m.input.InsertString(label + " ")
+	m.insertComposerPart(composerPartFoldedText, s, label)
 }
 
 // insertImageRef puts a deletable [image #N] token in the input box (mapped to
 // the saved attachment's @ref, expanded on submit) so a dragged/pasted image is
 // edited and removed like any other text, not stranded in a separate tray.
 func (m *chatTUI) insertImageRef(path string) {
-	m.deleteComposerSelection()
-	label := fmt.Sprintf("[image #%d]", m.takeNextPasteID())
-	m.pastedBlocks = append(m.pastedBlocks, pastedBlock{label: label, text: "@" + path, image: true})
-	m.input.InsertString(label + " ")
+	label := fmt.Sprintf("[Image #%d]", m.takeNextPasteID())
+	m.insertComposerPart(composerPartImage, "@"+path, label)
 	m.growInputToFit()
 	m.updateCompletion()
 }
 
-func (m *chatTUI) expandPastedBlocks(displayed string) string {
-	sent := displayed
-	for _, block := range m.pastedBlocks {
-		if !strings.Contains(sent, block.label) {
-			continue
-		}
-		repl := renderFoldedPasteBlock(block)
-		if block.image {
-			repl = block.text
-		}
-		sent = strings.ReplaceAll(sent, block.label, repl)
+func (m *chatTUI) insertComposerPart(kind composerPartKind, payload, label string) {
+	edit := m.newComposerAttachmentEdit()
+	edit.trackUndo = true
+	m.insertComposerPartUntracked(kind, payload, label)
+	m.recordComposerAttachmentEdit(edit)
+}
+
+func (m *chatTUI) insertComposerPartUntracked(kind composerPartKind, payload, label string) {
+	before := m.input.Value()
+	if m.deleteComposerSelectionUntracked() {
+		m.composerModel.reconcileEdit(before, m.input.Value())
 	}
+	before = m.input.Value()
+	start := m.composerCursorOffset()
+	m.input.InsertString(label + " ")
+	m.composerModel.reconcileEdit(before, m.input.Value())
+	id := m.composerModel.takePartID()
+	m.pastedBlocks = append(m.pastedBlocks, pastedBlock{
+		id: id, kind: kind, payload: payload, label: label,
+		span: composerAttachmentRange{partID: id, start: start, end: start + len([]rune(label))},
+	})
+}
+
+func (m *chatTUI) insertComposerText(text string) {
+	edit := m.newComposerAttachmentEdit()
+	if m.deleteComposerSelectionUntracked() {
+		m.composerModel.reconcileEdit(edit.beforeValue, m.input.Value())
+	}
+	before := m.input.Value()
+	m.input.InsertString(text)
+	m.composerModel.reconcileEdit(before, m.input.Value())
+	m.recordComposerAttachmentEdit(edit)
+}
+
+func (m *chatTUI) expandPastedBlocks(displayed string) string {
+	sentRunes := []rune(displayed)
+	parts, ok := projectComposerParts(m.pastedBlocks, m.composerModel.value, displayed, composerPartActive)
+	if ok {
+		for i := len(parts) - 1; i >= 0; i-- {
+			part := parts[i]
+			replacement := part.payload
+			if part.kind == composerPartFoldedText {
+				replacement = renderFoldedPasteBlock(part)
+			}
+			replacementRunes := []rune(replacement)
+			next := make([]rune, 0, len(sentRunes)-(part.span.end-part.span.start)+len(replacementRunes))
+			next = append(next, sentRunes[:part.span.start]...)
+			next = append(next, replacementRunes...)
+			next = append(next, sentRunes[part.span.end:]...)
+			sentRunes = next
+		}
+	}
+	sent := string(sentRunes)
 	// Recover orphaned paste labels that lost their block entries during a
 	// session reload.  Each label follows the format
 	// [Pasted text #N · M lines]; the original content was expanded into the
@@ -155,8 +192,8 @@ func recoverOrphanedPasteLabelsFromHistory(sent string, knownBlocks []pastedBloc
 		}
 		if found && !ambiguous {
 			sent = strings.ReplaceAll(sent, label, renderFoldedPasteBlock(pastedBlock{
-				label: label,
-				text:  recovered,
+				label:   label,
+				payload: recovered,
 			}))
 		}
 	}
@@ -286,32 +323,50 @@ func (m *chatTUI) syncPasteIDStateFromHistory(history []provider.Message) {
 	}
 }
 
-func (m *chatTUI) pasteLabelsIn(s string) []string {
-	var labels []string
-	for _, block := range m.pastedBlocks {
-		if strings.Contains(s, block.label) {
-			labels = append(labels, block.label)
-		}
+func (m *chatTUI) composerPartIDsIn(s string) []composerPartID {
+	var parts []pastedBlock
+	if active, ok := projectComposerParts(m.pastedBlocks, m.composerModel.value, s, composerPartActive); ok {
+		parts = append(parts, active...)
 	}
-	return labels
+	if pending, ok := projectComposerParts(m.pastedBlocks, m.composerModel.pendingValue, s, composerPartPending); ok {
+		parts = append(parts, pending...)
+	}
+	slices.SortFunc(parts, func(a, b pastedBlock) int { return a.span.start - b.span.start })
+	seen := make(map[composerPartID]struct{}, len(parts))
+	ids := make([]composerPartID, 0, len(parts))
+	for _, part := range parts {
+		if _, ok := seen[part.id]; ok {
+			continue
+		}
+		seen[part.id] = struct{}{}
+		ids = append(ids, part.id)
+	}
+	return ids
 }
 
 func (m *chatTUI) clearSubmittedPastes() {
-	if len(m.pendingPastes) == 0 {
+	if len(m.pendingPartIDs) == 0 {
 		return
 	}
-	submitted := make(map[string]bool, len(m.pendingPastes))
-	for _, label := range m.pendingPastes {
-		submitted[label] = true
+	submitted := make(map[composerPartID]struct{}, len(m.pendingPartIDs))
+	for _, id := range m.pendingPartIDs {
+		submitted[id] = struct{}{}
 	}
-	kept := m.pastedBlocks[:0]
-	for _, block := range m.pastedBlocks {
-		if !submitted[block.label] {
-			kept = append(kept, block)
+	kept := make([]pastedBlock, 0, len(m.pastedBlocks))
+	for _, part := range m.pastedBlocks {
+		if _, ok := submitted[part.id]; part.state != composerPartPending || !ok {
+			kept = append(kept, part)
 		}
 	}
 	m.pastedBlocks = kept
-	m.pendingPastes = nil
+	m.pendingPartIDs = nil
+	hasPending := false
+	for _, part := range kept {
+		hasPending = hasPending || part.state == composerPartPending
+	}
+	if !hasPending {
+		m.composerModel.pendingValue = ""
+	}
 }
 
 // applyComposerPaste owns both terminal bracketed pastes and text read from the
@@ -343,11 +398,8 @@ func (m *chatTUI) applyComposerPasteOnce(msg tea.PasteMsg) []tea.Cmd {
 		}
 		return cmds
 	}
-	if m.validComposerSelection() && !m.composerSel.empty() {
-		m.deleteComposerSelection()
-	}
 	if ref, ok := pastedFileRef(msg.Content); ok {
-		m.input.InsertString(ref + " ")
+		m.insertComposerText(ref + " ")
 		m.growInputToFit()
 		m.updateCompletion()
 		if shouldClearWideInputChange(pasteBefore, m.input.Value()) {
@@ -365,8 +417,9 @@ func (m *chatTUI) applyComposerPasteOnce(msg tea.PasteMsg) []tea.Cmd {
 		return cmds
 	}
 
-	var inputCmd tea.Cmd
-	m.input, inputCmd = m.input.Update(msg)
+	edit := m.newComposerAttachmentEdit()
+	m.deleteComposerSelectionUntracked()
+	inputCmd := m.updateComposerInputTracked(msg, &edit)
 	cmds = append(cmds, inputCmd)
 	m.growInputToFit()
 	if shouldClearWideInputChange(pasteBefore, m.input.Value()) {
@@ -543,6 +596,8 @@ func (m *chatTUI) attachPastedImages(text string) bool {
 	if !ok {
 		return false
 	}
+	edit := m.newComposerAttachmentEdit()
+	edit.trackUndo = true
 	attached := false
 	for _, src := range sources {
 		path, err := savePastedImageSource(src)
@@ -550,8 +605,14 @@ func (m *chatTUI) attachPastedImages(text string) bool {
 			m.notice("paste image: " + err.Error())
 			continue
 		}
-		m.insertImageRef(path)
+		label := fmt.Sprintf("[Image #%d]", m.takeNextPasteID())
+		m.insertComposerPartUntracked(composerPartImage, "@"+path, label)
 		attached = true
+	}
+	if attached {
+		m.growInputToFit()
+		m.updateCompletion()
+		m.recordComposerAttachmentEdit(edit)
 	}
 	if !attached && m.validComposerSelection() && !m.composerSel.empty() {
 		// A failed attachment must not replace an active selection. The notice
@@ -581,12 +642,17 @@ func (m *chatTUI) normalizeTypedImagePath() bool {
 		}
 		paths = append(paths, path)
 	}
+	edit := m.newComposerAttachmentEdit()
+	edit.trackUndo = true
 	m.input.Reset()
+	m.composerModel.reconcileEdit(edit.beforeValue, m.input.Value())
 	for _, path := range paths {
-		m.insertImageRef(path)
+		label := fmt.Sprintf("[Image #%d]", m.takeNextPasteID())
+		m.insertComposerPartUntracked(composerPartImage, "@"+path, label)
 	}
 	m.growInputToFit()
 	m.updateCompletion()
+	m.recordComposerAttachmentEdit(edit)
 	return true
 }
 
