@@ -380,8 +380,8 @@ func TestComposerImagePasteShortcutKeepsSelectionUntilImageArrives(t *testing.T)
 	}
 
 	m = updateComposerMouseTestTUI(t, m, clipboardImageMsg{path: ".reasonix/attachments/test.png"})
-	if got := m.input.Value(); got != "alpha [image #1] " {
-		t.Fatalf("image paste over selection produced %q, want %q", got, "alpha [image #1] ")
+	if got := m.input.Value(); got != "alpha [Image #1] " {
+		t.Fatalf("image paste over selection produced %q, want %q", got, "alpha [Image #1] ")
 	}
 	if m.validComposerSelection() && !m.composerSel.empty() {
 		t.Fatal("image paste should consume the selection")
