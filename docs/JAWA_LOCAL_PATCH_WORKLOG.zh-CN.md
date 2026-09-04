@@ -338,12 +338,14 @@ Thought/Image 点击区域过大、hover 抖动、展开向下顶、选择文字
 - 多图默认一条 `Image understood · N images · ...`，detail 按图片分段。
 - `viewportProjection` 统一 scroll anchoring/new-message pill/Ctrl+End/click clear。
 - `statusProjection` 同时决定渲染和预留行数，vision 活跃时最多保持两层内容；结束后恢复普通模型段。
+- Bubble Tea v2 的 hard-scroll 会在重复行场景留下物理旧行；在当前 Ultraviolet 基线之上临时固定上游 `#143` 的单点修复，避免 todo、working token 和 footer 残影跨过 composer。
 - assistant marker、turn spacing、user band 和正文左边界保持配置对齐。
 
 **Owner 与边界**
 
 - Owner：CLI disclosure、viewport、status projection。
 - 不把鼠标状态写回 transcript，不由 config 猜 disclosure 身份。
+- renderer pin 只承载 Ultraviolet `#143`，父提交必须等于 Reasonix 原依赖；官方包含同一修复后删除 `go.mod` replacement，不长期分叉 renderer。
 
 **验证**
 
@@ -351,11 +353,12 @@ Thought/Image 点击区域过大、hover 抖动、展开向下顶、选择文字
 - live/resume parity；
 - scroll-away + new output、Ctrl+End、pill click；
 - 80/104/半屏 status、vision start/finish；
+- Ultraviolet repeated-row hard-scroll 随机回归；
 - wrapped composer 只有一个 prefix。
 
 **退休条件**
 
-上游不仅支持“点击 thinking”，还必须覆盖同等 hit area、向上展开、选择行为、resume parity、Image detail 和两层 footer 才可退休。
+上游不仅支持“点击 thinking”，还必须覆盖同等 hit area、向上展开、选择行为、resume parity、Image detail 和两层 footer 才可退休。Ultraviolet `#143` 一旦进入官方依赖，只单独退休 renderer replacement，不影响其余展示语义。
 
 ### 10. `feat(inbox): add queue clearing and slash completion`
 
