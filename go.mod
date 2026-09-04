@@ -81,3 +81,6 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 )
+
+// Drop this replacement once charmbracelet/ultraviolet#143 is included upstream.
+replace github.com/charmbracelet/ultraviolet => github.com/h4rk8s/ultraviolet v0.0.0-20260904114258-ef50159a2361
