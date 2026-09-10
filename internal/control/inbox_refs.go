@@ -2,11 +2,15 @@ package control
 
 import (
 	"context"
-	"reasonix/internal/attachment"
+	"encoding/json"
+	"fmt"
 	"strings"
 
+	"reasonix/internal/attachment"
 	"reasonix/internal/sessioninbox"
 )
+
+const inboxImageBudgetSafety = int64(4 << 10)
 
 func (c *Controller) freezeInboxReferences(ctx context.Context, submit string, explicit []string) (string, []string, []string, []ImageReferenceFailure) {
 	var line strings.Builder
@@ -78,7 +82,46 @@ func (c *Controller) freezeInboxEnvelopeReferences(ctx context.Context, env *ses
 			return ImageReferenceFailures(imageFailuresFromAttachment(err))
 		}
 	}
-	return nil
+	return fitInboxEnvelopeImages(env, sessioninbox.DefaultMaxItemBytes)
+}
+
+// fitInboxEnvelopeImages keeps legacy inline image snapshots within the durable
+// queue item limit. Current attachments are stored by digest outside the inbox
+// envelope and therefore do not need lossy recompression here.
+func fitInboxEnvelopeImages(env *sessioninbox.PromptEnvelope, maxBytes int64) error {
+	if env == nil || maxBytes <= 0 {
+		return nil
+	}
+	encoded, err := json.Marshal(env)
+	if err != nil {
+		return err
+	}
+	if int64(len(encoded)) <= maxBytes || len(env.FrozenImages) == 0 {
+		return nil
+	}
+	withoutImages := *env
+	withoutImages.FrozenImages = nil
+	base, err := json.Marshal(withoutImages)
+	if err != nil {
+		return err
+	}
+	fairShare := int(max((maxBytes-int64(len(base))-inboxImageBudgetSafety)/int64(len(env.FrozenImages)), 1))
+	for i, value := range env.FrozenImages {
+		if compressed, changed := compressVisionDataURLToSize(value, fairShare); changed {
+			env.FrozenImages[i] = compressed
+		}
+	}
+	encoded, err = json.Marshal(env)
+	if err != nil {
+		return err
+	}
+	if int64(len(encoded)) <= maxBytes {
+		return nil
+	}
+	return fmt.Errorf(
+		"automatic image compression could not fit the queue item: %w",
+		&sessioninbox.ItemTooLargeError{Size: int64(len(encoded)), Limit: maxBytes},
+	)
 }
 
 func (c *Controller) RefreshInboxReferences(id string) error {

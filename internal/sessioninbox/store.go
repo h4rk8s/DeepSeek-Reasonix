@@ -389,7 +389,7 @@ func (s *Store) Enqueue(req EnqueueRequest) (InboxReceipt, error) {
 		return receipt, err
 	}
 	if byteSize > s.limits.MaxItemBytes {
-		return InboxReceipt{}, ErrItemTooLarge
+		return InboxReceipt{}, &ItemTooLargeError{Size: byteSize, Limit: s.limits.MaxItemBytes}
 	}
 	if len(s.man.Items) >= s.limits.MaxItems {
 		return InboxReceipt{}, ErrCapacityItems
@@ -546,7 +546,7 @@ func (s *Store) updateItem(id string, env PromptEnvelope, alias string, aliasEnv
 		return InboxItemMeta{}, ErrContentChanged
 	}
 	if byteSize > s.limits.MaxItemBytes {
-		return InboxItemMeta{}, ErrItemTooLarge
+		return InboxItemMeta{}, &ItemTooLargeError{Size: byteSize, Limit: s.limits.MaxItemBytes}
 	}
 	delta := byteSize - meta.ByteSize
 	if s.man.totalBytes()+delta > s.limits.MaxTotalBytes {
