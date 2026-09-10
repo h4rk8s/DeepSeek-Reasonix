@@ -2,6 +2,7 @@ package sessioninbox
 
 import (
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -65,6 +66,32 @@ var (
 	ErrPaused              = errors.New("inbox is paused")
 	ErrIdempotencyConflict = errors.New("idempotency key was already used for different input")
 )
+
+// ItemTooLargeError preserves ErrItemTooLarge matching while giving frontends
+// enough context to explain the limit and a non-destructive recovery path.
+type ItemTooLargeError struct {
+	Size  int64
+	Limit int64
+}
+
+func (e *ItemTooLargeError) Error() string {
+	return fmt.Sprintf(
+		"inbox item is %s (limit %s); split large text/attachments, or wait until idle to submit directly",
+		formatBytes(e.Size), formatBytes(e.Limit),
+	)
+}
+
+func (e *ItemTooLargeError) Unwrap() error { return ErrItemTooLarge }
+
+func formatBytes(n int64) string {
+	if n >= 1<<20 {
+		return fmt.Sprintf("%.1f MiB", float64(n)/(1<<20))
+	}
+	if n >= 1<<10 {
+		return fmt.Sprintf("%.1f KiB", float64(n)/(1<<10))
+	}
+	return fmt.Sprintf("%d B", n)
+}
 
 // InboxItemMeta is the durable metadata kept in the manifest (never the body).
 type InboxItemMeta struct {
