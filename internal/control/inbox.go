@@ -326,6 +326,10 @@ func (c *Controller) EnqueueInbox(req InboxRequest) (sessioninbox.InboxReceipt, 
 		Extra:        maps.Clone(req.Extra),
 	}
 	env.FrozenRefBlock, env.FrozenImages, env.ReferenceErrors = c.freezeInboxReferences(context.Background(), submit, req.FreezeRefs)
+	if err := fitInboxEnvelopeImages(&env, sessioninbox.DefaultMaxItemBytes); err != nil {
+		sessioninbox.NoteCapacityReject()
+		return sessioninbox.InboxReceipt{}, err
+	}
 	intent := req.Intent
 	if intent != sessioninbox.IntentSteer {
 		intent = sessioninbox.IntentFollowup
@@ -411,6 +415,9 @@ func (c *Controller) UpdateInboxItem(id, display, raw, submit string) (sessionin
 		Extra:        maps.Clone(previous.Extra),
 	}
 	env.FrozenRefBlock, env.FrozenImages, env.ReferenceErrors = c.freezeInboxReferences(context.Background(), submit, env.ExplicitRefs)
+	if err := fitInboxEnvelopeImages(&env, sessioninbox.DefaultMaxItemBytes); err != nil {
+		return sessioninbox.InboxItemMeta{}, err
+	}
 	updated, err := st.UpdateItem(id, env)
 	if err != nil {
 		return sessioninbox.InboxItemMeta{}, err
@@ -456,6 +463,9 @@ func (c *Controller) AppendInboxItem(id, text, idempotency string, extra map[str
 		env.Extra = maps.Clone(extra)
 	}
 	env.FrozenRefBlock, env.FrozenImages, env.ReferenceErrors = c.freezeInboxReferences(context.Background(), merged, env.ExplicitRefs)
+	if err := fitInboxEnvelopeImages(&env, sessioninbox.DefaultMaxItemBytes); err != nil {
+		return sessioninbox.InboxItemMeta{}, err
+	}
 	aliasEnv := sessioninbox.PromptEnvelope{
 		DisplayText: text,
 		RawText:     text,
@@ -583,27 +593,6 @@ func (c *Controller) retryInboxItem(id string, dispatch bool) error {
 		c.maybeDispatchInbox()
 	}
 	return nil
-}
-
-func (c *Controller) RefreshInboxReferences(id string) error {
-	st, err := c.ensureInbox()
-	if err != nil {
-		return err
-	}
-	meta, env, err := st.ReadItem(id)
-	if err != nil {
-		return err
-	}
-	_ = meta
-	env.Refs = nil
-	env.FrozenRefBlock, env.FrozenImages, env.ReferenceErrors = c.freezeInboxReferences(context.Background(), env.SubmitText, env.ExplicitRefs)
-	_, err = st.UpdateItem(id, env)
-	if err == nil && len(env.ReferenceErrors) > 0 {
-		reason := strings.Join(env.ReferenceErrors, "; ")
-		err = st.SetState(id, sessioninbox.StateBlocked, reason)
-		_ = st.SetPaused(true)
-	}
-	return err
 }
 
 // TrySubmitInboxItem admits a queued item as a new turn when the session is idle.

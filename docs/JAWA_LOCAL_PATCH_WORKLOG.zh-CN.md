@@ -1,13 +1,13 @@
 # Jawa 本地 Reasonix 语义补丁台账
 
-更新时间：2026-09-09
+更新时间：2026-09-11
 
 ## 维护基线
 
 - 唯一长期分支：`jawa/reasonix-composer-state-visibility`
 - 主 checkout：`/Users/jawa/Lab/2026-07-06-reasonix-dev`
-- 本轮固定上游：`fa018e4109268c912063c8cc619302fccdb57d74`（v1.38.3）
-- 补丁结构：14 个产品语义补丁 + 2 个维护闸门 + 1 个临时 renderer pin
+- 本轮固定上游：`e2145b031deef603d9ec1acc9d30f9a1e1ac9325`（v1.38.6）
+- 补丁结构：13 个产品语义 owner + 2 个维护闸门 + 1 个临时 renderer pin；线性 Git 栈共 18 个提交（计费日历和队列图片预算是所属 owner 的 follow-up fix）
 - 同步入口：`scripts/jawa-upstream-sync.sh`
 - 临时 worktree：只允许位于仓库内 `.worktree/<task>`
 
@@ -60,13 +60,13 @@ upstream memory Scope + FreshnessFor
 upstream ContextManager
   -> overflow recovery + complete-tool-boundary maintenance
 
-evidence Ledger
+upstream operation ledger
   -> exact receipt reference
 ```
 
 箭头只允许从基础 owner 指向 consumer。最终代码中不存在反向 import，也不存在一个 consumer 回写基础真源的自指环。
 
-## 14 个产品语义补丁
+## 13 个产品语义补丁
 
 下面顺序是长期线的真实 replay 顺序。每一个中间提交都应可构建；后续补丁可以把早期临时表示迁移到最终 owner，但不得要求“未来提交先存在”。
 
@@ -376,6 +376,8 @@ Thought/Image 点击区域过大、hover 抖动、展开向下顶、选择文字
 - `/queue` 进入 slash autocomplete，并有本地化说明。
 - clear 后暂停状态、持久队列和 UI 计数同步更新。
 - 普通消息、图片附件和 image-only queue 继续走同一 admission transaction。
+- 多图冻结副本按整条 inbox item 的字节预算自动压缩；未超限图片和源附件保持原样，不裁掉画面内容。
+- 极端情况下仍无法安全压入时，错误包含实际大小、限制和“拆分附件或等待 idle 直发”的恢复路径。
 
 **Owner 与边界**
 
@@ -387,11 +389,13 @@ Thought/Image 点击区域过大、hover 抖动、展开向下顶、选择文字
 - clear empty/non-empty；
 - paused resume；
 - slash completion；
-- queued text/image 混合。
+- queued text/image 混合；
+- 多张高信息量 PNG 超过单条上限后自动压入、图片顺序与可读尺寸保持、原图不改；
+- 不可压缩格式的 typed capacity error。
 
 **退休条件**
 
-上游提供 discoverable queue clear 且原子更新 durable inbox 状态后可退休。
+上游提供 discoverable queue clear、原子更新 durable inbox 状态，并能按整条消息预算保存多图冻结副本后可退休。
 
 ### 11. `feat(capability): add deterministic gateway repair`
 
@@ -456,35 +460,7 @@ Thought/Image 点击区域过大、hover 抖动、展开向下顶、选择文字
 
 上游在 request 与 complete-tool-batch 两个边界均提供等价 maintenance，并能从 provider 实际 overflow 有界恢复后可退休。
 
-### 13. `feat(evidence): add exact receipt references`
-
-**用户问题**
-
-`complete_step` 用改写后的命令文本声称验证成功时，系统无法确定它是否引用了真实执行，导致“看起来验证过”但 receipt 不匹配。
-
-**最终行为**
-
-- 当前 turn 的真实 evidence Ledger receipt 获得短稳定引用，例如 `r000003`。
-- `complete_step` 可引用成功 verification receipt。
-- 同时给出 receipt ID 和 command 时，两者必须绑定同一次执行；不匹配 fail-closed。
-- 跨 turn 仍使用上游 transcript fallback，不伪称 receipt 已永久持久化。
-
-**Owner 与边界**
-
-- Owner：evidence Ledger；completion tool 只校验引用。
-- capability repair 不读取 receipt 来决定修复，避免两个修复器互相反馈。
-
-**验证**
-
-- valid/missing/failed/mismatched receipt；
-- exact command binding；
-- tool schema golden 和 prefix hash。
-
-**退休条件**
-
-上游提供稳定可引用的 execution receipt 与同等 command binding 后可退休。
-
-### 14. `feat(cli): make image attachments atomic composer tokens`
+### 13. `feat(cli): make image attachments atomic composer tokens`
 
 **用户问题**
 
@@ -519,14 +495,14 @@ Thought/Image 点击区域过大、hover 抖动、展开向下顶、选择文字
 
 ## 2 个维护闸门
 
-### 15. `test(tool): benchmark the canonical tool contract`
+### 14. `test(tool): benchmark the canonical tool contract`
 
 - 目的：守住一份 canonical ToolKind/schema/executor，检测 schema allocation 和 contract 漂移。
 - 它不是产品能力，也不宣称已经实现 DeepSeek/Codex/OpenCode 多方言 A/B。
 - 若未来做 dialect projection，只允许变更 name/description/schema/envelope；permission、sandbox、path、execution、event 和 evidence 仍共用 canonical executor。
 - 上游已有等价 benchmark 时可合并；不能为了减少提交删掉唯一的回归门。
 
-### 16. `chore(sync): maintain semantic patch stack and structural ratchet`
+### 15. `chore(sync): maintain semantic patch stack and structural ratchet`
 
 - 只容纳 replay 脚本、详细 worklog、上游测试环境兼容和代码结构 ratchet。
 - 从巨型文件抽出已有 owner，不新增用户行为：
@@ -536,43 +512,43 @@ Thought/Image 点击区域过大、hover 抖动、展开向下顶、选择文字
   - subagent isolation wiring -> agent/boot 专用文件
   - config edit、eventwire usage、serve effort、Desktop channel route -> 各自 owner 文件
 - `repolint` 必须证明相对旧长期分支不扩大 complexity/file/function/test-size 债务。
-- 维护补丁不得重新收容本应属于前 14 个 owner 的 runtime feature。
+- 维护补丁不得重新收容本应属于前 13 个 owner 的 runtime feature。
 
-## 旧 20 补丁到新 16 补丁的映射
+## 旧 20 补丁到当前 15 个 owner 的映射
 
 | 旧补丁 | 新 owner | 处理结果 |
 |---|---|---|
 | 1 terminal title | 3 interactive shell | 保留行为，并入 CLI shell 配置 |
 | 2 planner visibility | 1 planner projection | 保留，删除自然语言 no-op 启发式 |
-| 3 image pipeline | 2 vision + 14 composer | 保留 pipeline；附件身份迁入 typed composer |
+| 3 image pipeline | 2 vision + 13 composer | 保留 pipeline；附件身份迁入 typed composer |
 | 4 interactive transcript | 3 shell + 8 transcript + 9 presentation | 拆成配置、语义真源和展示 owner |
 | 5 worktree lifecycle | 4 subagent isolation | 保留隔离；删除本地 git-apply 生命周期 |
 | 6 usage ledger | 5 usage | 保留完整性/归因；删除本地 repricing 和 UsageModel 双真源 |
 | 7 memory recall | 6 memory | 保留 diversity；删除 SourceScope/LastConfirmedAt 双真源 |
-| 8 tool benchmark | 15 maintenance test | 移出产品语义计数 |
+| 8 tool benchmark | 14 maintenance test | 移出产品语义计数 |
 | 9 strict config | 7 config | 与 provenance 合并，panic API 改为 error |
 | 10 disclosures | 9 presentation | 与 transcript/status/viewport 展示合并 |
 | 11 queue clear | 10 inbox | 原样保留并固定 autocomplete |
-| 12 sync workflow | 16 maintenance | runtime 变更归还 owner，只保留维护资产 |
+| 12 sync workflow | 15 maintenance | runtime 变更归还 owner，只保留维护资产 |
 | 13 canonical transcript | 8 transcript | 提升为唯一语义 projection |
 | 14 capability repair | 11 capability | 保留并限制为 deterministic one-retry |
 | 15 config provenance | 7 config | 与 authoritative config 合并 |
 | 16 overflow recovery | 12 context | 与 post-tool maintenance 合并 |
 | 17 post-tool maintenance | 12 context | 合并到唯一 ContextManager owner |
-| 18 evidence receipt | 13 evidence | 保留 exact reference/binding |
+| 18 evidence receipt | upstream operation ledger | v1.38.6 已以更强的 operation-scoped host receipt 覆盖，退休本地顺序 ID 实现 |
 | 19 vision footer | 9 presentation | 并入 status projection，不再单独计数 |
-| 20 image token | 14 composer | 重写为 stable-ID typed parts |
-| owner refactor commits | 对应 1-16 | fixup 到各 owner；结构抽取集中进入 16 |
+| 20 image token | 13 composer | 重写为 stable-ID typed parts |
+| owner refactor commits | 对应 1-15 | fixup 到各 owner；结构抽取集中进入 15 |
 
-结果：没有产品能力被按名称粗暴删除；删除的是重复真源、错误 apply/repricing、自然语言猜测和散落实现。
+结果：没有用户能力被按名称粗暴删除；删除的是已被上游更强覆盖的第二套 receipt ID，以及重复真源、错误 apply/repricing、自然语言猜测和散落实现。
 
-## 2026-09-09 v1.38.3 重放判定
+## 2026-09-11 v1.38.6 重放判定
 
-- 旧上游：`6c2e845b81a9478041a2596cbbb95ac2c531989f`（v1.38.1）。
-- 固定新上游：`fa018e4109268c912063c8cc619302fccdb57d74`（v1.38.3），上游区间共 288 个提交。
-- 旧长期线：`37e01e4fb4b3951ad0b9408d037f034b2e3e6e66`，17 个补丁逐项映射到新线；无 squash、无 drop、无改序。
+- 旧上游：`fa018e4109268c912063c8cc619302fccdb57d74`（v1.38.3）。
+- 固定新上游：`e2145b031deef603d9ec1acc9d30f9a1e1ac9325`（v1.38.6），上游区间共 203 个提交。
+- 旧长期线：`6980ba7aa37cd556c73c3309ae1be23351b807ce`，19 个提交按序重放为 18 个；仅退休已被上游更强覆盖的旧 evidence receipt 补丁，无 squash、无意外改序。
 
-| # | 语义 owner | 判定 | v1.38.3 集成结果 |
+| # | 语义 owner | 判定 | v1.38.6 集成结果 |
 |---|---|---|---|
 | 1 | planner projection | 保留 | 上游仍未提供相同的单一可见回答 contract；原补丁机械重放。 |
 | 2 | vision | 集成并瘦身 | 采用上游 `internal/imageinput`、`vision_model` 和 remote-first 路由；删除重复 provider sidecar，只保留 macOS 输入归一化、本地 fallback、usage/disclosure 增量。 |
@@ -580,17 +556,17 @@ Thought/Image 点击区域过大、hover 抖动、展开向下顶、选择文字
 | 4 | subagent isolation | 集成 | 继续复用上游 exact merge 生命周期和 `tool.HostTask`；只保留显式 worktree profile、child-root 装配与恢复 metadata。 |
 | 5 | usage | 适配 | 跟随上游 eventwire/model identity 位置；保留 occurrence-time quote、完整性和 CLI/ACP 共用 projection。 |
 | 6 | memory | 集成 | 复用上游 freshness/scope owner；只保留 provenance 与 BM25 后 diversity rerank。 |
-| 7 | config | 保留并加固 | 接入上游 model runtime snapshot；普通 boot 仍严格 no-write，v1.38.3 新增的 eager/lazy 与 memory migration tests 改为兼容读取且字节不变。 |
+| 7 | config | 保留并加固 | 接入上游 model runtime snapshot 与 OpenCode Go migration journal；普通 boot 仍严格 no-write，兼容读取后配置字节不变。 |
 | 8 | transcript | 集成 | 复用上游 Desktop display buffer、schema-2 session/head 字段；共享 typed transcript 继续是 CLI live/replay owner。 |
 | 9 | CLI projection | 适配 | disclosure/status 接到上游 imageinput phase 和 TUI event owner；cached vision 不闪烁，prefix 不含动态字段。 |
 | 10 | inbox | 保留 | 上游仍无 `/queue clear` 与对应 slash completion；原补丁机械重放。 |
 | 11 | capability | 保留 | 上游 read-evidence gate 不等于 MCP 参数 repair；deterministic one-retry 仍独立且机械重放。 |
 | 12 | context | 集成并退休重复逻辑 | 采用上游 transcript -> slim -> chunk 恢复阶梯，删除本地直接分块 helper；保留完整 tool batch 后的主动 maintenance。 |
-| 13 | evidence | 集成 | 保留上游 `ToolCallID`、read/write evidence gate 和 completion receipt；增加 turn-local `r000001` 引用，避免模型复述长命令失败。 |
+| 13 | evidence | 退休 | v1.38.6 已提供 host-issued short hash receipt、`operation_id` 绑定、bounded `CitableReceipts`、失败/跨 operation 拒绝和完整测试；旧 `r000001` 顺序 ID 会形成第二真源。 |
 | 14 | composer token | 保留 | 上游 clipboard 改进尚未提供 stable-ID 原子附件、点击选择、删除与 Cmd+Z 全 contract；原补丁机械重放。 |
 | 15 | tool benchmark | 保留 | 上游仍无等价 canonical contract allocation 基准；不引入 dialect executor。 |
-| 16 | maintenance | 重算 | 按 v1.38.3 最终树重建 `repolint` baseline，并适配 Go 1.26 的嵌入 composer test 初始化。 |
-| 17 | renderer pin | 暂留 | v1.38.3 仍指向不含 Ultraviolet #143 的官方依赖；只保留单点 replacement，官方依赖包含修复后立即退休。 |
+| 16 | maintenance | 重算 | 按 v1.38.6 集成树重建 `repolint` baseline；配置 edit helper 继续使用上游文件布局。 |
+| 17 | renderer pin | 暂留 | v1.38.6 的依赖仍未证明完整包含所需 hard-scroll 行修复；只保留单点 replacement，官方依赖包含同一行为后立即退休。 |
 
 本轮主动舍弃的是已被更好上游实现覆盖的重复代码，不是用户行为：旧 vision provider sidecar、旧 context size helper、旧 Desktop/TUI 私有 transcript 表示，以及启动时自动改写配置的测试假设。
 
@@ -614,10 +590,10 @@ scripts/jawa-upstream-sync.sh
 ```
 
 - 从长期线创建仓库内临时 worktree；
-- 依序重放 17 个补丁；
+- 依序重放当前长期线全部提交；
 - 冲突按本台账 owner 判定，不使用整侧 `ours/theirs` 吞并；
 - 对每个非机械差异写清上游意图、本地契约和最终选择；
-- 使用 `range-diff` 确认无 drop、无意外 squash、无改序。
+- 使用 `range-diff` 确认只有经过 contract 对比记录的退休项，无意外 squash、无改序。
 
 ### 3. 退休检查
 
