@@ -18033,6 +18033,13 @@
           }
         },
         {
+          "name": "rateScheduleId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
           "name": "incompleteReason",
           "optional": true,
           "type": {

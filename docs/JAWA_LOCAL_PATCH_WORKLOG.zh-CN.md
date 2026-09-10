@@ -50,7 +50,8 @@ typed composer parts
 upstream exact worktree merge
   -> explicit subagent isolation
 
-upstream ModelRef + occurrence-time CostQuote
+provider rate_schedules + upstream ModelRef
+  -> occurrence-time CostQuote
   -> fail-closed usage projection
 
 upstream memory Scope + FreshnessFor
@@ -211,13 +212,16 @@ CleanShot、Raycast clipboard history、文件 URL 和延迟落盘会产生不�
 - `usage_is_incomplete` 和 `cost_is_partial` 明确表达尚未归集或缺失 quote。
 - 完整成本才输出 USD；精确整数 ticks 避免 float 累积误差。
 - 只消费事件发生时的 `ModelRef` 和 `CostQuote`，绝不根据当前 pricing 重新定价。
+- Provider 可在 TOML 中声明按 model、生效区间、时区、工作日和峰值窗口版本化的 `rate_schedules`；供应商调价只改配置，不改源码。
+- `CostQuote` 优先使用显式配置日历，未命中才回退静态 `price` 或旧内置 catalog；历史费率段与当前费率段互不覆盖。
+- 峰谷档位使用第一笔真实 HTTP 请求的发起时刻，而不是响应完成时刻；跨 12:00/18:00 的长请求不会被完成时刻误分类。
 - stream-json 最后一行仍为 result，stdout 只含 JSON/NDJSON，诊断走 stderr。
 - ACP 复用同一 projection，不维护第二套计算逻辑。
 
 **Owner 与边界**
 
 - Owner：usage ledger 只负责聚合、完整性和归因。
-- 定价 owner 是上游 occurrence-time CostQuote。
+- 定价 owner 是 occurrence-time CostQuote；供应商数字和 cutover 属于用户配置，Go 代码只解析通用日历规则。
 
 **验证**
 
