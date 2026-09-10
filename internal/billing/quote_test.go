@@ -96,6 +96,23 @@ func TestAggregateRateBands(t *testing.T) {
 	}
 }
 
+func TestAggregateRateScheduleID(t *testing.T) {
+	base := func(id string) CostQuote {
+		return CostQuote{Original: Money{Amount: "1", Currency: "CNY"}, Valuations: map[string]Valuation{
+			"CNY": {Money: Money{Amount: "1", Currency: "CNY"}, Basis: BasisIdentity},
+		}, CostComplete: true, DisplayComplete: true, Complete: true, RateScheduleID: id}
+	}
+	if got := AggregateQuotes([]CostQuote{base("flash-september-2026"), base("flash-september-2026")}, ""); got.RateScheduleID != "flash-september-2026" {
+		t.Fatalf("same schedule id = %q", got.RateScheduleID)
+	}
+	if got := AggregateQuotes([]CostQuote{base("flash-august-2026"), base("flash-september-2026")}, ""); got.RateScheduleID != "" {
+		t.Fatalf("mixed schedule id = %q", got.RateScheduleID)
+	}
+	if got := AggregateQuotes([]CostQuote{base("flash-september-2026"), base("")}, ""); got.RateScheduleID != "" {
+		t.Fatalf("unknown member schedule id = %q", got.RateScheduleID)
+	}
+}
+
 func TestLedgerBucketAggregationClearsSingleRatedAt(t *testing.T) {
 	l := NewLedger()
 	q := CostQuote{

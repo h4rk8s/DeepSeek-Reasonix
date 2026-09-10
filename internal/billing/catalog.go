@@ -56,6 +56,7 @@ type ResolvedRate struct {
 	RateBand   string
 	ScheduleID string
 	OccurredAt time.Time
+	Source     string
 }
 
 const (

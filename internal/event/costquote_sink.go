@@ -142,6 +142,9 @@ func EnsureCostQuote(e Event, ctx *QuoteContext) *billing.CostQuote {
 		return nil
 	}
 	display, now := ctx.snapshot()
+	if e.Usage.RequestStartedAt > 0 {
+		now = time.UnixMilli(e.Usage.RequestStartedAt).UTC()
+	}
 	if e.Usage.Unknown {
 		known := *e.Usage
 		known.Unknown = false
@@ -179,6 +182,7 @@ func EnsureCostQuote(e Event, ctx *QuoteContext) *billing.CostQuote {
 		ProviderKind:  pricingCtx.ProviderKind,
 		ModelID:       pricingCtx.ModelID,
 		ScheduleID:    pricingCtx.ScheduleID,
+		RateSchedules: pricingCtx.RateSchedules,
 		CatalogSource: pricingCtx.CatalogSource,
 	})
 	return &q

@@ -711,6 +711,9 @@ type Usage struct {
 	// RequestCount is the number of provider requests represented by thisaggregate.
 	// Zeromeansonerequestforbackward compatibility. Recoverypaths that merge multiple attempts settheexactcount.
 	RequestCount int
+	// RequestStartedAt is the first provider HTTP request's Unix millisecond.
+	// It is host billing metadata and is never sent back to a model provider.
+	RequestStartedAt int64 `json:"-"`
 	// Context* fields describe the latest single-request shape for contextgauges and rebind telemetry. Whenzero,
 	// consumers fall back to thebillable Prompt/Completion/… fields. Multi-attempt sampling recoverysets
 	// PromptTokens (etc.) tothebillable aggregate and fills Context*

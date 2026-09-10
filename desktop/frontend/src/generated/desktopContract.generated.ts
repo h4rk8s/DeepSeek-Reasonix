@@ -3,7 +3,7 @@
 
 export const DESKTOP_PROTOCOL_VERSION = 1;
 
-export const DESKTOP_CONTRACT_DIGEST = "sha256:5b78becd4c693a777dd233ff7cc3b9f5008e1ef459448404fef6c638302ca0ed";
+export const DESKTOP_CONTRACT_DIGEST = "sha256:1553c9f7f08c9982d4cfce3006067e7a561c6e79457c13953b020102c5faa1f8";
 
 export const DESKTOP_COMMANDS = [
   "AIRenameSession",
@@ -645,6 +645,7 @@ export interface CostQuote {
   rateDate?: string;
   rateBand?: string;
   ratedAt?: string;
+  rateScheduleId?: string;
   incompleteReason?: string;
   legacyEstimate?: boolean;
   catalogSource?: string;

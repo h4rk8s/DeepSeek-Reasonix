@@ -1615,6 +1615,7 @@ type ProviderEntry struct {
 	MaxOutputTokens int                          `toml:"max_output_tokens"`
 	Price           *provider.Pricing            `toml:"price"`  // legacy/provider-wide fallback
 	Prices          map[string]*provider.Pricing `toml:"prices"` // optional per-model prices; keys are model ids
+	RateSchedules   []ProviderRateSchedule       `toml:"rate_schedules"`
 	// BillingCurrency is the frozen list-price currency (ISO-4217). Independent
 	// of [billing].display_currency; switching display never rewrites this.
 	BillingCurrency string `toml:"billing_currency"`
@@ -2556,6 +2557,9 @@ func (c *Config) Validate(model string) error {
 	}
 	if e.BaseURL == "" {
 		return fmt.Errorf("provider %q: base_url is required", model)
+	}
+	if err := validateProviderRateSchedules(*e); err != nil {
+		return err
 	}
 	if strings.TrimSpace(e.APIKeyEnv) != "" && !IsValidCredentialKey(e.APIKeyEnv) {
 		return fmt.Errorf("provider %q: api_key_env %q is invalid; use letters, numbers, and underscores, not a model name", model, e.APIKeyEnv)

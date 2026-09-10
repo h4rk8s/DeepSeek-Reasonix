@@ -82,6 +82,11 @@ func StreamAuxiliary(ctx context.Context, p Provider, req Request) (<-chan Chunk
 				aggregate.Unknown = aggregate.Unknown || latest.Unknown
 			}
 			aggregate.RequestCount = RequestAttemptCount(ctx)
+			if aggregate.RequestStartedAt == 0 {
+				if started := RequestStartedAt(ctx); !started.IsZero() {
+					aggregate.RequestStartedAt = started.UnixMilli()
+				}
+			}
 			if aggregate.RequestCount == 0 {
 				aggregate.RequestCount = attempt + 1
 			}

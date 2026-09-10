@@ -659,7 +659,7 @@ func validateProvider(e ProviderEntry) error {
 	case strings.TrimSpace(e.APIKeyEnv) != "" && !IsValidCredentialKey(e.APIKeyEnv):
 		return fmt.Errorf("provider %q: api_key_env %q is not a valid environment variable name", e.Name, e.APIKeyEnv)
 	}
-	return nil
+	return validateProviderRateSchedules(e)
 }
 
 func providerHasAnyModel(e ProviderEntry) bool {

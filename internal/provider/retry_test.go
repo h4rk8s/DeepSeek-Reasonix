@@ -341,3 +341,26 @@ func TestIndependentRequestAttemptCounter(t *testing.T) {
 		t.Fatalf("auxiliary and main request counts leaked: parent=%d child=%d", RequestAttemptCount(parent), RequestAttemptCount(child))
 	}
 }
+
+func TestRequestAttemptCounterCapturesFirstRequestStart(t *testing.T) {
+	ctx := WithRequestAttemptCounter(context.Background())
+	before := time.Now().UTC().Add(-time.Second)
+	recordRequestAttempt(ctx)
+	first := RequestStartedAt(ctx)
+	if first.IsZero() || first.Before(before) || first.After(time.Now().UTC().Add(time.Second)) {
+		t.Fatalf("first request start = %v", first)
+	}
+	time.Sleep(time.Millisecond)
+	recordRequestAttempt(ctx)
+	if got := RequestStartedAt(ctx); !got.Equal(first) {
+		t.Fatalf("request start changed from %v to %v", first, got)
+	}
+	u := UsageWithRequestAttemptCount(ctx, &Usage{PromptTokens: 1})
+	if u == nil || u.RequestStartedAt != first.UnixMilli() || u.RequestCount != 2 {
+		t.Fatalf("usage request metadata = %+v", u)
+	}
+	unknown := UsageWithRequestAttemptCount(ctx, nil)
+	if unknown == nil || !unknown.Unknown || unknown.RequestStartedAt != first.UnixMilli() {
+		t.Fatalf("unknown usage request metadata = %+v", unknown)
+	}
+}

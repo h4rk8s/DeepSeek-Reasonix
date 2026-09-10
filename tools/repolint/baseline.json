@@ -4,8 +4,8 @@
     "commented-code": 0,
     "complexity": 1942,
     "essay": 1886,
-    "file-size": 102384,
-    "function-size": 8381,
+    "file-size": 102443,
+    "function-size": 8383,
     "layering": 1,
     "marker": 0,
     "narrative": 64,
@@ -551,6 +551,9 @@
     "internal/agent/usecapability_test.go": {
       "test-file-size": 946
     },
+    "internal/billing/quote.go": {
+      "file-size": 23
+    },
     "internal/boot/boot.go": {
       "complexity": 275,
       "essay": 74,
@@ -817,7 +820,7 @@
     },
     "internal/config/config.go": {
       "essay": 22,
-      "file-size": 1775,
+      "file-size": 1779,
       "narrative": 2
     },
     "internal/config/credentials.go": {
@@ -865,8 +868,8 @@
     "internal/config/render.go": {
       "complexity": 245,
       "essay": 2,
-      "file-size": 1092,
-      "function-size": 982
+      "file-size": 1121,
+      "function-size": 984
     },
     "internal/config/render_test.go": {
       "test-file-size": 836
@@ -1233,7 +1236,7 @@
     },
     "internal/provider/provider.go": {
       "essay": 7,
-      "file-size": 287
+      "file-size": 290
     },
     "internal/provider/responses/responses.go": {
       "complexity": 49,

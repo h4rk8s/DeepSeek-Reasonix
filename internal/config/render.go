@@ -418,6 +418,7 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 			if p.NoProxy {
 				b.WriteString("no_proxy    = true   # reach this base_url directly, never via the proxy\n")
 			}
+			renderProviderRateSchedules(&b, p.RateSchedules, true)
 			b.WriteString("\n")
 		}
 	}
@@ -1166,6 +1167,7 @@ func RenderTOMLProjectDelta(c *Config) string {
 			if p.NoProxy {
 				b.WriteString("no_proxy    = true\n")
 			}
+			renderProviderRateSchedules(&b, p.RateSchedules, false)
 			b.WriteString("\n")
 		}
 	}
@@ -1378,6 +1380,33 @@ func renderPricingMap(prices map[string]*provider.Pricing) string {
 	}
 	b.WriteString(" }")
 	return b.String()
+}
+
+func renderProviderRateSchedules(b *strings.Builder, schedules []ProviderRateSchedule, annotated bool) {
+	for _, schedule := range schedules {
+		b.WriteString("\n[[providers.rate_schedules]]\n")
+		fmt.Fprintf(b, "id = %q\n", schedule.ID)
+		if len(schedule.Models) > 0 {
+			fmt.Fprintf(b, "models = %s\n", renderStringArray(schedule.Models))
+		}
+		fmt.Fprintf(b, "effective_from = %q\n", schedule.EffectiveFrom)
+		if schedule.EffectiveTo != "" {
+			fmt.Fprintf(b, "effective_to = %q\n", schedule.EffectiveTo)
+		}
+		fmt.Fprintf(b, "timezone = %q\n", schedule.Timezone)
+		fmt.Fprintf(b, "peak_weekdays = %s\n", renderStringArray(schedule.PeakWeekdays))
+		fmt.Fprintf(b, "peak_windows = %s\n", renderStringArray(schedule.PeakWindows))
+		fmt.Fprintf(b, "peak = %s\n", renderPricingInline(schedule.Peak))
+		fmt.Fprintf(b, "off_peak = %s\n", renderPricingInline(schedule.OffPeak))
+		if schedule.Source != "" {
+			fmt.Fprintf(b, "source = %q", schedule.Source)
+			if annotated {
+				b.WriteString("   # price notice or provider documentation\n")
+			} else {
+				b.WriteString("\n")
+			}
+		}
+	}
 }
 
 func configVersion(c *Config) int {
