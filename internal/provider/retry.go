@@ -49,7 +49,8 @@ type retryNotifyKey struct{}
 type requestAttemptCounterKey struct{}
 
 type requestAttemptCounter struct {
-	count atomic.Int64
+	count              atomic.Int64
+	firstStartedUnixMs atomic.Int64
 }
 
 // WithRetryNotify retains compatibility with older callers. HTTP requests no
@@ -95,6 +96,24 @@ func RequestAttemptCount(ctx context.Context) int {
 	return int(counter.count.Load())
 }
 
+// RequestStartedAt returns the first HTTP request start observed by the
+// counter. It is the closest host-side approximation of the provider's request
+// receipt time and remains stable across header and stream retries.
+func RequestStartedAt(ctx context.Context) time.Time {
+	if ctx == nil {
+		return time.Time{}
+	}
+	counter, _ := ctx.Value(requestAttemptCounterKey{}).(*requestAttemptCounter)
+	if counter == nil {
+		return time.Time{}
+	}
+	ms := counter.firstStartedUnixMs.Load()
+	if ms <= 0 {
+		return time.Time{}
+	}
+	return time.UnixMilli(ms).UTC()
+}
+
 // ApplyRequestAttemptCount copies the stream's exact HTTP request count into a
 // Usage record. Contexts without a counter leave the record unchanged so custom
 // providers keep the zero-means-one compatibility contract.
@@ -104,6 +123,11 @@ func ApplyRequestAttemptCount(ctx context.Context, usage *Usage) {
 	}
 	if count := RequestAttemptCount(ctx); count > 0 {
 		usage.RequestCount = count
+	}
+	if usage.RequestStartedAt == 0 {
+		if started := RequestStartedAt(ctx); !started.IsZero() {
+			usage.RequestStartedAt = started.UnixMilli()
+		}
 	}
 }
 
@@ -118,11 +142,20 @@ func UsageWithRequestAttemptCount(ctx context.Context, usage *Usage) *Usage {
 		if count <= 0 {
 			return nil
 		}
-		return &Usage{RequestCount: count, Unknown: true}
+		result := &Usage{RequestCount: count, Unknown: true}
+		if started := RequestStartedAt(ctx); !started.IsZero() {
+			result.RequestStartedAt = started.UnixMilli()
+		}
+		return result
 	}
 	result := *usage
 	if count > 0 {
 		result.RequestCount = count
+	}
+	if result.RequestStartedAt == 0 {
+		if started := RequestStartedAt(ctx); !started.IsZero() {
+			result.RequestStartedAt = started.UnixMilli()
+		}
 	}
 	return &result
 }
@@ -133,6 +166,7 @@ func recordRequestAttempt(ctx context.Context) {
 	}
 	counter, _ := ctx.Value(requestAttemptCounterKey{}).(*requestAttemptCounter)
 	if counter != nil {
+		counter.firstStartedUnixMs.CompareAndSwap(0, time.Now().UTC().UnixMilli())
 		counter.count.Add(1)
 	}
 }

@@ -153,6 +153,9 @@ func (e *ProviderEntry) PricingContextForModel(model string) billing.PricingCont
 		ModelID:      model,
 		BillingMode:  e.ProviderBillingMode(),
 	}
+	if schedules, err := e.rateSchedulesForModel(model); err == nil {
+		ctx.RateSchedules = schedules
+	}
 	card := e.RateCardForModel(model)
 	if entry, ok := billing.MatchesCatalog(kind, model, card); ok {
 		ctx.CatalogSource = entry.DocURL

@@ -55,3 +55,35 @@ func TestCostQuoteSinkRatesOnceAndPreservesExistingQuote(t *testing.T) {
 		t.Fatalf("existing quote was recomputed: got=%p want=%p nowCalls=%d", first, prebuilt, nowCalls)
 	}
 }
+
+func TestEnsureCostQuoteUsesProviderRequestStartInsteadOfCompletionClock(t *testing.T) {
+	shanghai, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Date(2026, time.September, 10, 3, 59, 59, 0, time.UTC)
+	completed := time.Date(2026, time.September, 10, 4, 0, 1, 0, time.UTC)
+	schedule := billing.RateSchedule{
+		ID: "boundary", EffectiveFrom: started.Add(-time.Hour), Location: shanghai,
+		PeakWeekdays: []time.Weekday{time.Thursday}, PeakWindows: []billing.DailyRateWindow{{StartMinute: 9 * 60, EndMinute: 12 * 60}},
+		Peak: billing.RateCard{Input: 2, Currency: "CNY"}, OffPeak: billing.RateCard{Input: 1, Currency: "CNY"},
+	}
+	ctx := &QuoteContext{
+		Now: func() time.Time { return completed },
+		PricingContextForModel: func(string) billing.PricingContext {
+			return billing.PricingContext{RateSchedules: []billing.RateSchedule{schedule}}
+		},
+	}
+	e := Event{
+		Kind: Usage, ModelRef: "deepseek/deepseek-v4-flash",
+		Usage:   &provider.Usage{PromptTokens: 1_000_000, RequestStartedAt: started.UnixMilli()},
+		Pricing: &provider.Pricing{Input: 99, Currency: "USD"},
+	}
+	q := EnsureCostQuote(e, ctx)
+	if q == nil || q.RateBand != billing.RateBandPeak || q.Original.Currency != "CNY" || q.Original.Amount != "2" {
+		t.Fatalf("quote = %+v", q)
+	}
+	if q.RatedAt != started.Format(time.RFC3339Nano) {
+		t.Fatalf("rated_at = %q, want request start %q", q.RatedAt, started.Format(time.RFC3339Nano))
+	}
+}

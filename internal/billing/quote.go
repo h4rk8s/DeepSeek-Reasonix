@@ -58,6 +58,7 @@ type PricingContext struct {
 	BillingMode   string
 	ScheduleID    string
 	CatalogSource string
+	RateSchedules []RateSchedule
 }
 
 const (
@@ -99,6 +100,7 @@ type CostQuote struct {
 	RateDate           string `json:"rateDate,omitempty"` // YYYY-MM-DD of FX used, if any
 	RateBand           string `json:"rateBand,omitempty"` // peak | off_peak | mixed
 	RatedAt            string `json:"ratedAt,omitempty"`  // RFC3339 UTC for scheduled quotes
+	RateScheduleID     string `json:"rateScheduleId,omitempty"`
 	IncompleteReason   string `json:"incompleteReason,omitempty"`
 	LegacyEstimate     bool   `json:"legacyEstimate,omitempty"`
 	CatalogSource      string `json:"catalogSource,omitempty"`
@@ -160,6 +162,9 @@ type QuoteInput struct {
 	// ScheduleID is set only after config resolution proves that this is an
 	// official scheduled price anchor. Model names alone must not enable it.
 	ScheduleID string
+	// RateSchedules are explicit, config-owned price versions. They take
+	// precedence over the compatibility catalog schedule above.
+	RateSchedules []RateSchedule
 	// ProviderKind is deepseek|longcat|mimo|… for official dual-table lookup.
 	// When empty, ModelRef and Rates are used to infer a catalog match.
 	ProviderKind string
@@ -225,10 +230,6 @@ type quoteBuildState struct {
 }
 
 func newQuoteBuildState(in QuoteInput) *quoteBuildState {
-	currency := NormalizeCurrency(in.Rates.Currency)
-	if currency == "" {
-		currency = "CNY"
-	}
 	mode := strings.TrimSpace(in.BillingMode)
 	if mode == "" {
 		mode = BillingModePAYG
@@ -242,12 +243,25 @@ func newQuoteBuildState(in QuoteInput) *quoteBuildState {
 	providerKind, modelID := resolveCatalogIdentity(in)
 	resolvedBand := ""
 	resolvedSchedule := false
-	if MatchesOfficialPeakAnchor(providerKind, modelID, in.Rates.Currency, mode, in.Rates) {
+	resolvedScheduleID := ""
+	if resolved, ok := ResolveConfiguredRate(in.RateSchedules, occurred); ok {
+		in.Rates = resolved.Card
+		resolvedBand = resolved.RateBand
+		resolvedScheduleID = resolved.ScheduleID
+		in.ScheduleID = resolved.ScheduleID
+		in.CatalogSource = firstNonEmpty(resolved.Source, in.CatalogSource)
+		resolvedSchedule = true
+	} else if MatchesOfficialPeakAnchor(providerKind, modelID, in.Rates.Currency, mode, in.Rates) {
 		if resolved, ok := ResolveScheduledRate(providerKind, modelID, in.Rates.Currency, mode, in.ScheduleID, occurred); ok {
 			in.Rates = resolved.Card
 			resolvedBand = resolved.RateBand
+			resolvedScheduleID = resolved.ScheduleID
 			resolvedSchedule = true
 		}
+	}
+	currency := NormalizeCurrency(in.Rates.Currency)
+	if currency == "" {
+		currency = "CNY"
 	}
 	fingerprint := strings.TrimSpace(in.PricingFingerprint)
 	if fingerprint == "" || resolvedSchedule {
@@ -269,6 +283,7 @@ func newQuoteBuildState(in QuoteInput) *quoteBuildState {
 		PricingFingerprint: fingerprint,
 		CatalogSource:      strings.TrimSpace(in.CatalogSource),
 		RateBand:           resolvedBand,
+		RateScheduleID:     resolvedScheduleID,
 	}
 	if resolvedSchedule {
 		q.RatedAt = occurred.Format(time.RFC3339Nano)
@@ -499,6 +514,8 @@ type quoteAccumulator struct {
 	modes             map[string]struct{}
 	rateBands         map[string]struct{}
 	unknownRateBand   bool
+	rateScheduleIDs   map[string]struct{}
+	unknownScheduleID bool
 }
 
 func emptyAggregate(display string) CostQuote {
@@ -516,7 +533,7 @@ func newQuoteAccumulator(display string) *quoteAccumulator {
 		out:     CostQuote{Valuations: map[string]Valuation{}, Estimated: true},
 		display: NormalizeCurrency(display), totals: map[string]Amount{}, originalTotals: map[string]Amount{},
 		originalComplete: true, costFactsComplete: true, displayComplete: true,
-		modes: map[string]struct{}{}, rateBands: map[string]struct{}{},
+		modes: map[string]struct{}{}, rateBands: map[string]struct{}{}, rateScheduleIDs: map[string]struct{}{},
 	}
 }
 
@@ -537,6 +554,11 @@ func (a *quoteAccumulator) add(quote CostQuote) {
 		a.rateBands[quote.RateBand] = struct{}{}
 	default:
 		a.unknownRateBand = true
+	}
+	if quote.RateScheduleID == "" {
+		a.unknownScheduleID = true
+	} else {
+		a.rateScheduleIDs[quote.RateScheduleID] = struct{}{}
 	}
 	if quote.RateDate > a.out.RateDate {
 		a.out.RateDate = quote.RateDate
@@ -630,6 +652,11 @@ func (a *quoteAccumulator) finish() CostQuote {
 			}
 		case 2:
 			a.out.RateBand = RateBandMixed
+		}
+	}
+	if !a.unknownScheduleID && len(a.rateScheduleIDs) == 1 {
+		for id := range a.rateScheduleIDs {
+			a.out.RateScheduleID = id
 		}
 	}
 	if a.display == "" && a.originalComplete && a.costFactsComplete {
