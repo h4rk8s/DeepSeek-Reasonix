@@ -289,7 +289,8 @@ func machineSessions(dir string, identityKey []byte) ([]machineSession, error) {
 		scope := "project"
 		state := "idle"
 		recovered := false
-		if entry.kind == resumeEntryLegacy {
+		switch entry.kind {
+		case resumeEntryLegacy:
 			info := entry.session
 			rawSessionID = agent.BranchID(info.Path)
 			createdAt = info.CreatedAt
@@ -308,7 +309,7 @@ func machineSessions(dir string, identityKey []byte) ([]machineSession, error) {
 				state = "recovered"
 			}
 			recovered = info.Recovered
-		} else if entry.kind == resumeEntryCanonical {
+		case resumeEntryCanonical:
 			if service := cliSessionServiceForRoot(filepath.Dir(entry.stored.Path)); service != nil {
 				if _, active := service.Runtime(entry.stored.Ref); active {
 					state = "active"
