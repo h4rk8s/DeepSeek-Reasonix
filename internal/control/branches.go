@@ -45,7 +45,7 @@ func (c *Controller) CurrentBranchID() string {
 			return ref.HeadID
 		}
 	}
-	return agent.BranchID(c.SessionPath())
+	return c.parentSessionID()
 }
 
 func FormatBranchTree(branches []agent.BranchInfo, currentID string) string {

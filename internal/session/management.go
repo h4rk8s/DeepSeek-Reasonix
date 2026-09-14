@@ -45,6 +45,35 @@ func (s *Service) SetTitle(ctx context.Context, ref SessionRef, title string) er
 	return err
 }
 
+func (s *Service) runtimeDirectory(ref SessionRef, component string) (string, error) {
+	if err := ref.validate(s.hostID); err != nil {
+		return "", err
+	}
+	filesystem, ok := s.persistence.(*FilesystemPersistence)
+	if !ok {
+		return "", errors.New("session: persistence does not support durable runtime state")
+	}
+	dir, err := filesystem.sessionDir(ref.SessionID, true)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, ".runtime", component), nil
+}
+
+// InboxDirectory returns the durable runtime-owned inbox location for one
+// canonical session. It is deliberately derived by the persistence owner so
+// callers never manufacture a path from SessionRef themselves.
+func (s *Service) InboxDirectory(ref SessionRef) (string, error) {
+	return s.runtimeDirectory(ref, "inbox-v1")
+}
+
+// JobsDirectory returns the durable runtime-owned background-job location for
+// one canonical session. Job artifacts are operational recovery state, so they
+// live under .runtime and are excluded from immutable session exports.
+func (s *Service) JobsDirectory(ref SessionRef) (string, error) {
+	return s.runtimeDirectory(ref, "jobs-v1")
+}
+
 // Export writes a self-contained immutable copy of the session directory. It
 // first establishes a durability checkpoint, then freezes the physical write
 // boundary while copying, so the exported manifest and event prefix cannot
@@ -132,7 +161,7 @@ func exportDirectory(ctx context.Context, source, destination string) error {
 		if err != nil || relative == "." {
 			return err
 		}
-		if relative == "writer.lock" || relative == "events.offset-index.json" {
+		if relative == "writer.lock" || relative == "events.offset-index.json" || relative == ".runtime" {
 			if entry.IsDir() {
 				return filepath.SkipDir
 			}

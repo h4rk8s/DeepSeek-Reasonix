@@ -6,8 +6,8 @@
 
 - 唯一长期分支：`jawa/reasonix-composer-state-visibility`
 - 主 checkout：`/Users/jawa/Lab/2026-07-06-reasonix-dev`
-- 本轮固定上游：`744c2e94ec77b577fbe3f1c93c769b1c3388bd21`（desktop-v1.38.7-31-g744c2e94ec77）
-- 补丁结构：13 个产品语义 owner + 2 个维护闸门 + 1 个临时 renderer pin；线性 Git 栈共 19 个提交（计费日历、队列图片预算和 v3 terminal title 适配是所属 owner 的 follow-up fix）
+- 本轮固定上游：`09cdab3866d77c6ff0d007ee61b6aca3128ebe54`（v1.38.8）
+- 补丁结构：13 个产品语义 owner + 2 个维护闸门 + 1 个临时 renderer pin；计费日历、队列图片预算、canonical session 适配等 follow-up fix 仍归所属 owner，准确线性提交数以本文给出的 `git log` 命令为准。
 - 同步入口：`scripts/jawa-upstream-sync.sh`
 - 临时 worktree：只允许位于仓库内 `.worktree/<task>`
 
@@ -143,7 +143,7 @@ CleanShot、Raycast clipboard history、文件 URL 和延迟落盘会产生不�
 
 - 提供 `hybrid / balanced` 等 presentation 配置，并保留上游默认值兼容。
 - 支持 turn 留白、用户输入 band、assistant 圆点、`›` composer prefix、可选 composer frame。
-- terminal title 可按 session/project 更新，可手动覆盖和恢复；DSH v3 会话从 canonical projection 读取标题，legacy migration 保留原标题，空标题以项目名稳定兜底。
+- terminal title 可按 session/project 更新，可手动覆盖和恢复；canonical 会话从 typed projection 读取标题，legacy migration 保留原标题，空标题以项目名稳定兜底。
 - status 支持两层结构，展示模式、模型、CWD/branch、cache/context/cost，并按真实剩余宽度降级。
 - 输入换行只显示一个 prompt icon；软换行不复制 `›`。
 
@@ -581,6 +581,15 @@ Thought/Image 点击区域过大、hover 抖动、展开向下顶、选择文字
 - context patch 复用上游 sampling 前 maintenance，只保留完整 tool batch 后、host nudge 前的额外维护边界。
 - Desktop contract、migration inventory 和 repolint baseline 均从集成源码重新生成，不手工拼接冲突侧。
 - Vision fallback 的进程创建归回 vision owner，统一使用 `proc.CommandContext`，满足 Windows no-console 构造器闸门。
+
+### v1.38.8 canonical session 升级阻断与修复
+
+- 回归：新 CLI 已只写 `sessions-v3/<id>/`，但 `--resume`、`--continue`、交互 `/resume` 和 `session list` 仍从旧 `sessions/` 调用 legacy transcript scanner；只存在 v3 目录时真实会话被报告为不存在。
+- 发现：统一枚举最终 `sessions-v4`、只读 predecessor `sessions-v3` 与 legacy `sessions/`；以 source path 去重，列表、显式 ID、最近会话和 picker 消费同一 typed `resumeEntry`。
+- 继续：最终格式按 `SessionRef` 原位打开；v3 predecessor 只读并经 `ContinuePrototypeSession` 一次性导入 v4；legacy JSONL 继续走原 lease/migration 兼容链。不能把 v3 子目录伪装成 legacy transcript path。
+- 身份：CLI、permission、runtime state、event、serve tag、inbox 和 background job 统一消费 controller `SessionID`；canonical `SessionPath()==""` 不再导致空 ID、临时 sidecar 或热重建后换会话。
+- 持久化：canonical inbox 与 job artifact 放在 session service 派生的 `.runtime/` 目录；export 排除 runtime sidecar，重启后仍能恢复原 owner 的队列和后台任务。
+- 验证契约：覆盖“仅 v3 且旧目录不存在”、canonical/v3/legacy 混合枚举、显式恢复、`--continue` 最新选择、交互 `/resume`、继续一轮后再次打开同一 canonical ID，以及 model/profile 热重建不换 owner。
 
 ### Git 测试隔离事故与修复
 

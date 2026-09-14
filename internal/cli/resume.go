@@ -1,14 +1,19 @@
 package cli
 
 import (
+	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"reasonix/internal/agent"
+	"reasonix/internal/control"
 	"reasonix/internal/i18n"
+	"reasonix/internal/session"
 )
 
 const resumeListCap = 10
@@ -29,26 +34,412 @@ func recentSessions(dir string) []agent.SessionInfo {
 	return capResumeSessionGroups(sessions, resumeListCap)
 }
 
-// resumeEntry is one picker row: a session plus, for cross-project rows, the
-// project it belongs to. The current directory's sessions keep project empty
-// so existing labels are unchanged.
+type resumeEntryKind uint8
+
+const (
+	resumeEntryLegacy resumeEntryKind = iota
+	resumeEntryCanonical
+	resumeEntryRetired
+)
+
+// resumeEntry is one picker row across all persistence generations. Legacy
+// transcript data stays in session for the existing recovery-family behavior;
+// canonical and retired directory stores stay typed and are never converted
+// into fake transcript paths.
 type resumeEntry struct {
 	session agent.SessionInfo
+	stored  session.SessionInfo
+	kind    resumeEntryKind
 	project string
+}
+
+func (e resumeEntry) isZero() bool {
+	return e.session.Path == "" && e.stored.SessionID == "" && e.stored.Path == ""
 }
 
 const resumeOtherProjectsCap = 5
 
-// resumeEntries lists the current directory's recent sessions, then the
-// newest session of other known projects — a user who worked on this machine
-// over SSH resumes from any directory, not only the workspace root (#9477).
+// resumeEntries preserves the legacy transcript picker contract. Compatibility
+// controllers can emit canonical preview sidecars without owning the canonical
+// lifecycle, so mixing those previews into their picker would silently retarget
+// numeric selections away from the transcript they can actually resume.
 func resumeEntries(dir string) []resumeEntry {
 	base := recentSessions(dir)
 	out := make([]resumeEntry, 0, len(base)+resumeOtherProjectsCap)
-	for _, s := range base {
-		out = append(out, resumeEntry{session: s})
+	for _, info := range base {
+		out = append(out, resumeEntry{session: info, kind: resumeEntryLegacy})
 	}
 	out = append(out, otherProjectResumeEntries(dir)...)
+	return out
+}
+
+// unifiedResumeEntries spans the final store, the immediately retired store,
+// and legacy transcripts so an upgrade cannot hide the session the previous
+// binary was just writing. Only exclusive canonical controllers may consume it.
+func unifiedResumeEntries(dir string) []resumeEntry {
+	base := localResumeEntries(dir, resumeListCap)
+	out := make([]resumeEntry, 0, len(base)+resumeOtherProjectsCap)
+	out = append(out, base...)
+	out = append(out, unifiedOtherProjectResumeEntries(dir)...)
+	return out
+}
+
+func resumeEntriesForController(dir string, ctrl control.SessionAPI) []resumeEntry {
+	identity, ok := ctrl.(control.IdentityLifecycle)
+	if ok && identity.UsesExclusiveSession() {
+		return unifiedResumeEntries(dir)
+	}
+	return resumeEntries(dir)
+}
+
+func localResumeEntries(dir string, limit int) []resumeEntry {
+	if strings.TrimSpace(dir) == "" {
+		return nil
+	}
+	canonical := listCanonicalResumeEntries(dir)
+	retired := listRetiredResumeEntries(dir)
+
+	covered := make(map[string]bool, len(canonical)+len(retired))
+	for _, entry := range canonical {
+		if source := cleanResumeSource(entry.stored.SourcePath); source != "" {
+			covered[source] = true
+		}
+	}
+	for _, entry := range retired {
+		path := cleanResumeSource(entry.stored.Path)
+		if covered[path] {
+			if source := cleanResumeSource(entry.stored.SourcePath); source != "" {
+				covered[source] = true
+			}
+			continue
+		}
+		canonical = append(canonical, entry)
+		if source := cleanResumeSource(entry.stored.SourcePath); source != "" {
+			covered[source] = true
+		}
+	}
+
+	legacy, err := agent.ListSessions(dir)
+	if err == nil {
+		for _, info := range orderResumeSessions(legacy) {
+			if !covered[cleanResumeSource(info.Path)] {
+				canonical = append(canonical, resumeEntry{session: info, kind: resumeEntryLegacy})
+			}
+		}
+	}
+	return orderAndCapResumeEntries(canonical, limit)
+}
+
+func cleanResumeSource(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	if canonical, err := filepath.Abs(path); err == nil {
+		return filepath.Clean(canonical)
+	}
+	return filepath.Clean(path)
+}
+
+type sessionPageLister interface {
+	List(context.Context, string, int) (session.SessionPage, error)
+}
+
+func listStoredResumeSessions(lister sessionPageLister, hostID string) []session.SessionInfo {
+	if lister == nil {
+		return nil
+	}
+	ctx := context.Background()
+	cursor := ""
+	var out []session.SessionInfo
+	for {
+		page, err := lister.List(ctx, cursor, 100)
+		if err != nil {
+			return out
+		}
+		for _, info := range page.Sessions {
+			if info.Error != "" {
+				continue
+			}
+			if info.Ref.SessionID == "" {
+				info.Ref = session.SessionRef{HostID: hostID, SessionID: info.SessionID}
+			}
+			out = append(out, info)
+		}
+		if page.NextCursor == "" || page.NextCursor == cursor {
+			break
+		}
+		cursor = page.NextCursor
+	}
+	return out
+}
+
+func listCanonicalResumeEntries(dir string) []resumeEntry {
+	service := cliSessionService(dir)
+	if service == nil || service.Query() == nil {
+		return nil
+	}
+	infos := listStoredResumeSessions(service.Query(), service.HostID())
+	out := make([]resumeEntry, 0, len(infos))
+	for _, info := range infos {
+		out = append(out, resumeEntry{stored: info, kind: resumeEntryCanonical})
+	}
+	return out
+}
+
+func listRetiredResumeEntries(dir string) []resumeEntry {
+	root := session.RetiredRootForLegacyDir(dir)
+	if root == "" {
+		return nil
+	}
+	infos := listStoredResumeSessions(session.NewFilesystemPersistence(root), "local")
+	out := make([]resumeEntry, 0, len(infos))
+	for _, info := range infos {
+		out = append(out, resumeEntry{stored: info, kind: resumeEntryRetired})
+	}
+	return out
+}
+
+func (e resumeEntry) path() string {
+	if e.kind == resumeEntryLegacy {
+		return e.session.Path
+	}
+	return e.stored.Path
+}
+
+func (e resumeEntry) updatedAt() time.Time {
+	if e.kind == resumeEntryLegacy {
+		return e.session.ModTime
+	}
+	return e.stored.UpdatedAt
+}
+
+func (e resumeEntry) key() string {
+	switch e.kind {
+	case resumeEntryCanonical:
+		return "canonical:" + e.stored.Ref.HostID + ":" + e.stored.Ref.SessionID
+	case resumeEntryRetired:
+		return "retired:" + e.stored.Path
+	default:
+		return "legacy:" + e.session.Path
+	}
+}
+
+func (e resumeEntry) isActive(ctrl control.SessionAPI) bool {
+	if ctrl == nil {
+		return false
+	}
+	if e.kind == resumeEntryCanonical {
+		identity, ok := ctrl.(control.IdentityLifecycle)
+		if !ok {
+			return false
+		}
+		ref, ok := identity.SessionRef()
+		return ok && ref == e.stored.Ref
+	}
+	return e.kind == resumeEntryLegacy && e.session.Path == ctrl.SessionPath()
+}
+
+func (e resumeEntry) turns() int {
+	if e.kind == resumeEntryLegacy {
+		return e.session.Turns
+	}
+	return e.stored.Turns
+}
+
+func (e resumeEntry) displayTitle() string {
+	if e.kind == resumeEntryLegacy {
+		if e.session.CustomTitle != "" {
+			return e.session.CustomTitle
+		}
+		if e.session.TopicTitle != "" {
+			return e.session.TopicTitle
+		}
+		return e.session.Preview
+	}
+	if e.stored.Title != "" {
+		return e.stored.Title
+	}
+	return e.stored.Preview
+}
+
+func (e resumeEntry) summary() string {
+	preview := e.displayTitle()
+	if preview == "" {
+		preview = "(no user message yet)"
+	}
+	prefix := ""
+	if e.kind == resumeEntryLegacy {
+		prefix = recoverySessionBadge(e.session)
+	}
+	return prefix + fmt.Sprintf("%d turns · %s", e.turns(), preview)
+}
+
+func (e resumeEntry) modelSelection() (string, string) {
+	if e.kind == resumeEntryLegacy {
+		model, identity, _ := agent.LoadSessionModelSelection(e.session.Path)
+		return model, identity
+	}
+	return e.stored.ModelRef, e.stored.ModelIdentity
+}
+
+func hydrateResumeEntry(ctx context.Context, entry resumeEntry) (resumeEntry, error) {
+	if entry.kind == resumeEntryLegacy {
+		return entry, nil
+	}
+	root := filepath.Dir(entry.stored.Path)
+	var query *session.Query
+	if entry.kind == resumeEntryCanonical {
+		service := cliSessionServiceForRoot(root)
+		if service == nil {
+			return resumeEntry{}, fmt.Errorf("resume: canonical session service is unavailable")
+		}
+		query = service.Query()
+	} else {
+		service, err := session.NewService(entry.stored.Ref.HostID, session.NewFilesystemPersistence(root))
+		if err != nil {
+			return resumeEntry{}, err
+		}
+		query = service.Query()
+		defer query.Close()
+	}
+	info, err := query.Get(ctx, entry.stored.Ref)
+	if err != nil {
+		return resumeEntry{}, err
+	}
+	entry.stored = info
+	return entry, nil
+}
+
+func resolveResumeEntry(dir, query string) (resumeEntry, error) {
+	query = strings.TrimSpace(query)
+	if query == "" || query == resumePickerSentinel {
+		return resumeEntry{}, nil
+	}
+	if fileInfo, err := os.Stat(query); err == nil {
+		absolute, absErr := filepath.Abs(query)
+		if absErr != nil {
+			return resumeEntry{}, absErr
+		}
+		if fileInfo.Mode().IsRegular() {
+			if _, loadErr := loadResumableSession(absolute); loadErr != nil {
+				return resumeEntry{}, loadErr
+			}
+			return resumeEntry{session: agent.SessionInfo{Path: absolute, ModTime: fileInfo.ModTime()}, kind: resumeEntryLegacy}, nil
+		}
+		if fileInfo.IsDir() {
+			root, id := filepath.Dir(absolute), filepath.Base(absolute)
+			info, statErr := session.NewFilesystemPersistence(root).Stat(context.Background(), id)
+			if statErr != nil {
+				return resumeEntry{}, statErr
+			}
+			info.Ref = session.SessionRef{HostID: "local", SessionID: info.SessionID}
+			kind := resumeEntryCanonical
+			if filepath.Base(root) == "sessions-v3" {
+				kind = resumeEntryRetired
+			}
+			return hydrateResumeEntry(context.Background(), resumeEntry{stored: info, kind: kind})
+		}
+	}
+	entries := localResumeEntries(dir, 0)
+	if looksLikeMachineSessionID(query) {
+		key, err := loadMachineIdentityKey()
+		if err != nil {
+			return resumeEntry{}, fmt.Errorf("machine identity is unavailable: %w", err)
+		}
+		for _, entry := range entries {
+			id := entry.stored.SessionID
+			if entry.kind == resumeEntryLegacy {
+				id = agent.BranchID(entry.session.Path)
+			}
+			if machineSessionIDWithKey(id, key) == query {
+				return entry, nil
+			}
+		}
+		return resumeEntry{}, fmt.Errorf("no session matches %q", query)
+	}
+	lower := strings.ToLower(query)
+	var exact []resumeEntry
+	var partial []resumeEntry
+	for _, entry := range entries {
+		path := entry.path()
+		id := entry.stored.SessionID
+		if entry.kind == resumeEntryLegacy {
+			id = agent.BranchID(path)
+		}
+		base := filepath.Base(path)
+		if query == id || query == base || cleanResumeSource(query) == cleanResumeSource(path) || query == entry.key() {
+			exact = append(exact, entry)
+			continue
+		}
+		haystack := strings.ToLower(strings.Join([]string{id, base, entry.displayTitle()}, "\n"))
+		if strings.Contains(haystack, lower) {
+			partial = append(partial, entry)
+		}
+	}
+	matches := exact
+	if len(matches) == 0 {
+		matches = partial
+	}
+	switch len(matches) {
+	case 0:
+		return resumeEntry{}, fmt.Errorf("no session matches %q", query)
+	case 1:
+		return hydrateResumeEntry(context.Background(), matches[0])
+	default:
+		return resumeEntry{}, fmt.Errorf("session query %q is ambiguous (%d matches)", query, len(matches))
+	}
+}
+
+func orderAndCapResumeEntries(entries []resumeEntry, limit int) []resumeEntry {
+	if len(entries) == 0 {
+		return nil
+	}
+	type group struct {
+		entries  []resumeEntry
+		activity time.Time
+		order    int
+	}
+	legacyByID := map[string]agent.SessionInfo{}
+	for _, entry := range entries {
+		if entry.kind == resumeEntryLegacy {
+			legacyByID[agent.BranchID(entry.session.Path)] = entry.session
+		}
+	}
+	groups := map[string]*group{}
+	ordered := make([]*group, 0, len(entries))
+	for i, entry := range entries {
+		key := entry.key()
+		if entry.kind == resumeEntryLegacy {
+			key = "legacy-group:" + recoveryResumeGroupKey(entry.session, legacyByID)
+		}
+		g := groups[key]
+		if g == nil {
+			g = &group{order: i}
+			groups[key] = g
+			ordered = append(ordered, g)
+		}
+		g.entries = append(g.entries, entry)
+		if entry.updatedAt().After(g.activity) {
+			g.activity = entry.updatedAt()
+		}
+	}
+	sort.SliceStable(ordered, func(i, j int) bool {
+		if ordered[i].activity.Equal(ordered[j].activity) {
+			return ordered[i].order < ordered[j].order
+		}
+		return ordered[i].activity.After(ordered[j].activity)
+	})
+	out := make([]resumeEntry, 0, len(entries))
+	for _, g := range ordered {
+		if limit > 0 && len(out) > 0 && len(out)+len(g.entries) > limit {
+			break
+		}
+		out = append(out, g.entries...)
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
 	return out
 }
 
@@ -78,10 +469,53 @@ func otherProjectResumeEntries(excludeDir string) []resumeEntry {
 		if name == "" || name == "." {
 			name = t.root
 		}
-		out = append(out, resumeEntry{session: sessions[0], project: name})
+		out = append(out, resumeEntry{
+			session: sessions[0],
+			kind:    resumeEntryLegacy,
+			project: name,
+		})
 	}
 	sort.SliceStable(out, func(i, j int) bool {
-		return out[i].session.ModTime.After(out[j].session.ModTime)
+		return out[i].updatedAt().After(out[j].updatedAt())
+	})
+	if len(out) > resumeOtherProjectsCap {
+		out = out[:resumeOtherProjectsCap]
+	}
+	return out
+}
+
+func unifiedOtherProjectResumeEntries(excludeDir string) []resumeEntry {
+	type target struct {
+		path string
+		root string
+	}
+	var targets []target
+	for _, t := range defaultSessionCatalogTargets() {
+		if t.Scope != "project" || t.Path == "" {
+			continue
+		}
+		targets = append(targets, target{path: t.Path, root: t.WorkspaceRoot})
+	}
+	exclude := filepath.Clean(excludeDir)
+	var out []resumeEntry
+	for _, t := range targets {
+		if filepath.Clean(t.path) == exclude {
+			continue
+		}
+		entries := localResumeEntries(t.path, 1)
+		if len(entries) == 0 {
+			continue
+		}
+		name := filepath.Base(strings.TrimRight(t.root, string(filepath.Separator)))
+		if name == "" || name == "." {
+			name = t.root
+		}
+		entry := entries[0]
+		entry.project = name
+		out = append(out, entry)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].updatedAt().After(out[j].updatedAt())
 	})
 	if len(out) > resumeOtherProjectsCap {
 		out = out[:resumeOtherProjectsCap]
@@ -93,6 +527,20 @@ func otherProjectResumeEntries(excludeDir string) []resumeEntry {
 // --continue. Interactive resume surfaces deliberately group recovery families
 // and prefer visible leaves, but --continue promises the most recent session and
 // must not let that presentation ordering select an older recovery copy.
+func mostRecentResumeEntry(dir string) (resumeEntry, bool) {
+	entries := localResumeEntries(dir, 0)
+	if len(entries) == 0 {
+		return resumeEntry{}, false
+	}
+	newest := entries[0]
+	for _, entry := range entries[1:] {
+		if entry.updatedAt().After(newest.updatedAt()) {
+			newest = entry
+		}
+	}
+	return newest, true
+}
+
 func mostRecentSession(dir string) (agent.SessionInfo, bool) {
 	if dir == "" {
 		return agent.SessionInfo{}, false
@@ -237,7 +685,7 @@ func (m *chatTUI) runResumeCommand(input string) {
 	// resolving it here. Removing an earlier row would silently retarget the
 	// user's already-selected number. Bare /resume performs cleanup before it
 	// builds the picker, and startup performs the ordinary background sweep.
-	entries := resumeEntries(m.ctrl.SessionDir())
+	entries := resumeEntriesForController(m.ctrl.SessionDir(), m.ctrl)
 	if len(entries) == 0 {
 		m.notice(i18n.M.NoSessionToResume)
 		return
@@ -252,7 +700,7 @@ func (m *chatTUI) runResumeCommand(input string) {
 		return
 	}
 	target := entries[idx-1]
-	if target.session.Path == m.ctrl.SessionPath() {
+	if target.isActive(m.ctrl) {
 		m.notice(i18n.M.ResumeAlreadyActive)
 		return
 	}
@@ -264,9 +712,13 @@ func (m *chatTUI) runResumeCommand(input string) {
 		return
 	}
 	m.followSessionLease()
-	if err := m.commitSessionSwitch(target.session.Path); err != nil {
-		m.notice("resume: " + sessionLeaseHeldNotice(err))
-		if cliSessionTakeoverCandidate(err) {
+	if err := m.commitResumeEntry(target); err != nil {
+		message := err.Error()
+		if target.kind == resumeEntryLegacy {
+			message = sessionLeaseHeldNotice(err)
+		}
+		m.notice("resume: " + message)
+		if target.kind == resumeEntryLegacy && cliSessionTakeoverCandidate(err) {
 			m.pendingTakeoverPath = target.session.Path
 			m.notice("run /takeover to take this session over from the resident serve")
 		}
@@ -285,12 +737,17 @@ func (m *chatTUI) runTakeoverCommand(input string) {
 	if len(args) >= 2 {
 		target = strings.TrimSpace(args[1])
 		if idx, err := strconv.Atoi(target); err == nil {
-			entries := resumeEntries(m.ctrl.SessionDir())
+			entries := resumeEntriesForController(m.ctrl.SessionDir(), m.ctrl)
 			if idx < 1 || idx > len(entries) {
 				m.notice(fmt.Sprintf(i18n.M.ResumeBadIndexFmt, len(entries)))
 				return
 			}
-			target = entries[idx-1].session.Path
+			entry := entries[idx-1]
+			if entry.kind != resumeEntryLegacy {
+				m.notice("takeover: canonical sessions use their storage writer lock and cannot be taken over through the legacy mirror")
+				return
+			}
+			target = entry.session.Path
 		}
 	}
 	if target == "" {
@@ -364,12 +821,12 @@ func (m *chatTUI) resumeArgItems(val string) ([]compItem, int, bool) {
 	}
 	cur := val[from:]
 	var out []compItem
-	for i, entry := range resumeEntries(m.ctrl.SessionDir()) {
+	for i, entry := range resumeEntriesForController(m.ctrl.SessionDir(), m.ctrl) {
 		idx := strconv.Itoa(i + 1)
 		if cur != "" && !strings.HasPrefix(idx, cur) {
 			continue
 		}
-		hint := fmt.Sprintf("%s · %s", entry.session.ModTime.Local().Format("01-02 15:04"), sessionSummary(entry.session))
+		hint := fmt.Sprintf("%s · %s", entry.updatedAt().Local().Format("01-02 15:04"), entry.summary())
 		if entry.project != "" {
 			hint = fmt.Sprintf("[%s] %s", entry.project, hint)
 		}

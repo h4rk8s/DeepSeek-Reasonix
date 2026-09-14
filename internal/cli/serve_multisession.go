@@ -64,7 +64,7 @@ func setupResolvedCLIMultiSessionProfile(ctx context.Context, model string, maxS
 }
 
 func newCLIMultiSessionServer(ctrl *control.Controller, bc *serve.Broadcaster, tag *serve.SessionTagSink, cfg config.ServeConfig, leases *control.SessionLeaseKeeper, buildOpts boot.Options) *serve.Server {
-	tag.SetPath(ctrl.SessionPath())
+	tag.SetIdentity(ctrl.SessionPath(), ctrl.SessionID())
 	srv := serve.New(ctrl, bc, cfg)
 	srv.SetControllerBuildOptions(buildOpts)
 	srv.RegisterSessionTag(ctrl, tag)

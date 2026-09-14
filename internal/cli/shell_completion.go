@@ -615,13 +615,14 @@ func runtimeCompletionValues(kind cliCompletionValueKind) []string {
 }
 
 func completionSessionIDs() []string {
-	ordered, err := agent.ListSessionOrder(resolveCLISessionDir())
-	if err != nil {
-		return nil
-	}
-	out := make([]string, 0, len(ordered))
-	for _, session := range ordered {
-		out = append(out, agent.BranchID(session.Path))
+	entries := localResumeEntries(resolveCLISessionDir(), 0)
+	out := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		id := entry.stored.SessionID
+		if entry.kind == resumeEntryLegacy {
+			id = agent.BranchID(entry.session.Path)
+		}
+		out = append(out, id)
 	}
 	return stableUniqueCompletionValues(out)
 }

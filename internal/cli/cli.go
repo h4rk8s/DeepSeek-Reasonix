@@ -42,6 +42,7 @@ import (
 	"reasonix/internal/provider/openai"
 	"reasonix/internal/sandbox"
 	"reasonix/internal/serve"
+	"reasonix/internal/session"
 	"reasonix/internal/sessiontemp"
 	"reasonix/internal/telemetry"
 
@@ -321,7 +322,10 @@ type cliBuildOverrides struct {
 	InteractiveHost bool
 	// SessionTemp carries the previous Controller's private temporary directory
 	// manager across model/profile rebuilds so temporary files survive.
-	SessionTemp *sessiontemp.Manager
+	SessionTemp    *sessiontemp.Manager
+	SessionService *session.Service
+	SessionRuntime *session.Runtime
+	SessionHostID  string
 }
 
 // sessionTempFromCLIController returns the logical-session private temporary
@@ -335,12 +339,42 @@ func sessionTempFromCLIController(ctrl control.SessionAPI) *sessiontemp.Manager 
 	return prev.SessionTemp()
 }
 
+// inheritCLIHotRebuildState binds a replacement Agent to the exact same
+// canonical session owner. SessionPath is deliberately empty for canonical
+// sessions, so carrying only history would otherwise mint a new identity after
+// /model, /effort, or a skill refresh.
+func inheritCLIHotRebuildState(overrides *cliBuildOverrides, ctrl control.SessionAPI) {
+	if overrides == nil {
+		return
+	}
+	overrides.SessionTemp = sessionTempFromCLIController(ctrl)
+	prev, ok := ctrl.(*control.Controller)
+	if !ok || prev == nil {
+		return
+	}
+	service, runtime, bound := prev.SessionBinding()
+	if !bound {
+		return
+	}
+	overrides.SessionService = service
+	overrides.SessionRuntime = runtime
+	overrides.SessionHostID = runtime.Ref().HostID
+}
+
 func setupProfileWithOverrides(ctx context.Context, modelName string, maxStepsOverride int, requireKey bool, sink event.Sink, overrides cliBuildOverrides) (*control.Controller, error) {
 	return boot.Build(ctx, cliProfileBuildOptions(modelName, maxStepsOverride, requireKey, sink, overrides))
 }
 
 func cliProfileBuildOptions(modelName string, maxStepsOverride int, requireKey bool, sink event.Sink, overrides cliBuildOverrides) boot.Options {
 	sessionDir := resolveCLISessionDir()
+	sessionService := overrides.SessionService
+	if sessionService == nil {
+		sessionService = cliSessionService(sessionDir)
+	}
+	sessionHostID := strings.TrimSpace(overrides.SessionHostID)
+	if sessionHostID == "" {
+		sessionHostID = "local"
+	}
 	opts := boot.Options{
 		Model:                modelName,
 		MaxSteps:             maxStepsOverride,
@@ -348,8 +382,9 @@ func cliProfileBuildOptions(modelName string, maxStepsOverride int, requireKey b
 		RequireKey:           requireKey,
 		Sink:                 sink,
 		SessionDir:           sessionDir,
-		SessionService:       cliSessionService(sessionDir),
-		SessionHostID:        "local",
+		SessionService:       sessionService,
+		SessionRuntime:       overrides.SessionRuntime,
+		SessionHostID:        sessionHostID,
 		AgentPreset:          overrides.Preset,
 		WorkspaceRoot:        overrides.WorkspaceRoot,
 		EffortOverride:       overrides.Effort,
@@ -624,31 +659,41 @@ func runAgent(args []string, version string) int {
 	// handled before any heavy assembly. --resume takes precedence over
 	// --continue, matching the Resume call below. Accept file paths, branch
 	// IDs, preview text, and opaque machine session IDs (#7429).
-	resumePath := strings.TrimSpace(*resume)
-	if resumePath != "" {
-		resolved, err := resolveSessionQuery(resolveCLISessionDir(), resumePath)
+	var resumeTarget resumeEntry
+	resumeQuery := strings.TrimSpace(*resume)
+	if resumeQuery != "" {
+		resolved, err := resolveResumeEntry(resolveCLISessionDir(), resumeQuery)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 			return 1
 		}
-		resumePath = resolved
+		resumeTarget = resolved
 	}
-	if resumePath == "" && *cont {
+	if resumeTarget.isZero() && *cont {
 		sessionDir := resolveCLISessionDir()
 		reclaimCLIRecoveryBranches(sessionDir)
-		session, ok := mostRecentSession(sessionDir)
+		session, ok := mostRecentResumeEntry(sessionDir)
 		if !ok {
 			fmt.Fprintln(os.Stderr, i18n.M.NoSessionToResume)
 			return 1
 		}
-		resumePath = session.Path
+		var hydrateErr error
+		resumeTarget, hydrateErr = hydrateResumeEntry(context.Background(), session)
+		if hydrateErr != nil {
+			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, hydrateErr)
+			return 1
+		}
 	}
-	if *copySession && resumePath == "" {
+	if *copySession && resumeTarget.isZero() {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, "--copy requires --resume or --continue")
 		return 2
 	}
 	if *copySession {
-		copied, err := copyResumableSession(*model, resumePath, cfg)
+		if resumeTarget.kind != resumeEntryLegacy {
+			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, "--copy currently accepts only legacy transcript sessions; canonical cross-project resume already imports an isolated copy")
+			return 2
+		}
+		copied, err := copyResumableSession(*model, resumeTarget.session.Path, cfg)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 			return 1
@@ -661,7 +706,7 @@ func runAgent(args []string, version string) int {
 		} else {
 			fmt.Fprintf(os.Stderr, "continuing in a session copy: %s\n", copied)
 		}
-		resumePath = copied
+		resumeTarget = resumeEntry{session: agent.SessionInfo{Path: copied}, kind: resumeEntryLegacy}
 	}
 	sessionMode := cliTelemetrySessionMode(*cont, strings.TrimSpace(*resume) != "", *copySession)
 	reporter := startCLITelemetry(cfg, telemetry.Options{
@@ -682,7 +727,8 @@ func runAgent(args []string, version string) int {
 	}()
 	var resumeSession *agent.Session
 	var takeoverBinding *cliTakeoverBinding
-	if resumePath != "" {
+	if !resumeTarget.isZero() && resumeTarget.kind == resumeEntryLegacy {
+		resumePath := resumeTarget.session.Path
 		var err error
 		resumeSession, err = bindAndLoadCLIResume(leases, resumePath, loadResumableSession)
 		if errors.Is(err, agent.ErrSessionLeaseHeld) && *takeover {
@@ -721,7 +767,7 @@ func runAgent(args []string, version string) int {
 	takeoverManager.SetInner(chain.sink)
 	chain.sink = takeoverManager
 	sink, resultOutput, metrics := chain.sink, chain.resultOutput, chain.metrics
-	if err := applyResumeModel(model, resumePath, cfg); err != nil {
+	if err := applyResumeEntryModel(model, resumeTarget, cfg); err != nil {
 		return cliTakeoverFailure(takeoverBinding, leases, takeoverManager, err)
 	}
 	var effortOverride *string
@@ -769,7 +815,7 @@ func runAgent(args []string, version string) int {
 	// MCP/API callers that manage their own per-project session). Takes
 	// precedence over --continue.
 	// --continue: resume the most recent saved session.
-	if err := commitResumedSession(takeoverBinding, takeoverManager, ctrl, resumeSession, resumePath); err != nil {
+	if err := commitResumedEntry(takeoverBinding, takeoverManager, ctrl, resumeSession, resumeTarget); err != nil {
 		return cliTakeoverFailure(takeoverBinding, leases, takeoverManager, err)
 	}
 	ctrl.EnsureSessionPath()
@@ -818,7 +864,7 @@ func runAgent(args []string, version string) int {
 		}
 	}
 	if resultOutput != nil {
-		sessionID := runOutputSessionID(format, agent.BranchID(ctrl.SessionPath()), machineIdentityKey)
+		sessionID := runOutputSessionID(format, ctrl.SessionID(), machineIdentityKey)
 		if err := resultOutput.Finalize(sessionID, started, runErr); err != nil {
 			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 			return 1
@@ -1086,7 +1132,7 @@ func chatREPL(args []string, version string) int {
 
 	// Decide whether we're starting fresh or resuming. --resume opens an
 	// interactive picker; --continue / -c jumps straight into the newest.
-	var resumePath string
+	var resumeTarget resumeEntry
 	resumeValue := strings.TrimSpace(*resume)
 	switch strings.ToLower(resumeValue) {
 	case "true":
@@ -1096,40 +1142,48 @@ func chatREPL(args []string, version string) int {
 	}
 	switch {
 	case resumeValue == resumePickerSentinel:
-		path, rc := pickSessionToResume()
+		target, rc := pickSessionToResume()
 		if rc != 0 {
 			return rc
 		}
-		resumePath = path
+		resumeTarget = target
 	case resumeValue != "":
-		path, err := resolveSessionQuery(resolveCLISessionDir(), resumeValue)
+		target, err := resolveResumeEntry(resolveCLISessionDir(), resumeValue)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 			return 1
 		}
-		resumePath = path
+		resumeTarget = target
 	case *cont:
 		sessionDir := resolveCLISessionDir()
 		reclaimCLIRecoveryBranches(sessionDir)
-		session, ok := mostRecentSession(sessionDir)
+		session, ok := mostRecentResumeEntry(sessionDir)
 		if !ok {
 			fmt.Fprintln(os.Stderr, i18n.M.NoSessionToResume)
 			return 1
 		}
-		resumePath = session.Path
+		resumeTarget, err = hydrateResumeEntry(context.Background(), session)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+			return 1
+		}
 	}
-	if *copySession && resumePath == "" {
+	if *copySession && resumeTarget.isZero() {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, "--copy requires --resume or --continue")
 		return 2
 	}
 	if *copySession {
-		copied, err := copyResumableSession(*model, resumePath, cfg)
+		if resumeTarget.kind != resumeEntryLegacy {
+			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, "--copy currently accepts only legacy transcript sessions; canonical cross-project resume already imports an isolated copy")
+			return 2
+		}
+		copied, err := copyResumableSession(*model, resumeTarget.session.Path, cfg)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 			return 1
 		}
 		fmt.Printf("continuing in a session copy: %s\n", copied)
-		resumePath = copied
+		resumeTarget = resumeEntry{session: agent.SessionInfo{Path: copied}, kind: resumeEntryLegacy}
 	}
 	sessionMode := cliTelemetrySessionMode(*cont, resumeValue != "", *copySession)
 	reporter := startCLITelemetry(cfg, telemetry.Options{
@@ -1151,7 +1205,8 @@ func chatREPL(args []string, version string) int {
 	}()
 	var takeoverBinding *cliTakeoverBinding
 	var startupResumeSession *agent.Session
-	if resumePath != "" {
+	if !resumeTarget.isZero() && resumeTarget.kind == resumeEntryLegacy {
+		resumePath := resumeTarget.session.Path
 		startupResumeSession, err = bindAndLoadCLIResume(leases, resumePath, loadResumableSession)
 		if errors.Is(err, agent.ErrSessionLeaseHeld) && cliSessionTakeoverCandidate(err) && promptSessionTakeover(err) {
 			takeoverBinding, err = cliTakeoverHeldSession(resumePath, err, leases, takeoverManager)
@@ -1177,7 +1232,7 @@ func chatREPL(args []string, version string) int {
 	}
 
 	ctx := context.Background()
-	if err := applyResumeModel(model, resumePath, cfg); err != nil {
+	if err := applyResumeEntryModel(model, resumeTarget, cfg); err != nil {
 		return cliTakeoverFailure(takeoverBinding, leases, takeoverManager, err)
 	}
 
@@ -1229,7 +1284,7 @@ func chatREPL(args []string, version string) int {
 	// Decide where this conversation's auto-save lands. A resume reuses the
 	// file so closing/reopening keeps appending to the same history; a fresh
 	// session lands in a new file stamped with the model name.
-	if err := commitResumedSession(takeoverBinding, takeoverManager, ctrl, startupResumeSession, resumePath); err != nil {
+	if err := commitResumedEntry(takeoverBinding, takeoverManager, ctrl, startupResumeSession, resumeTarget); err != nil {
 		return cliTakeoverFailure(takeoverBinding, leases, takeoverManager, err)
 	}
 	ctrl.EnsureSessionPath()
@@ -1319,9 +1374,7 @@ func chatREPL(args []string, version string) int {
 		if spec.EffortOverride != nil {
 			effectiveOverrides.Effort = spec.EffortOverride
 		}
-		// Keep the logical-session private temporary directory across model /
-		// profile switches (Issue #7575).
-		effectiveOverrides.SessionTemp = sessionTempFromCLIController(oldCtrl)
+		inheritCLIHotRebuildState(&effectiveOverrides, oldCtrl)
 		c, err := setupQuietProfile(ctx, spec.ModelRef, *maxSteps, false, sink, effectiveOverrides)
 		if err != nil {
 			return nil, err
@@ -1455,9 +1508,22 @@ func adoptCarriedHistoryPreservingProfileAndGrants(c *control.Controller, carry 
 			carry = append([]provider.Message{fresh[0]}, carry...)
 		}
 	}
-	c.AdoptHistory(carry, path)
 	if prev, ok := oldCtrl.(*control.Controller); ok {
+		_, currentRuntime, currentBound := c.SessionBinding()
+		_, previousRuntime, previousBound := prev.SessionBinding()
+		if currentBound && previousBound && currentRuntime == previousRuntime {
+			if err := c.AdoptRebuiltModelContext(carry); err != nil {
+				return fmt.Errorf("adopt canonical model context: %w", err)
+			}
+		} else {
+			c.AdoptHistory(carry, path)
+		}
+		if err := c.InheritLifecycleFrom(prev); err != nil {
+			return fmt.Errorf("inherit controller lifecycle: %w", err)
+		}
 		c.RestoreSessionAuthorizations(prev.SessionAuthorizations())
+	} else {
+		c.AdoptHistory(carry, path)
 	}
 	// Persist the adopted history now: the splice above only refreshed the new
 	// controller's memory and nothing saves again until the next turn ends, so
@@ -1638,33 +1704,38 @@ func interactiveSetup(configPath, envPath string) int {
 
 // pickSessionToResume scans the session dir, takes the 10 most recent, and
 // shows a single-choice menu with timestamp + turn count + first user
-// message so the user can pick one. Returns the chosen path and a process
+// message so the user can pick one. Returns the typed selection and a process
 // exit code (non-zero when there's nothing to pick or the user cancelled).
-func pickSessionToResume() (string, int) {
+func pickSessionToResume() (resumeEntry, int) {
 	sessionDir := resolveCLISessionDir()
 	reclaimCLIRecoveryBranches(sessionDir)
-	sessions := recentSessions(sessionDir)
+	sessions := localResumeEntries(sessionDir, resumeListCap)
 	if len(sessions) == 0 {
 		fmt.Fprintln(os.Stderr, i18n.M.NoSessionToResume)
-		return "", 1
+		return resumeEntry{}, 1
 	}
 	if !isInteractive() {
 		fmt.Fprintln(os.Stderr, i18n.M.ResumeRequiresTTY)
-		return "", 1
+		return resumeEntry{}, 1
 	}
 	items := make([]menuItem, len(sessions))
 	for i, s := range sessions {
-		when := s.ModTime.Local().Format("01-02 15:04")
+		when := s.updatedAt().Local().Format("01-02 15:04")
 		items[i] = menuItem{
 			name: when,
-			desc: sessionSummary(s),
+			desc: s.summary(),
 		}
 	}
 	idx, err := selectOne(i18n.M.PickSessionLabel, items)
 	if err != nil {
-		return "", 1
+		return resumeEntry{}, 1
 	}
-	return sessions[idx].Path, 0
+	selected, err := hydrateResumeEntry(context.Background(), sessions[idx])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+		return resumeEntry{}, 1
+	}
+	return selected, 0
 }
 
 // selectLanguage is the wizard's first prompt: it shows the two UI languages
@@ -2400,7 +2471,7 @@ func usage() {
 type ctrlKillerAdapter struct{ ctrl *control.Controller }
 
 func (a ctrlKillerAdapter) Kill(sessionID, id string) bool {
-	if sessionID != "" && agent.BranchID(a.ctrl.SessionPath()) != sessionID {
+	if sessionID != "" && a.ctrl.SessionID() != sessionID {
 		return false
 	}
 	return a.ctrl.CancelJob(id)

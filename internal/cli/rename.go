@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -22,10 +23,11 @@ func (m *chatTUI) runRenameCommand(input string) {
 		return
 	}
 
-	sessions := recentSessions(m.ctrl.SessionDir())
+	sessions := resumeEntriesForController(m.ctrl.SessionDir(), m.ctrl)
 	title := ""
 	targetPath := ""
 	var targetCurrent control.IdentityLifecycle
+	var targetStored *resumeEntry
 
 	// Check if the first arg after /rename is a session index (a number).
 	idx, err := strconv.Atoi(args[1])
@@ -35,7 +37,20 @@ func (m *chatTUI) runRenameCommand(input string) {
 			m.notice(fmt.Sprintf(i18n.M.ResumeBadIndexFmt, len(sessions)))
 			return
 		}
-		targetPath = sessions[idx-1].Path
+		entry := sessions[idx-1]
+		switch entry.kind {
+		case resumeEntryCanonical:
+			if entry.isActive(m.ctrl) {
+				targetCurrent, _ = m.ctrl.(control.IdentityLifecycle)
+			} else {
+				targetStored = &entry
+			}
+		case resumeEntryRetired:
+			m.notice("rename: resume this retired session before renaming it")
+			return
+		default:
+			targetPath = entry.session.Path
+		}
 		title = strings.TrimSpace(strings.TrimPrefix(input, args[0]+" "+args[1]))
 	} else {
 		// "/rename <new title>" -- rename the current session.
@@ -61,7 +76,14 @@ func (m *chatTUI) runRenameCommand(input string) {
 	}
 
 	var renameErr error
-	if targetCurrent != nil {
+	if targetStored != nil {
+		service := cliSessionServiceForRoot(filepath.Dir(targetStored.stored.Path))
+		if service == nil {
+			renameErr = fmt.Errorf("canonical session service is unavailable")
+		} else {
+			renameErr = service.SetTitle(context.Background(), targetStored.stored.Ref, title)
+		}
+	} else if targetCurrent != nil {
 		renameErr = targetCurrent.SetSessionTitle(context.Background(), title)
 	} else {
 		renameErr = agent.RenameSession(targetPath, title)
@@ -70,7 +92,7 @@ func (m *chatTUI) runRenameCommand(input string) {
 		m.notice("rename: " + renameErr.Error())
 		return
 	}
-	if targetCurrent != nil || targetPath == m.ctrl.SessionPath() {
+	if targetCurrent != nil || (targetStored != nil && targetStored.isActive(m.ctrl)) || targetPath == m.ctrl.SessionPath() {
 		m.syncWindowTitle()
 	}
 

@@ -2,11 +2,14 @@ package cli
 
 import (
 	"context"
+	"fmt"
+	"path/filepath"
 	"strings"
 
 	"reasonix/internal/agent"
 	"reasonix/internal/config"
 	"reasonix/internal/control"
+	"reasonix/internal/session"
 )
 
 // modelForResumePath answers which model a resumed run should use. An explicit
@@ -36,6 +39,39 @@ func modelForResumePath(modelName, resumePath string, cfg *config.Config) (strin
 
 func applyResumeModel(model *string, resumePath string, cfg *config.Config) error {
 	resolved, err := modelForResumePath(*model, resumePath, cfg)
+	if err != nil {
+		return err
+	}
+	*model = resolved
+	return nil
+}
+
+func modelForResumeEntry(modelName string, entry resumeEntry, cfg *config.Config) (string, error) {
+	if strings.TrimSpace(modelName) != "" || entry.isZero() {
+		return modelName, nil
+	}
+	if entry.kind == resumeEntryLegacy {
+		return modelForResumePath(modelName, entry.session.Path, cfg)
+	}
+	model, identity := entry.modelSelection()
+	if strings.TrimSpace(model) == "" {
+		return modelName, nil
+	}
+	if cfg == nil {
+		return model, nil
+	}
+	resolved, err := cfg.ResolveSavedModel(model, identity)
+	if err != nil {
+		return "", err
+	}
+	if _, ok := cfg.ResolveModel(resolved); !ok {
+		return modelName, nil
+	}
+	return resolved, nil
+}
+
+func applyResumeEntryModel(model *string, entry resumeEntry, cfg *config.Config) error {
+	resolved, err := modelForResumeEntry(*model, entry, cfg)
 	if err != nil {
 		return err
 	}
@@ -75,6 +111,40 @@ func commitResumedSession(binding *cliTakeoverBinding, manager *cliTakeoverManag
 		return err
 	}
 	return resumeWithPersistedSelection(ctrl, session, path)
+}
+
+func commitResumedEntry(binding *cliTakeoverBinding, manager *cliTakeoverManager, ctrl *control.Controller, legacy *agent.Session, entry resumeEntry) error {
+	if entry.isZero() {
+		return nil
+	}
+	if entry.kind == resumeEntryLegacy {
+		return commitResumedSession(binding, manager, ctrl, legacy, entry.session.Path)
+	}
+	identity, ok := any(ctrl).(control.IdentityLifecycle)
+	if !ok || !identity.UsesExclusiveSession() {
+		return fmt.Errorf("resume: canonical session lifecycle is unavailable")
+	}
+	ctx := context.Background()
+	switch entry.kind {
+	case resumeEntryCanonical:
+		ref := entry.stored.Ref
+		currentRoot := session.RootForLegacyDir(ctrl.SessionDir())
+		sourceRoot := filepath.Dir(entry.stored.Path)
+		var err error
+		if filepath.Clean(currentRoot) != filepath.Clean(sourceRoot) {
+			ref, err = importCanonicalResumeEntry(ctx, identity.SessionService(), sourceRoot, ref)
+			if err != nil {
+				return err
+			}
+		}
+		_, err = identity.OpenSession(ctx, ref)
+		return err
+	case resumeEntryRetired:
+		_, err := identity.ContinuePrototypeSession(ctx, entry.stored.Path)
+		return err
+	default:
+		return fmt.Errorf("resume: unsupported session source")
+	}
 }
 
 // prepareServeSessionPath picks serve's auto-save target: reuse the resumed
