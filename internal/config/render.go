@@ -259,16 +259,6 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	} else {
 		b.WriteString("# reasoning_language = \"zh\"   # visible reasoning language: auto|zh|en\n")
 	}
-	if c.Agent.ImageUnderstandingModel != "" {
-		fmt.Fprintf(&b, "image_understanding_model = %q   # optional vision sidecar for images when the active model is text-only\n", c.Agent.ImageUnderstandingModel)
-	} else {
-		b.WriteString("# image_understanding_model = \"provider/vision-model\"   # optional; describes images for text-only active models\n")
-	}
-	if c.Agent.ImageUnderstandingCommand != "" {
-		fmt.Fprintf(&b, "image_understanding_command = %q   # optional local OCR/vision sidecar command; receives image paths\n", c.Agent.ImageUnderstandingCommand)
-	} else {
-		b.WriteString("# image_understanding_command = \"reasonix-vision-ocr\"   # optional; local sidecar, no model downloads\n")
-	}
 	fmt.Fprintf(&b, "compact_ratio       = %s   # sole auto trigger; presets 0.70/0.80/0.85 (default 0.80)\n", formatFloat(c.Agent.CompactRatio))
 	if c.Agent.Keep != nil {
 		fmt.Fprintf(&b, "keep                = %s   # deprecated compatibility field; ignored at runtime\n", renderStringArray(c.Agent.Keep))
@@ -1014,14 +1004,6 @@ func RenderTOMLProjectDelta(c *Config) string {
 			fmt.Fprintf(&agentBuf, "reasoning_language = %q\n", l)
 			anyAgent = true
 		}
-	}
-	if c.Agent.ImageUnderstandingModel != "" && c.Agent.ImageUnderstandingModel != d.Agent.ImageUnderstandingModel {
-		fmt.Fprintf(&agentBuf, "image_understanding_model = %q\n", c.Agent.ImageUnderstandingModel)
-		anyAgent = true
-	}
-	if c.Agent.ImageUnderstandingCommand != "" && c.Agent.ImageUnderstandingCommand != d.Agent.ImageUnderstandingCommand {
-		fmt.Fprintf(&agentBuf, "image_understanding_command = %q\n", c.Agent.ImageUnderstandingCommand)
-		anyAgent = true
 	}
 	if c.Agent.CompactRatio != d.Agent.CompactRatio {
 		fmt.Fprintf(&agentBuf, "compact_ratio = %s\n", formatFloat(c.Agent.CompactRatio))
