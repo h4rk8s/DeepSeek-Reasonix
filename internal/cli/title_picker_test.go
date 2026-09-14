@@ -55,6 +55,35 @@ func TestTerminalTitleActivityPrefersActionRequired(t *testing.T) {
 	}
 }
 
+func TestCanonicalTerminalTitleSurvivesRunningToIdleTransition(t *testing.T) {
+	ctrl := newCanonicalTitleTestController(t, "/workspace/sdj-dev", "worklog-v21")
+	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 80)
+	m.terminalTitleItems = []string{config.TerminalTitleActivity, config.TerminalTitleSessionTitle}
+	m.state = tuiRunning
+	m.elapsed = 7
+	m.turnTokens = 1200
+	m.syncWindowTitle()
+	if m.windowTitle == "worklog-v21" || !strings.Contains(m.windowTitle, "worklog-v21") {
+		t.Fatalf("running windowTitle = %q", m.windowTitle)
+	}
+
+	m.state = tuiIdle
+	m.syncWindowTitle()
+	if got := m.windowTitle; got != "worklog-v21" {
+		t.Fatalf("idle windowTitle = %q, want worklog-v21", got)
+	}
+}
+
+func TestUntitledCanonicalTerminalTitleFallsBackToProjectName(t *testing.T) {
+	ctrl := newCanonicalTitleTestController(t, "/workspace/sdj-dev", "")
+	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 80)
+	m.terminalTitleItems = []string{config.TerminalTitleSessionTitle}
+
+	if got := m.renderTerminalTitle(); got != "sdj-dev" {
+		t.Fatalf("windowTitle = %q, want sdj-dev", got)
+	}
+}
+
 func TestDefaultTerminalTitleItemsPreferReasonixStatus(t *testing.T) {
 	got := config.DefaultTerminalTitleItems()
 	want := []string{
