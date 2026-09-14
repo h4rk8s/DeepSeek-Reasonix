@@ -590,6 +590,7 @@ Thought/Image 点击区域过大、hover 抖动、展开向下顶、选择文字
 - 身份：CLI、permission、runtime state、event、serve tag、inbox 和 background job 统一消费 controller `SessionID`；canonical `SessionPath()==""` 不再导致空 ID、临时 sidecar 或热重建后换会话。
 - 持久化：canonical inbox 与 job artifact 放在 session service 派生的 `.runtime/` 目录；export 排除 runtime sidecar，重启后仍能恢复原 owner 的队列和后台任务。
 - 验证契约：覆盖“仅 v3 且旧目录不存在”、canonical/v3/legacy 混合枚举、显式恢复、`--continue` 最新选择、交互 `/resume`、继续一轮后再次打开同一 canonical ID，以及 model/profile 热重建不换 owner。
+- 结构闸门：按 v1.38.8 集成树重建 `repolint` baseline；刷新后 `golangci-lint` 0 issue、`repolint` clean，后续补丁继续以这棵集成树为不可扩张基线。
 
 ### 系统状态测试隔离事故与修复
 
