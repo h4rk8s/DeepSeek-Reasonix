@@ -44,6 +44,7 @@ const (
 	middleClickPasteHelperFlag = "GO_WANT_REASONIX_MIDDLE_CLICK_PASTE_HELPER"
 	middleClickPasteHelperMode = "REASONIX_MIDDLE_CLICK_PASTE_HELPER_MODE"
 	middleClickPasteTestValue  = "REASONIX_MIDDLE_CLICK_TEST_VALUE"
+	nativeClipboardGuardFlag   = "GO_WANT_REASONIX_NATIVE_CLIPBOARD_GUARD_HELPER"
 )
 
 func TestMiddleClickPasteCommandHelper(t *testing.T) {
@@ -67,7 +68,11 @@ func TestMiddleClickPasteCommandHelper(t *testing.T) {
 
 func TestMain(m *testing.M) {
 	old := detectTermuxTerminal
+	oldClipboardWriter := writeNativeClipboardText
 	detectTermuxTerminal = func() bool { return false }
+	writeNativeClipboardText = func(string) error {
+		panic("cli test attempted a native clipboard write without installing a test stub")
+	}
 	cleanupUserState, err := testenv.IsolateUserState()
 	if err != nil {
 		panic(err)
@@ -91,8 +96,28 @@ func TestMain(m *testing.M) {
 
 	code := m.Run()
 	detectTermuxTerminal = old
+	writeNativeClipboardText = oldClipboardWriter
 	cleanupUserState()
 	os.Exit(code)
+}
+
+func TestNativeClipboardGuardHelper(t *testing.T) {
+	if os.Getenv(nativeClipboardGuardFlag) != "1" {
+		return
+	}
+	_ = copyToClipboard("must stay inside the test process")()
+}
+
+func TestNativeClipboardTestGuardFailsClosed(t *testing.T) {
+	cmd := exec.Command(os.Args[0], "-test.run=^TestNativeClipboardGuardHelper$")
+	cmd.Env = append(os.Environ(), nativeClipboardGuardFlag+"=1")
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("unmocked native clipboard write unexpectedly succeeded:\n%s", output)
+	}
+	if !strings.Contains(string(output), "cli test attempted a native clipboard write without installing a test stub") {
+		t.Fatalf("unmocked native clipboard failure was not explicit:\n%s", output)
+	}
 }
 
 func (r *blockingTurnRunner) Run(ctx context.Context, _ string) error {
@@ -4687,8 +4712,9 @@ func TestCtrlCCopySelection(t *testing.T) {
 		t.Fatal("Ctrl+C on selection should return a cmd (clipboard + finalize)")
 	}
 
-	// Execute the command (copyToClipboard → OSC 52).
-	cmd()
+	// Local copy must stay inside the test double; package TestMain rejects any
+	// unmocked native clipboard write.
+	requireClipboardCommand(t, cmd, "hello")
 
 	// Second Ctrl+C should now arm quit (selection is gone). In alt-screen mode
 	// the hint is already part of the returned model, so no asynchronous command
