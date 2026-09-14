@@ -9,7 +9,6 @@ import (
 	"os/signal"
 	"syscall"
 
-	"reasonix/internal/agent"
 	"reasonix/internal/config"
 	"reasonix/internal/control"
 	"reasonix/internal/i18n"
@@ -161,7 +160,7 @@ func serveFrontendLoop(ctrl *control.Controller, srv *serve.Server, resources *s
 	if opts.openBrowser {
 		sessionID := ""
 		if opts.hasSession {
-			sessionID = agent.BranchID(ctrl.SessionPath())
+			sessionID = ctrl.SessionID()
 		}
 		serveErr = runServeListenerAfterReady(ctx, srv, resources.listener, resources.displayAddr, func() {
 			browserURL, err := launchWebBrowser(srv, resources.displayAddr, sessionID)

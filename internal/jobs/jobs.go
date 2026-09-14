@@ -1130,6 +1130,42 @@ func (m *Manager) SetActiveSessionPath(parentSession, sessionPath string) {
 		})
 		return
 	}
+	owned := m.sessionOwnershipProbe != nil && m.sessionOwnershipProbe(sessionPath)
+	m.bindActiveSessionStore(parentSession, ArtifactDir(sessionPath), owned)
+}
+
+// SetActiveSessionDirectory binds a session to a durable artifact directory
+// supplied by the canonical session service. ownsSession authorizes repair of
+// abandoned Running records after a process restart; callers must set it only
+// while holding that session's runtime binding.
+func (m *Manager) SetActiveSessionDirectory(parentSession, artifactDir string, ownsSession bool) {
+	defer func() { m.notifyRuntime("", "") }()
+	parentSession = strings.TrimSpace(parentSession)
+	artifactDir = strings.TrimSpace(artifactDir)
+	if parentSession == "" || artifactDir == "" {
+		m.mu.Lock()
+		m.active = parentSession
+		m.mu.Unlock()
+		return
+	}
+	if err := validateTrustedSessionPath(artifactDir); err != nil {
+		m.mu.Lock()
+		m.active = parentSession
+		delete(m.artifactDirs, parentSession)
+		delete(m.loaded, parentSession)
+		m.mu.Unlock()
+		m.sink.Emit(event.Event{
+			Kind:   event.Notice,
+			Level:  event.LevelWarn,
+			Text:   "Ignoring SetActiveSessionDirectory with invalid artifact directory",
+			Detail: fmt.Sprintf("session %q: %v", parentSession, err),
+		})
+		return
+	}
+	m.bindActiveSessionStore(parentSession, artifactDir, ownsSession)
+}
+
+func (m *Manager) bindActiveSessionStore(parentSession, newDir string, ownsSession bool) {
 	m.mu.Lock()
 	m.active = parentSession
 	oldDir := m.artifactDirLocked(parentSession)
@@ -1138,7 +1174,6 @@ func (m *Manager) SetActiveSessionPath(parentSession, sessionPath string) {
 		oldDir = m.artifactDirLocked("")
 		adoptDefault = true
 	}
-	newDir := ArtifactDir(sessionPath)
 	m.artifactDirs[parentSession] = newDir
 	loaded := m.loaded[parentSession]
 	m.mu.Unlock()
@@ -1171,7 +1206,7 @@ func (m *Manager) SetActiveSessionPath(parentSession, sessionPath string) {
 		m.recordArtifactMigrationError(parentSession, migrationErr)
 	}
 	if !loaded {
-		m.loadSessionArtifacts(parentSession, sessionPath, newDir)
+		m.loadSessionArtifacts(parentSession, ownsSession, newDir)
 	}
 }
 
@@ -1410,7 +1445,7 @@ func copyArtifactFile(src, dst string) error {
 	return nil
 }
 
-func (m *Manager) loadSessionArtifacts(parentSession, sessionPath, dir string) {
+func (m *Manager) loadSessionArtifacts(parentSession string, ownsSession bool, dir string) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		m.mu.Lock()
@@ -1445,7 +1480,7 @@ func (m *Manager) loadSessionArtifacts(parentSession, sessionPath, dir string) {
 				deferredLiveOwner = true
 				continue
 			}
-			if m.sessionOwnershipProbe == nil || !m.sessionOwnershipProbe(sessionPath) {
+			if !ownsSession {
 				deferredLiveOwner = true
 				continue
 			}

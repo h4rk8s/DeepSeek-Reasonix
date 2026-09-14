@@ -25,7 +25,7 @@ type controllerRuntimeState struct {
 	published      atomic.Pointer[event.RuntimeStateSnapshot]
 	snapshot       event.RuntimeStateSnapshot
 	ledger         *turnevent.Ledger
-	path           string
+	bindingKey     string
 	activity       string
 	sink           event.Sink
 	pending        *event.RuntimeStateSnapshot
@@ -134,8 +134,18 @@ func (c *Controller) refreshRuntimeStateAttempt(e event.Event, attempt int) {
 	ledger := c.turnEventLedger()
 	initialized := r.snapshot.SchemaVersion == 1
 	base, activity := r.snapshot, r.activity
-	if r.snapshot.ProjectionEpoch == "" || r.path != path || r.ledger != ledger {
-		base = event.RuntimeStateSnapshot{ProjectionEpoch: newRuntimeStateEpoch(), RuntimeEpoch: newRuntimeStateEpoch()}
+	bindingKey := path
+	jobSessionID := agent.BranchID(path)
+	if v3Runtime != nil {
+		ref := v3Runtime.Ref()
+		bindingKey = ref.HostID + "\x00" + ref.SessionID
+		jobSessionID = ref.SessionID
+	}
+	if r.snapshot.ProjectionEpoch == "" || r.bindingKey != bindingKey || r.ledger != ledger {
+		base = event.RuntimeStateSnapshot{
+			ProjectionEpoch: newRuntimeStateEpoch(),
+			RuntimeEpoch:    newRuntimeStateEpoch(),
+		}
 		activity = ""
 	}
 	next := base
@@ -198,7 +208,7 @@ func (c *Controller) refreshRuntimeStateAttempt(e event.Event, attempt int) {
 	}
 	next.BackgroundJobs = 0
 	if c.jobs != nil {
-		next.BackgroundJobs = len(c.jobs.RunningForSession(c.parentSessionID()))
+		next.BackgroundJobs = len(c.jobs.RunningForSession(jobSessionID))
 	}
 	// Sampling owners is off their locks. Do not commit a mixture if the
 	// admission/close/binding boundary advanced while another owner was read.
@@ -235,7 +245,7 @@ func (c *Controller) refreshRuntimeStateAttempt(e event.Event, attempt int) {
 	}
 	next.Revision++
 	r.commitSnapshot(next)
-	r.path, r.ledger, r.activity = path, ledger, activity
+	r.bindingKey, r.ledger, r.activity = bindingKey, ledger, activity
 	defer slog.Debug("runtime state committed", "source", "controller", "epoch", next.RuntimeEpoch[:8], "revision", next.Revision, "phase", next.Phase)
 	if !initialized {
 		r.mu.Unlock()

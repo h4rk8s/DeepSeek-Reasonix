@@ -1,13 +1,33 @@
 package cli
 
 import (
+	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
 	"reasonix/internal/agent"
 	"reasonix/internal/control"
+	"reasonix/internal/session"
 )
+
+func controllerSessionID(ctrl control.SessionAPI) string {
+	if ctrl == nil {
+		return ""
+	}
+	if identified, ok := ctrl.(interface{ SessionID() string }); ok {
+		if id := strings.TrimSpace(identified.SessionID()); id != "" {
+			return id
+		}
+	}
+	if identity, ok := ctrl.(control.IdentityLifecycle); ok {
+		if ref, bound := identity.SessionRef(); bound {
+			return ref.SessionID
+		}
+	}
+	return agent.BranchID(ctrl.SessionPath())
+}
 
 func persistCLIModelSelection(ctrl control.SessionAPI) error {
 	selected, ok := ctrl.(interface {
@@ -125,6 +145,68 @@ func (m *chatTUI) commitSessionSwitchWithLoader(path string, load func(string) (
 		}
 	}
 	return bindChatTUIAuthority(m)
+}
+
+// commitResumeEntry switches by typed storage identity. Canonical sessions are
+// opened by SessionRef, retired directory stores are explicitly imported, and
+// only legacy transcripts flow through the path lease compatibility layer.
+func (m *chatTUI) commitResumeEntry(entry resumeEntry) error {
+	if entry.kind == resumeEntryLegacy {
+		return m.commitSessionSwitch(entry.session.Path)
+	}
+	identity, ok := m.ctrl.(control.IdentityLifecycle)
+	if !ok || !identity.UsesExclusiveSession() {
+		return fmt.Errorf("resume: canonical session lifecycle is unavailable")
+	}
+	ctx := context.Background()
+	var err error
+	switch entry.kind {
+	case resumeEntryCanonical:
+		ref := entry.stored.Ref
+		currentRoot := session.RootForLegacyDir(m.ctrl.SessionDir())
+		sourceRoot := filepath.Dir(entry.stored.Path)
+		if filepath.Clean(currentRoot) != filepath.Clean(sourceRoot) {
+			ref, err = importCanonicalResumeEntry(ctx, identity.SessionService(), sourceRoot, ref)
+			if err != nil {
+				return err
+			}
+		}
+		_, err = identity.OpenSession(ctx, ref)
+	case resumeEntryRetired:
+		_, err = identity.ContinuePrototypeSession(ctx, entry.stored.Path)
+	default:
+		return fmt.Errorf("resume: unsupported session source")
+	}
+	if err != nil {
+		return err
+	}
+	// Canonical storage owns its writer lease. Release any legacy compatibility
+	// lease only after the target publication succeeds.
+	return m.rebindSessionLease("")
+}
+
+func importCanonicalResumeEntry(ctx context.Context, target *session.Service, sourceRoot string, ref session.SessionRef) (session.SessionRef, error) {
+	if target == nil {
+		return session.SessionRef{}, fmt.Errorf("resume: target session service is unavailable")
+	}
+	source := cliSessionServiceForRoot(sourceRoot)
+	if source == nil {
+		return session.SessionRef{}, fmt.Errorf("resume: source session service is unavailable")
+	}
+	transfer, err := os.MkdirTemp("", "reasonix-session-transfer-")
+	if err != nil {
+		return session.SessionRef{}, err
+	}
+	defer os.RemoveAll(transfer)
+	exported := filepath.Join(transfer, "session")
+	if err := source.Export(ctx, ref, exported); err != nil {
+		return session.SessionRef{}, fmt.Errorf("resume: export cross-project session: %w", err)
+	}
+	imported, err := target.Import(ctx, exported)
+	if err != nil {
+		return session.SessionRef{}, fmt.Errorf("resume: import cross-project session: %w", err)
+	}
+	return imported, nil
 }
 
 // restoreSessionLease re-points the lease at the controller's current session

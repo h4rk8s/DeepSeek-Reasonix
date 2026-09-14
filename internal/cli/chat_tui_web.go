@@ -3,8 +3,6 @@ package cli
 import (
 	"os"
 
-	"reasonix/internal/agent"
-
 	tea "charm.land/bubbletea/v2"
 )
 
@@ -54,7 +52,7 @@ func (m *chatTUI) runWebSlash() tea.Cmd {
 	m.followSessionLease()
 	m.launchWebOnExit = true
 	m.launchWebResumePath = resumePath
-	m.launchWebSessionID = agent.BranchID(m.ctrl.SessionPath())
+	m.launchWebSessionID = controllerSessionID(m.ctrl)
 	m.launchWebModelRef = m.modelRef
 	return shutdownNow
 }

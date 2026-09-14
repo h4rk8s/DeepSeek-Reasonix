@@ -53,12 +53,25 @@ func OpenAt(sessionPath, dir string, limits Limits) (*Store, error) {
 	if sessionPath == "" {
 		return nil, fmt.Errorf("sessioninbox: empty session path")
 	}
-	if strings.TrimSpace(dir) == "" {
+	return OpenDirectory(dir, sessionPath, limits)
+}
+
+// OpenDirectory binds a Store to an owner-provided durable directory. The
+// identity is opaque and is used only for exact-session fencing; canonical
+// sessions use SessionRef while legacy sessions continue to use transcript
+// paths through Open.
+func OpenDirectory(dir, identity string, limits Limits) (*Store, error) {
+	dir = strings.TrimSpace(dir)
+	identity = strings.TrimSpace(identity)
+	if dir == "" {
 		return nil, fmt.Errorf("sessioninbox: empty inbox directory")
+	}
+	if identity == "" {
+		return nil, fmt.Errorf("sessioninbox: empty session identity")
 	}
 	s := &Store{
 		dir:     dir,
-		session: sessionPath,
+		session: identity,
 		runID:   ProcessRunID(),
 		limits:  limits.withDefaults(),
 		man:     emptyManifest(ProcessRunID()),

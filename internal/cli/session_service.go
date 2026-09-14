@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"path/filepath"
+	"strings"
 	"sync"
 
 	"reasonix/internal/session"
@@ -15,8 +17,12 @@ var cliSessionServices = struct {
 }{byRoot: map[string]*session.Service{}}
 
 func cliSessionService(sessionDir string) *session.Service {
-	root := session.RootForLegacyDir(sessionDir)
-	if root == "" {
+	return cliSessionServiceForRoot(session.RootForLegacyDir(sessionDir))
+}
+
+func cliSessionServiceForRoot(root string) *session.Service {
+	root = filepath.Clean(strings.TrimSpace(root))
+	if root == "" || root == "." {
 		return nil
 	}
 	cliSessionServices.Lock()

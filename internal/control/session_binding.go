@@ -506,6 +506,7 @@ func (c *Controller) publishSessionRuntimeWithCommit(ctx context.Context, candid
 	c.turnEvents.mu.Unlock()
 	c.rebindCheckpoints("")
 	c.ResetPlannerSession()
+	c.setActiveJobSession("")
 	// The inbox belongs to the live runtime generation, not to the imported
 	// legacy path. Close the pre-bind queue before rotating the session temp so
 	// later Agent rebuilds attach to the same current generation.
