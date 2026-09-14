@@ -1,11 +1,13 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
 
 	"reasonix/internal/agent"
+	"reasonix/internal/control"
 	"reasonix/internal/i18n"
 )
 
@@ -23,6 +25,7 @@ func (m *chatTUI) runRenameCommand(input string) {
 	sessions := mergedResumeEntries(m.ctrl.SessionDir(), resumeListCap)
 	title := ""
 	targetPath := ""
+	var targetCurrent control.IdentityLifecycle
 
 	// Check if the first arg after /rename is a session index (a number).
 	idx, err := strconv.Atoi(args[1])
@@ -41,11 +44,19 @@ func (m *chatTUI) runRenameCommand(input string) {
 		title = strings.TrimSpace(strings.TrimPrefix(input, args[0]+" "+args[1]))
 	} else {
 		// "/rename <new title>" -- rename the current session.
-		if m.ctrl.SessionPath() == "" {
-			m.notice(i18n.M.RenameNoSession)
-			return
+		identity, identityOK := m.ctrl.(control.IdentityLifecycle)
+		if identityOK {
+			if _, active := identity.SessionRef(); active {
+				targetCurrent = identity
+			}
 		}
-		targetPath = m.ctrl.SessionPath()
+		if targetCurrent == nil {
+			if m.ctrl.SessionPath() == "" {
+				m.notice(i18n.M.RenameNoSession)
+				return
+			}
+			targetPath = m.ctrl.SessionPath()
+		}
 		title = strings.TrimSpace(strings.TrimPrefix(input, args[0]))
 	}
 
@@ -54,11 +65,17 @@ func (m *chatTUI) runRenameCommand(input string) {
 		return
 	}
 
-	if err := agent.RenameSession(targetPath, title); err != nil {
-		m.notice("rename: " + err.Error())
+	var renameErr error
+	if targetCurrent != nil {
+		renameErr = targetCurrent.SetSessionTitle(context.Background(), title)
+	} else {
+		renameErr = agent.RenameSession(targetPath, title)
+	}
+	if renameErr != nil {
+		m.notice("rename: " + renameErr.Error())
 		return
 	}
-	if targetPath == m.ctrl.SessionPath() {
+	if targetCurrent != nil || targetPath == m.ctrl.SessionPath() {
 		m.syncWindowTitle()
 	}
 
