@@ -784,10 +784,14 @@ func New(opts Options) *Controller {
 	runtimeOwner := runtimeOwnerOrDefault(opts.RuntimeOwner)
 	pluginCtx = extension.ContextWithRuntimeOwner(pluginCtx, runtimeOwner)
 	goalDriverCtx, goalDriverCancel := context.WithCancel(context.Background())
-	if opts.Hooks != nil {
-		opts.Hooks.SetSessionID(agent.BranchID(opts.SessionPath))
-	}
 	sessionRuntime, sessionBinding := bindInitialSessionRuntime(opts)
+	if opts.Hooks != nil {
+		sessionID := agent.BranchID(opts.SessionPath)
+		if sessionRuntime != nil {
+			sessionID = sessionRuntime.Ref().SessionID
+		}
+		opts.Hooks.SetSessionID(sessionID)
+	}
 	c := &Controller{
 		taskBudget:                        opts.TaskBudget,
 		goalTokenBudget:                   opts.GoalTokenBudget,
@@ -4270,9 +4274,21 @@ func (c *Controller) setSessionPath(p string, fresh bool) {
 }
 
 func (c *Controller) setActiveJobSession(sessionPath string) {
-	if c.jobs != nil {
-		c.jobs.SetActiveSessionPath(agent.BranchID(sessionPath), sessionPath)
+	if c.jobs == nil {
+		return
 	}
+	if service, runtime, exclusive := c.v3Binding(); exclusive && service != nil && runtime != nil {
+		ref := runtime.Ref()
+		dir, err := service.JobsDirectory(ref)
+		if err != nil {
+			c.jobs.SetActiveSession(ref.SessionID)
+			slog.Warn("controller: bind canonical background-job store", "session", ref.SessionID, "err", err)
+			return
+		}
+		c.jobs.SetActiveSessionDirectory(ref.SessionID, dir, true)
+		return
+	}
+	c.jobs.SetActiveSessionPath(agent.BranchID(sessionPath), sessionPath)
 }
 
 // SessionDir reports the directory new session files land in ("" disables
@@ -4287,7 +4303,7 @@ func (c *Controller) SessionPath() string {
 	return c.sessionPath
 }
 
-// SessionRef returns the immutable v3 execution identity. The legacy path is
+// SessionRef returns the immutable canonical execution identity. The legacy path is
 // intentionally absent from this contract and may only remain as an import or
 // display locator while hosts complete their catalog transition.
 func (c *Controller) SessionRef() (session.SessionRef, bool) {
@@ -4304,6 +4320,12 @@ func (c *Controller) parentSessionID() string {
 	}
 	return agent.BranchID(c.SessionPath())
 }
+
+// SessionID returns the logical execution identity across both canonical and
+// legacy persistence. Callers that route user-visible or control-plane state
+// must use it instead of deriving an ID from SessionPath, which is intentionally
+// empty for canonical sessions.
+func (c *Controller) SessionID() string { return c.parentSessionID() }
 
 // History returns the executor's current message log (for repopulating a
 // resumed frontend's view).
@@ -5234,10 +5256,6 @@ func (c *Controller) finalizeControllerClose() {
 		if c.inbox.store != nil {
 			c.inbox.store.Close()
 			c.inbox.store = nil
-		}
-		if c.inbox.tempLease != nil {
-			c.inbox.tempLease.Release()
-			c.inbox.tempLease = nil
 		}
 		c.inbox.mu.Unlock()
 		c.inbox.scanMu.Unlock()

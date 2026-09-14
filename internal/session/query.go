@@ -245,6 +245,44 @@ func (q *Query) enrichInfo(info *SessionInfo) {
 	}
 }
 
+// Get returns complete scalar metadata for one selected session. List remains
+// a cold, non-blocking catalog operation; an explicit resume selection may pay
+// the bounded streaming reduction once so model identity and title are never
+// guessed from a stale or missing cache.
+func (q *Query) Get(ctx context.Context, ref SessionRef) (SessionInfo, error) {
+	if q == nil || q.persistence == nil {
+		return SessionInfo{}, fmt.Errorf("session: nil session query")
+	}
+	if err := ref.validate(q.hostID); err != nil {
+		return SessionInfo{}, err
+	}
+	info, err := q.persistence.Stat(ctx, ref.SessionID)
+	if err != nil {
+		return SessionInfo{}, err
+	}
+	info.Ref = ref
+	if q.service != nil {
+		if runtime, ok := q.service.Runtime(ref); ok {
+			applyCatalogMetadata(&info, runtime.Session().CatalogMetadata())
+			return info, nil
+		}
+	}
+	if info.MetadataStatus == MetadataReady {
+		return info, nil
+	}
+	handle, err := q.persistence.Open(ref.SessionID, ReadOnly)
+	if err != nil {
+		return SessionInfo{}, err
+	}
+	defer handle.Close(context.WithoutCancel(ctx))
+	metadata, err := reduceCatalogMetadata(ctx, handle, handle.Manifest())
+	if err != nil {
+		return SessionInfo{}, err
+	}
+	applyCatalogMetadata(&info, metadata)
+	return info, nil
+}
+
 func applyCatalogMetadata(info *SessionInfo, metadata catalogMetadata) {
 	info.Title, info.ModelRef, info.ModelIdentity = metadata.Title, metadata.ModelRef, metadata.ModelIdentity
 	info.Turns, info.Preview, info.MetadataStatus = metadata.Turns, metadata.Preview, MetadataReady

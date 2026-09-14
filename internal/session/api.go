@@ -80,6 +80,7 @@ type SessionInfo struct {
 	ParentSessionID string
 	Origin          SessionOrigin
 	Path            string
+	SourcePath      string
 	Error           string
 }
 
@@ -148,6 +149,21 @@ func RootForLegacyDir(sessionDir string) string {
 		return filepath.Join(filepath.Dir(dir), "sessions-v4")
 	}
 	return filepath.Join(dir, "sessions-v4")
+}
+
+// RetiredRootForLegacyDir returns the read-only predecessor store beside the
+// final-format root. Hosts use it only to surface explicit import candidates;
+// execution must continue them through ContinuePrototype rather than opening
+// the retired writer format in place.
+func RetiredRootForLegacyDir(sessionDir string) string {
+	dir := filepath.Clean(strings.TrimSpace(sessionDir))
+	if dir == "." || dir == "" {
+		return ""
+	}
+	if filepath.Base(dir) == "sessions" {
+		return filepath.Join(filepath.Dir(dir), "sessions-v3")
+	}
+	return filepath.Join(dir, "sessions-v3")
 }
 
 func (p *FilesystemPersistence) Create(options CreateOptions) (*Session, error) {
@@ -238,6 +254,9 @@ func (p *FilesystemPersistence) Stat(ctx context.Context, sessionID string) (Ses
 	info := SessionInfo{SessionID: manifest.SessionID, Codec: manifest.Codec, CreatedAt: manifest.CreatedAt, UpdatedAt: updatedAt, MetadataStatus: MetadataPending, Path: dir}
 	if hasHeader {
 		info.CWD, info.ParentSessionID, info.Origin = header.CWD, header.ParentSessionID, header.Origin
+	}
+	if manifest.Source != nil {
+		info.SourcePath = manifest.Source.Path
 	}
 	cacheDir := filepath.Join(p.Root, ".query-cache", filepath.Base(id))
 	if metadata, metadataErr := readCatalogMetadata(cacheDir, manifest, revision); metadataErr == nil {

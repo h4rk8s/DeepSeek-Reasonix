@@ -23,7 +23,7 @@ type controllerRuntimeState struct {
 	mu             sync.Mutex // serializes sampling, commit and publication order; never held by observers
 	snapshot       event.RuntimeStateSnapshot
 	ledger         *turnevent.Ledger
-	path           string
+	bindingKey     string
 	activity       string
 	sink           event.Sink
 	pending        *event.RuntimeStateSnapshot
@@ -125,7 +125,14 @@ func (c *Controller) refreshRuntimeStateAttempt(e event.Event, attempt int) {
 	ledger := c.turnEventLedger()
 	initialized := r.snapshot.SchemaVersion == 1
 	base, activity := r.snapshot, r.activity
-	if r.snapshot.RuntimeEpoch == "" || r.path != path || r.ledger != ledger {
+	bindingKey := path
+	jobSessionID := agent.BranchID(path)
+	if v3Runtime != nil {
+		ref := v3Runtime.Ref()
+		bindingKey = ref.HostID + "\x00" + ref.SessionID
+		jobSessionID = ref.SessionID
+	}
+	if r.snapshot.RuntimeEpoch == "" || r.bindingKey != bindingKey || r.ledger != ledger {
 		base = event.RuntimeStateSnapshot{RuntimeEpoch: newRuntimeStateEpoch()}
 		activity = ""
 	}
@@ -191,7 +198,7 @@ func (c *Controller) refreshRuntimeStateAttempt(e event.Event, attempt int) {
 	next.Cancellable = next.Phase == "executing" || next.Phase == "cancelling" || next.PendingPrompt
 	next.BackgroundJobs = 0
 	if c.jobs != nil {
-		next.BackgroundJobs = len(c.jobs.RunningForSession(agent.BranchID(path)))
+		next.BackgroundJobs = len(c.jobs.RunningForSession(jobSessionID))
 	}
 	// Sampling owners is off their locks. Do not commit a mixture if the
 	// admission/close/binding boundary advanced while another owner was read.
@@ -228,7 +235,7 @@ func (c *Controller) refreshRuntimeStateAttempt(e event.Event, attempt int) {
 	}
 	next.Revision++
 	r.snapshot = cloneRuntimeState(next)
-	r.path, r.ledger, r.activity = path, ledger, activity
+	r.bindingKey, r.ledger, r.activity = bindingKey, ledger, activity
 	defer slog.Debug("runtime state committed", "source", "controller", "epoch", next.RuntimeEpoch[:8], "revision", next.Revision, "phase", next.Phase)
 	if !initialized {
 		r.mu.Unlock()

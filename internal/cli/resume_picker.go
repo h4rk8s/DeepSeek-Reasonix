@@ -26,15 +26,14 @@ type resumePicker struct {
 // A no-op (with a notice) when there are no saved sessions.
 func (m *chatTUI) openResumePicker() {
 	reclaimCLIRecoveryBranches(m.ctrl.SessionDir())
-	entries := resumeEntries(m.ctrl.SessionDir())
+	entries := resumeEntriesForController(m.ctrl.SessionDir(), m.ctrl)
 	if len(entries) == 0 {
 		m.notice(i18n.M.NoSessionToResume)
 		return
 	}
-	active := m.ctrl.SessionPath()
 	activeIdx := -1
 	for i, entry := range entries {
-		if entry.session.Path == active {
+		if entry.isActive(m.ctrl) {
 			activeIdx = i
 			break
 		}
@@ -50,14 +49,14 @@ func (m *chatTUI) openResumePicker() {
 		if i == activeIdx {
 			status = "active"
 		}
-		label := sessionPickerLabel(entry.session)
-		description := entry.session.ModTime.Local().Format("2006-01-02 15:04")
+		label := resumeEntryPickerLabel(entry)
+		description := entry.updatedAt().Local().Format("2006-01-02 15:04")
 		if entry.project != "" {
 			label = fmt.Sprintf("[%s] %s", entry.project, label)
 			description = entry.project + " · " + description
 		}
 		items = append(items, quickPickerItem{
-			ID: entry.session.Path, Label: label,
+			ID: entry.key(), Label: label,
 			Description: description, Status: status,
 		})
 	}
@@ -81,7 +80,7 @@ func (m chatTUI) handleResumePickerKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd)
 		}
 		if result.choice != nil {
 			for i, entry := range r.entries {
-				if entry.session.Path == result.choice.ID {
+				if entry.key() == result.choice.ID {
 					r.sel = i
 					break
 				}
@@ -112,9 +111,9 @@ func (m chatTUI) applyResumePick() (tea.Model, tea.Cmd) {
 	if r == nil || r.sel < 0 || r.sel >= len(r.entries) {
 		return m, nil
 	}
-	target := r.entries[r.sel].session
+	target := r.entries[r.sel]
 	m.resumePick = nil
-	if target.Path == m.ctrl.SessionPath() {
+	if target.isActive(m.ctrl) {
 		m.notice(i18n.M.ResumeAlreadyActive)
 		return m, nil
 	}
@@ -129,10 +128,14 @@ func (m chatTUI) applyResumePick() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.followSessionLease()
-	if err := m.commitSessionSwitch(target.Path); err != nil {
-		m.notice("resume: " + sessionLeaseHeldNotice(err))
-		if cliSessionTakeoverCandidate(err) {
-			m.pendingTakeoverPath = target.Path
+	if err := m.commitResumeEntry(target); err != nil {
+		message := err.Error()
+		if target.kind == resumeEntryLegacy {
+			message = sessionLeaseHeldNotice(err)
+		}
+		m.notice("resume: " + message)
+		if target.kind == resumeEntryLegacy && cliSessionTakeoverCandidate(err) {
+			m.pendingTakeoverPath = target.session.Path
 			m.notice("run /takeover to take this session over from the resident serve")
 		}
 		return m, nil
@@ -153,7 +156,7 @@ func (m chatTUI) renderResumePicker() string {
 	var b strings.Builder
 	b.WriteString(accent(i18n.M.ResumePickTitle) + "\n")
 	for i, entry := range r.entries {
-		label := sessionPickerLabel(entry.session)
+		label := resumeEntryPickerLabel(entry)
 		if entry.project != "" {
 			label = fmt.Sprintf("[%s] %s", entry.project, label)
 		}
@@ -180,4 +183,15 @@ func sessionPickerLabel(s agent.SessionInfo) string {
 		preview = "(no user message yet)"
 	}
 	return recoverySessionBadge(s) + fmt.Sprintf("%d turns · %s", s.Turns, ansi.Truncate(preview, 60, "…"))
+}
+
+func resumeEntryPickerLabel(entry resumeEntry) string {
+	if entry.kind == resumeEntryLegacy {
+		return sessionPickerLabel(entry.session)
+	}
+	preview := entry.displayTitle()
+	if preview == "" {
+		preview = "(no user message yet)"
+	}
+	return fmt.Sprintf("%d turns · %s", entry.turns(), ansi.Truncate(preview, 60, "…"))
 }

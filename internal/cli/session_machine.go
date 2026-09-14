@@ -269,40 +269,60 @@ func parseMachineTime(value string) time.Time {
 }
 
 func machineSessions(dir string, identityKey []byte) ([]machineSession, error) {
-	ordered, err := agent.ListSessionOrder(dir)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]machineSession, 0, len(ordered))
-	for _, info := range ordered {
-		turns := info.Turns
-		if !info.ListingProjectionFresh() {
-			_, turns = agent.SessionPreview(info.Path)
+	entries := localResumeEntries(dir, 0)
+	out := make([]machineSession, 0, len(entries))
+	for _, entry := range entries {
+		if entry.kind != resumeEntryLegacy {
+			var err error
+			entry, err = hydrateResumeEntry(context.Background(), entry)
+			if err != nil {
+				return nil, err
+			}
 		}
+		turns := entry.turns()
 		if turns == 0 {
 			continue
 		}
-		meta, ok, _ := agent.LoadBranchMeta(info.Path)
+		rawSessionID := entry.stored.SessionID
+		createdAt := entry.stored.CreatedAt
+		updatedAt := entry.stored.UpdatedAt
+		scope := "project"
 		state := "idle"
-		if agent.SessionLeaseHeld(info.Path) {
-			state = "active"
-		} else if ok && meta.InFlightTurn != nil {
-			state = "interrupted"
-		} else if info.Recovered {
-			state = "recovered"
-		}
-		scope := info.Scope
-		if scope == "" {
-			scope = "global"
+		recovered := false
+		if entry.kind == resumeEntryLegacy {
+			info := entry.session
+			rawSessionID = agent.BranchID(info.Path)
+			createdAt = info.CreatedAt
+			updatedAt = info.ModTime
+			scope = info.Scope
+			if scope == "" {
+				scope = "global"
+			}
+			meta, ok, _ := agent.LoadBranchMeta(info.Path)
+			switch {
+			case agent.SessionLeaseHeld(info.Path):
+				state = "active"
+			case ok && meta.InFlightTurn != nil:
+				state = "interrupted"
+			case info.Recovered:
+				state = "recovered"
+			}
+			recovered = info.Recovered
+		} else if entry.kind == resumeEntryCanonical {
+			if service := cliSessionServiceForRoot(filepath.Dir(entry.stored.Path)); service != nil {
+				if _, active := service.Runtime(entry.stored.Ref); active {
+					state = "active"
+				}
+			}
 		}
 		out = append(out, machineSession{
-			ID:        machineSessionIDWithKey(agent.BranchID(info.Path), identityKey),
-			CreatedAt: machineTime(info.CreatedAt),
-			UpdatedAt: machineTime(info.LastActivityAt),
+			ID:        machineSessionIDWithKey(rawSessionID, identityKey),
+			CreatedAt: machineTime(createdAt),
+			UpdatedAt: machineTime(updatedAt),
 			Scope:     scope,
 			Turns:     turns,
 			State:     state,
-			Recovered: info.Recovered,
+			Recovered: recovered,
 		})
 	}
 	sort.SliceStable(out, func(i, j int) bool {

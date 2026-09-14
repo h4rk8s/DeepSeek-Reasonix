@@ -502,7 +502,7 @@ func (c *Controller) v3EventsFor(e event.Event, projection session.Projection) (
 		}
 		payload, err := makePayload(map[string]any{
 			"id": e.ItemID, "toolCallId": e.ItemID, "kind": kind, "state": "pending",
-			"sessionId": e.SessionID, "headId": agent.BranchID(c.SessionPath()),
+			"sessionId": e.SessionID, "headId": c.CurrentBranchID(),
 			"turnId": e.TurnID, "runtimeEpoch": e.RuntimeEpoch,
 		})
 		if err != nil {

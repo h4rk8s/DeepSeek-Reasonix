@@ -6,15 +6,13 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
-	"reasonix/internal/agent"
 	"reasonix/internal/event"
 	"reasonix/internal/sessioninbox"
-	"reasonix/internal/sessiontemp"
+	"reasonix/internal/store"
 )
 
 // TurnAdmission is the exported classification of TrySubmitInboxItem /
@@ -89,10 +87,7 @@ type inboxState struct {
 	scanMu sync.Mutex
 	mu     sync.Mutex
 	store  *sessioninbox.Store
-	// tempLease pins the process-local inbox used by an exclusive v3 Runtime.
-	// It is not recovery state and is deleted with the session temp generation.
-	tempLease *sessiontemp.Lease
-	closed    bool // seals new sidecar opens when controller teardown starts
+	closed bool // seals new sidecar opens when controller teardown starts
 	// activeItemIDs includes the running follow-up and every accepted steer.
 	// TurnDone durable-acks the set so multi-steer rounds leave no orphans.
 	activeItemIDs map[string]struct{}
@@ -211,24 +206,30 @@ func (c *Controller) bindInboxStoreNotifications(st *sessioninbox.Store) {
 	})
 }
 
+func (c *Controller) inboxStorage() (identity, dir string, err error) {
+	if path := c.SessionPath(); path != "" {
+		return path, store.SessionInboxDir(path), nil
+	}
+	service, runtime, exclusive := c.v3Binding()
+	if !exclusive || service == nil || runtime == nil {
+		return "", "", fmt.Errorf("inbox requires a session identity")
+	}
+	ref := runtime.Ref()
+	dir, err = service.InboxDirectory(ref)
+	if err != nil {
+		return "", "", err
+	}
+	return ref.HostID + "/" + ref.SessionID, dir, nil
+}
+
 func (c *Controller) ensureInbox() (*sessioninbox.Store, error) {
-	path := c.SessionPath()
+	identity, dir, err := c.inboxStorage()
+	if err != nil {
+		return nil, err
+	}
 	c.inbox.mu.Lock()
 	defer c.inbox.mu.Unlock()
-	if path == "" && c.sessionEngineEnabled() {
-		if c.inbox.tempLease == nil {
-			lease, err := c.sessionTemp.Acquire()
-			if err != nil {
-				return nil, fmt.Errorf("open v3 runtime inbox: %w", err)
-			}
-			c.inbox.tempLease = lease
-		}
-		path = filepath.Join(c.inbox.tempLease.Dir(), "runtime-inbox.jsonl")
-	}
-	if path == "" {
-		return nil, fmt.Errorf("inbox requires a session identity")
-	}
-	if c.inbox.store != nil && c.inbox.store.SessionPath() == path {
+	if c.inbox.store != nil && c.inbox.store.SessionPath() == identity {
 		return c.inbox.store, nil
 	}
 	if c.inbox.closed {
@@ -238,7 +239,7 @@ func (c *Controller) ensureInbox() (*sessioninbox.Store, error) {
 		c.inbox.store.Close()
 		c.inbox.store = nil
 	}
-	st, err := sessioninbox.Open(path, sessioninbox.Limits{})
+	st, err := sessioninbox.OpenDirectory(dir, identity, sessioninbox.Limits{})
 	if err != nil {
 		return nil, err
 	}
@@ -260,14 +261,14 @@ func (c *Controller) ensureInbox() (*sessioninbox.Store, error) {
 // rebindInbox opens the inbox for the current session path. Safe across
 // NewSession/Resume/SetSessionPath; does not copy items on fork.
 func (c *Controller) rebindInbox() {
-	path := c.SessionPath()
+	identity, dir, storageErr := c.inboxStorage()
 	c.inbox.mu.Lock()
 	defer c.inbox.mu.Unlock()
 	if c.inbox.closed {
 		return
 	}
 	if c.inbox.store != nil {
-		if path != "" && c.inbox.store.SessionPath() == path {
+		if storageErr == nil && c.inbox.store.SessionPath() == identity {
 			return
 		}
 		// Pending work must remain inspectable if this session is reopened.
@@ -276,25 +277,15 @@ func (c *Controller) rebindInbox() {
 		c.inbox.store = nil
 		c.inbox.clearActive()
 	}
-	if c.inbox.tempLease != nil {
-		c.inbox.tempLease.Release()
-		c.inbox.tempLease = nil
-	}
-	if path == "" && c.sessionEngineEnabled() {
-		lease, err := c.sessionTemp.Acquire()
-		if err != nil {
-			slog.Warn("controller: open v3 runtime inbox", "err", err)
-			return
+	if storageErr != nil {
+		if c.SessionPath() != "" || c.sessionEngineEnabled() {
+			slog.Warn("controller: resolve session inbox", "err", storageErr)
 		}
-		c.inbox.tempLease = lease
-		path = filepath.Join(lease.Dir(), "runtime-inbox.jsonl")
-	}
-	if path == "" {
 		return
 	}
-	st, err := sessioninbox.Open(path, sessioninbox.Limits{})
+	st, err := sessioninbox.OpenDirectory(dir, identity, sessioninbox.Limits{})
 	if err != nil {
-		slog.Warn("controller: open session inbox", "err", err, "path", path)
+		slog.Warn("controller: open session inbox", "err", err, "identity", identity)
 		return
 	}
 	c.bindInboxStoreNotifications(st)
@@ -367,7 +358,7 @@ func (c *Controller) EnqueueInbox(req InboxRequest) (sessioninbox.InboxReceipt, 
 		Envelope:    env,
 		Source:      req.Source,
 		Idempotency: req.Idempotency,
-		SessionID:   agent.BranchID(st.SessionPath()),
+		SessionID:   c.parentSessionID(),
 	})
 	if err != nil {
 		if errors.Is(err, sessioninbox.ErrCapacityItems) || errors.Is(err, sessioninbox.ErrCapacityBytes) || errors.Is(err, sessioninbox.ErrItemTooLarge) {
