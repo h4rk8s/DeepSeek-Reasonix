@@ -262,6 +262,20 @@ func (c *Controller) SetSessionTitle(ctx context.Context, title string) error {
 	return err
 }
 
+// CurrentSessionTitle returns the canonical title owned by an exclusive
+// session. The boolean distinguishes an untitled canonical session from a
+// legacy controller, whose title remains stored beside its transcript path.
+func (c *Controller) CurrentSessionTitle() (string, bool) {
+	_, runtime, exclusive := c.v3Binding()
+	if !exclusive {
+		return "", false
+	}
+	if runtime == nil || runtime.Session() == nil {
+		return "", true
+	}
+	return strings.TrimSpace(runtime.Session().StateSnapshot().Projection.Title), true
+}
+
 func seedRuntimeSession(ctx context.Context, runtime *session.Runtime, operationID string, messages []provider.Message, modelRef, modelIdentity string) error {
 	if runtime == nil {
 		return nil

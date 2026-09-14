@@ -388,6 +388,9 @@ func TestMigrateLegacyIsIdempotentAndUsesFrozenArtifacts(t *testing.T) {
 	if err := agent.SetBranchModelSelectionPreserveUpdated(path, "provider/model", "connection-revision"); err != nil {
 		t.Fatal(err)
 	}
+	if err := agent.RenameSession(path, "Legacy title"); err != nil {
+		t.Fatal(err)
+	}
 	goal := `{"objective":"finish","status":"paused","token_budget":123,"todos":[{"content":"old","status":"in_progress"}],"auto_continue":true}`
 	if err := os.WriteFile(store.SessionGoalState(path), []byte(goal), 0o600); err != nil {
 		t.Fatal(err)
@@ -418,12 +421,104 @@ func TestMigrateLegacyIsIdempotentAndUsesFrozenArtifacts(t *testing.T) {
 	if projection.ModelRef != "provider/model" || projection.ModelIdentity != "connection-revision" {
 		t.Fatalf("migrated model selection = %q / %q", projection.ModelRef, projection.ModelIdentity)
 	}
+	if projection.Title != "Legacy title" {
+		t.Fatalf("migrated title = %q", projection.Title)
+	}
 	if containsJSONKey(projection.GoalState, "todos") || containsJSONKey(projection.GoalState, "auto_continue") {
 		t.Fatalf("migrated goal projection = %s", projection.GoalState)
 	}
 	legacyGoal := filepath.Join(first.TargetDir, "legacy", filepath.Base(store.SessionGoalState(path)))
 	if string(mustRead(t, legacyGoal)) != goal {
 		t.Fatal("raw goal sidecar was not preserved byte-for-byte")
+	}
+}
+
+func TestMigrateLegacyBackfillsTitleMissingFromOlderTarget(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "sessions", "old.jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := agent.NewSession("sys").Save(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := agent.RenameSession(path, "Recovered legacy title"); err != nil {
+		t.Fatal(err)
+	}
+	frozen, err := freezeLegacyHead(t.Context(), path, "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	title := frozen.title
+	frozen.title = ""
+	first, err := frozen.publish(t.Context(), filepath.Join(root, "sessions-v4"), CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	frozen.title = title
+	second, err := frozen.publish(t.Context(), filepath.Join(root, "sessions-v4"), CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !second.Reused || second.TargetID != first.TargetID {
+		t.Fatalf("backfill did not reuse target: first=%+v second=%+v", first, second)
+	}
+	commits, err := Replay(first.TargetDir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projection, err := Project(commits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if projection.Title != "Recovered legacy title" {
+		t.Fatalf("backfilled title = %q", projection.Title)
+	}
+}
+
+func TestMigrateLegacyDoesNotOverwriteExplicitlyClearedTitle(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "sessions", "old.jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := agent.NewSession("sys").Save(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := agent.RenameSession(path, "Legacy title"); err != nil {
+		t.Fatal(err)
+	}
+	result, err := MigrateLegacy(t.Context(), path, filepath.Join(root, "sessions-v4"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := OpenWithOptions(result.TargetDir, result.TargetID, OpenOptions{ExternalHistory: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := json.Marshal(map[string]string{"title": ""})
+	if _, err := target.Append(t.Context(), Batch{OperationID: "clear-title", Events: []Event{{Kind: "session/title", Payload: payload}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := target.Flush(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := target.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := MigrateLegacy(t.Context(), path, filepath.Join(root, "sessions-v4")); err != nil {
+		t.Fatal(err)
+	}
+	commits, err := Replay(result.TargetDir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projection, err := Project(commits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if projection.Title != "" {
+		t.Fatalf("explicitly cleared title restored as %q", projection.Title)
 	}
 }
 

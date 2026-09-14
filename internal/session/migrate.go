@@ -96,6 +96,7 @@ type frozenLegacyHead struct {
 	targetID      string
 	messageSpool  string
 	messageCount  int
+	title         string
 	modelRef      string
 	modelIdentity string
 	goal          map[string]any
@@ -138,7 +139,7 @@ func freezeLegacyHead(ctx context.Context, sourcePath, legacyHeadID string, allo
 	return &frozenLegacyHead{
 		sourcePath: sourcePath, headID: legacyHeadID, source: source, artifacts: artifacts,
 		targetID:     migrationTargetID(sourcePath, source.SHA256, legacyHeadID),
-		messageSpool: parsed.messageSpool, messageCount: parsed.messageCount,
+		messageSpool: parsed.messageSpool, messageCount: parsed.messageCount, title: parsed.title,
 		modelRef: parsed.modelRef, modelIdentity: parsed.modelIdentity,
 		goal:      parsed.goal,
 		freezeDir: freezeDir,
@@ -148,6 +149,7 @@ func freezeLegacyHead(ctx context.Context, sourcePath, legacyHeadID string, allo
 type frozenLegacyParse struct {
 	messageSpool  string
 	messageCount  int
+	title         string
 	modelRef      string
 	modelIdentity string
 	goal          map[string]any
@@ -198,6 +200,14 @@ func parseFrozenLegacy(ctx context.Context, artifacts []frozenArtifact, sourcePa
 		return frozenLegacyParse{}, closeErr
 	}
 	parsed := frozenLegacyParse{messageSpool: messageSpool, messageCount: stream.Messages}
+	if meta, ok, metaErr := agent.LoadBranchMeta(frozenSourcePath); metaErr == nil && ok {
+		for _, title := range []string{meta.CustomTitle, meta.TopicTitle, meta.Name} {
+			if title = strings.TrimSpace(title); title != "" {
+				parsed.title = title
+				break
+			}
+		}
+	}
 	if modelRef, modelIdentity, ok := agent.LoadSessionModelSelection(frozenSourcePath); ok && strings.TrimSpace(modelRef) != "" {
 		parsed.modelRef, parsed.modelIdentity = strings.TrimSpace(modelRef), strings.TrimSpace(modelIdentity)
 	}
@@ -316,6 +326,14 @@ func (f *frozenLegacyHead) publish(ctx context.Context, targetRoot string, optio
 			_, appendErr = target.Append(ctx, Batch{OperationID: "legacy-import:" + f.source.SHA256 + ":model", Events: []Event{{Kind: "session/config", Payload: raw}}})
 		}
 	}
+	if appendErr == nil && f.title != "" {
+		raw, marshalErr := json.Marshal(map[string]string{"title": f.title})
+		if marshalErr != nil {
+			appendErr = marshalErr
+		} else {
+			_, appendErr = target.Append(ctx, Batch{OperationID: "legacy-import:" + f.source.SHA256 + ":title", Events: []Event{{Kind: "session/title", Payload: raw}}})
+		}
+	}
 	if appendErr == nil && f.goal != nil {
 		raw, marshalErr := json.Marshal(f.goal)
 		if marshalErr != nil {
@@ -360,6 +378,9 @@ func (f *frozenLegacyHead) reusePublished(ctx context.Context, targetRoot, targe
 	if err := validateSessionHeaderForCreate(targetDir, f.targetID, options); err != nil {
 		return false, err
 	}
+	if err := repairMigratedLegacyTitle(ctx, targetDir, f.targetID, f.title); err != nil {
+		return false, fmt.Errorf("repair migrated session title: %w", err)
+	}
 	entry := MigrationEntry{SourcePath: f.sourcePath, SourceSize: f.source.Size, SourceSHA256: f.source.SHA256, LegacyHeadID: f.headID, TargetCodec: Codec, TargetID: f.targetID, CreatedAt: manifest.CreatedAt}
 	if err := appendMigrationMapping(ctx, targetRoot, entry); err != nil {
 		return false, fmt.Errorf("repair migration mapping: %w", err)
@@ -372,6 +393,48 @@ func writeImportedManifest(dir string, manifest Manifest, options CreateOptions)
 		return err
 	}
 	return writeSessionHeaderForCreate(dir, manifest.SessionID, manifest.CreatedAt, options)
+}
+
+func repairMigratedLegacyTitle(ctx context.Context, targetDir, targetID, title string) error {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return nil
+	}
+	found := false
+	if err := VisitCommits(ctx, targetDir, func(commit Commit) error {
+		for _, ev := range commit.Events {
+			if ev.Kind == "session/title" {
+				found = true
+				break
+			}
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if found {
+		return nil
+	}
+	payload, err := json.Marshal(map[string]string{"title": title})
+	if err != nil {
+		return err
+	}
+	target, err := OpenWithOptions(targetDir, targetID, OpenOptions{ExternalHistory: true})
+	if err != nil {
+		return err
+	}
+	_, appendErr := target.Append(ctx, Batch{
+		OperationID: "legacy-title-backfill:" + targetID,
+		Events:      []Event{{Kind: "session/title", Payload: payload}},
+	})
+	if appendErr == nil {
+		_, appendErr = target.Flush(ctx)
+	}
+	closeErr := target.Close(ctx)
+	if appendErr != nil {
+		return appendErr
+	}
+	return closeErr
 }
 
 type frozenArtifact struct {

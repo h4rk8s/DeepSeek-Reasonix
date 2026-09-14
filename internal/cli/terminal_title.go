@@ -10,6 +10,7 @@ import (
 
 	"reasonix/internal/agent"
 	"reasonix/internal/config"
+	"reasonix/internal/control"
 	"reasonix/internal/event"
 )
 
@@ -70,10 +71,7 @@ func (m chatTUI) renderTerminalTitleItem(item string) string {
 	case config.TerminalTitleActivity:
 		return m.terminalTitleActivity()
 	case config.TerminalTitleSessionTitle:
-		if m.ctrl == nil {
-			return ""
-		}
-		return sessionTerminalTitle(m.ctrl.SessionPath())
+		return m.terminalTitleSession()
 	case config.TerminalTitleTodoProgress:
 		return terminalTitleTodoProgress(m.todos)
 	case config.TerminalTitleMode:
@@ -99,6 +97,27 @@ func (m chatTUI) renderTerminalTitleItem(item string) string {
 	default:
 		return ""
 	}
+}
+
+func (m chatTUI) terminalTitleSession() string {
+	if m.ctrl == nil {
+		return ""
+	}
+	identity, ok := m.ctrl.(control.IdentityLifecycle)
+	if ok {
+		title, v3 := identity.CurrentSessionTitle()
+		if !v3 {
+			return sessionTerminalTitle(m.ctrl.SessionPath())
+		}
+		if title != "" {
+			return title
+		}
+		if project := m.terminalTitleProjectName(); project != "" {
+			return project
+		}
+		return "Reasonix"
+	}
+	return sessionTerminalTitle(m.ctrl.SessionPath())
 }
 
 func (m chatTUI) terminalTitleMode() string {

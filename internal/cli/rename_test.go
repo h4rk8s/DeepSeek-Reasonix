@@ -134,6 +134,21 @@ func TestRenameCurrentSessionUpdatesTerminalWindowTitle(t *testing.T) {
 	}
 }
 
+func TestRenameCurrentCanonicalSessionUpdatesCanonicalAndTerminalTitles(t *testing.T) {
+	ctrl := newCanonicalTitleTestController(t, "/workspace/sdj-dev", "old title")
+	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 80)
+	m.terminalTitleItems = []string{config.TerminalTitleSessionTitle}
+
+	m.runRenameCommand("/rename worklog-v21")
+
+	if got, canonical := ctrl.CurrentSessionTitle(); !canonical || got != "worklog-v21" {
+		t.Fatalf("canonical title = %q, canonical=%v", got, canonical)
+	}
+	if got := m.windowTitle; got != "worklog-v21" {
+		t.Fatalf("windowTitle = %q, want worklog-v21", got)
+	}
+}
+
 func TestRenameRunsImmediatelyWhileTurnRunning(t *testing.T) {
 	dir := t.TempDir()
 	sessionPath := filepath.Join(dir, "test-session.jsonl")

@@ -7,7 +7,7 @@
 - 唯一长期分支：`jawa/reasonix-composer-state-visibility`
 - 主 checkout：`/Users/jawa/Lab/2026-07-06-reasonix-dev`
 - 本轮固定上游：`744c2e94ec77b577fbe3f1c93c769b1c3388bd21`（desktop-v1.38.7-31-g744c2e94ec77）
-- 补丁结构：13 个产品语义 owner + 2 个维护闸门 + 1 个临时 renderer pin；线性 Git 栈共 18 个提交（计费日历和队列图片预算是所属 owner 的 follow-up fix）
+- 补丁结构：13 个产品语义 owner + 2 个维护闸门 + 1 个临时 renderer pin；线性 Git 栈共 19 个提交（计费日历、队列图片预算和 v3 terminal title 适配是所属 owner 的 follow-up fix）
 - 同步入口：`scripts/jawa-upstream-sync.sh`
 - 临时 worktree：只允许位于仓库内 `.worktree/<task>`
 
@@ -143,7 +143,7 @@ CleanShot、Raycast clipboard history、文件 URL 和延迟落盘会产生不�
 
 - 提供 `hybrid / balanced` 等 presentation 配置，并保留上游默认值兼容。
 - 支持 turn 留白、用户输入 band、assistant 圆点、`›` composer prefix、可选 composer frame。
-- terminal title 可按 session/project 更新，可手动覆盖和恢复。
+- terminal title 可按 session/project 更新，可手动覆盖和恢复；DSH v3 会话从 canonical projection 读取标题，legacy migration 保留原标题，空标题以项目名稳定兜底。
 - status 支持两层结构，展示模式、模型、CWD/branch、cache/context/cost，并按真实剩余宽度降级。
 - 输入换行只显示一个 prompt icon；软换行不复制 `›`。
 

@@ -51,6 +51,8 @@ type Lifecycle interface {
 // commands must use this surface instead of manufacturing transcript paths.
 type IdentityLifecycle interface {
 	SessionRef() (session.SessionRef, bool)
+	CurrentSessionTitle() (string, bool)
+	SetSessionTitle(context.Context, string) error
 	SessionService() *session.Service
 	UsesExclusiveSession() bool
 	BindFreshSession(context.Context, string) (session.SessionRef, error)
