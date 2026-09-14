@@ -275,6 +275,7 @@ BM25 容易让多个同义 memory 占满上下文，旧事实又缺少来源和�
 - 用户配置 parse/validation 失败时返回包含路径和字段的 typed error，并以非零状态退出。
 - 普通 runtime load 和 edit load 都不使用默认或 last-known-good 掩盖错误，也不写盘。
 - 所有生产 edit API 返回 error；不再通过 panic 处理坏配置。
+- canonical renderer 对每个 TOML 键只有一个 owner；full/user/project/project-delta 输出都必须可解析，vision alias 与本地图片 fallback 不得因模块拆分重复写键。
 - `reasonix doctor config --json` 只读展示 builtin/user/project 来源、实际生效值、ignored/unknown/retired key 和 unresolved model。
 - 诊断输出脱敏，不泄露 provider secret、header 或图片 command 正文。
 - remote/desktop/serve edit 路径共享同一 authority contract。
@@ -287,6 +288,7 @@ BM25 容易让多个同义 memory 占满上下文，旧事实又缺少来源和�
 **验证**
 
 - malformed TOML、unknown key、坏 project scope、LKG 存在/不存在；
+- 启用 `image_understanding_model` 与 `image_understanding_command` 后，四种 scope round-trip 且每个键只出现一次；
 - CLI/Desktop/serve edit；
 - read-only SHA256 不变；
 - provenance JSON 和 secret redaction。
