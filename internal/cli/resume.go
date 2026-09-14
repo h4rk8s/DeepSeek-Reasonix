@@ -835,23 +835,6 @@ func (m *chatTUI) resumeArgItems(val string) ([]compItem, int, bool) {
 	return out, from, true
 }
 
-// sessionSummary is the "N turns · display title" line shared by the /resume
-// list and its argument completion. Explicit session renames win, then topic
-// titles, then the raw preview so the user can identify sessions at a glance.
-func sessionSummary(s agent.SessionInfo) string {
-	preview := s.CustomTitle
-	if preview == "" {
-		preview = s.TopicTitle
-	}
-	if preview == "" {
-		preview = s.Preview
-	}
-	if preview == "" {
-		preview = "(no user message yet)"
-	}
-	return recoverySessionBadge(s) + fmt.Sprintf("%d turns · %s", s.Turns, preview)
-}
-
 func recoverySessionBadge(s agent.SessionInfo) string {
 	if !s.Recovered {
 		return ""
