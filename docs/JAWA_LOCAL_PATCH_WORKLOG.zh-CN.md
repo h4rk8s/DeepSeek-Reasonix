@@ -591,13 +591,16 @@ Thought/Image 点击区域过大、hover 抖动、展开向下顶、选择文字
 - 持久化：canonical inbox 与 job artifact 放在 session service 派生的 `.runtime/` 目录；export 排除 runtime sidecar，重启后仍能恢复原 owner 的队列和后台任务。
 - 验证契约：覆盖“仅 v3 且旧目录不存在”、canonical/v3/legacy 混合枚举、显式恢复、`--continue` 最新选择、交互 `/resume`、继续一轮后再次打开同一 canonical ID，以及 model/profile 热重建不换 owner。
 
-### Git 测试隔离事故与修复
+### 系统状态测试隔离事故与修复
 
 - 事故：`TestMergeBackAutoCommitUsesExactTreeWithoutHooks` 通过 `git rev-parse --git-path hooks/pre-commit` 继承用户全局 `core.hooksPath`，随后顺着软链覆盖了真实 hook dispatcher。
 - 防护：用户全局 dispatcher 保持只读；测试不得通过改权限绕过。
 - 修复：`internal/worktree/main_test.go` 在 package `TestMain` 中设置 `GIT_CONFIG_GLOBAL=os.DevNull` 和 `GIT_CONFIG_NOSYSTEM=1`，使所有测试 Git 子进程只消费临时仓库配置。
 - 来源：临时修复提交 `72d358f7a0a854fefd6702279076094b3ba81613`；同步收口时折叠进维护闸门，随后删除临时分支和 worktree。
 - 验证要求：不额外传测试环境变量运行 `go test -count=1 ./internal/worktree`，在 dispatcher 只读时仍必须通过，且 dispatcher 内容和权限前后不变。
+- 剪贴板事故：`TestCtrlCCopySelection` 裸执行 native copy command，把测试文本 `hello` 通过 macOS `pbcopy` 写进用户真实剪贴板；旧注释错误声称该路径只发送 OSC 52。
+- 剪贴板修复：目标用例复用 `requireClipboardCommand`；CLI package `TestMain` 默认把 `writeNativeClipboardText` 设为 fail-closed guard，只有用例显式安装 test double 才允许执行。禁止采用“先覆盖再恢复”方案，因为它会丢失图片和测试期间用户新复制的内容。
+- 剪贴板验证：目标和相关 copy 用例在 fake `pbcopy/pbpaste` 前置的 PATH 中运行，必须通过且 fake backend marker 均不存在；另以子进程断言未安装替身时出现明确 guard panic。
 
 ### 非机械冲突判定
 
