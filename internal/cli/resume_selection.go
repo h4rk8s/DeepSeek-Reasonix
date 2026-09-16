@@ -79,6 +79,21 @@ func applyResumeEntryModel(model *string, entry resumeEntry, cfg *config.Config)
 	return nil
 }
 
+func resumeEntryMatchesQuery(entry resumeEntry, query, lowerQuery string) (bool, bool) {
+	path := entry.path()
+	id := entry.stored.SessionID
+	if entry.kind == resumeEntryLegacy {
+		id = agent.BranchID(path)
+	}
+	base := filepath.Base(path)
+	sourcePath := cleanResumeSource(entry.stored.SourcePath)
+	sourceID := agent.BranchID(sourcePath)
+	exact := query == id || query == base || query == sourceID || cleanResumeSource(query) == cleanResumeSource(path) ||
+		(sourcePath != "" && cleanResumeSource(query) == sourcePath) || query == entry.key()
+	haystack := strings.ToLower(strings.Join([]string{id, base, sourceID, entry.displayTitle()}, "\n"))
+	return exact, strings.Contains(haystack, lowerQuery)
+}
+
 // copyResumableSession refuses to duplicate a session whose saved selection no
 // longer resolves, so the copy cannot silently inherit an unusable connection.
 func copyResumableSession(model, resumePath string, cfg *config.Config) (string, error) {

@@ -51,14 +51,20 @@ type Lifecycle interface {
 // commands must use this surface instead of manufacturing transcript paths.
 type IdentityLifecycle interface {
 	SessionRef() (session.SessionRef, bool)
-	CurrentSessionTitle() (string, bool)
-	SetSessionTitle(context.Context, string) error
 	SessionService() *session.Service
 	UsesExclusiveSession() bool
 	BindFreshSession(context.Context, string) (session.SessionRef, error)
 	OpenSession(context.Context, session.SessionRef) (session.SessionRef, error)
 	ContinueLegacySession(context.Context, string, string) (session.SessionRef, error)
 	ContinuePrototypeSession(context.Context, string) (session.SessionRef, error)
+}
+
+// SessionTitleLifecycle is the optional mutable-title surface for the current
+// canonical session. Keep it separate from IdentityLifecycle so adapters that
+// only own session identity do not silently fall back to legacy path handling.
+type SessionTitleLifecycle interface {
+	CurrentSessionTitle() (string, bool)
+	SetSessionTitle(context.Context, string) error
 }
 
 // IdentityCreateLifecycle is the header-aware creation extension used by the
@@ -328,18 +334,19 @@ type SessionAPI interface {
 // the full port, so frontend migrations to the interfaces are mechanical and can
 // never silently drift from the implementation.
 var (
-	_ Lifecycle          = (*Controller)(nil)
-	_ IdentityLifecycle  = (*Controller)(nil)
-	_ TurnControl        = (*Controller)(nil)
-	_ Approvals          = (*Controller)(nil)
-	_ Goals              = (*Controller)(nil)
-	_ SessionHistory     = (*Controller)(nil)
-	_ MemoryControl      = (*Controller)(nil)
-	_ Capabilities       = (*Controller)(nil)
-	_ Status             = (*Controller)(nil)
-	_ SessionPersistence = (*Controller)(nil)
-	_ Input              = (*Controller)(nil)
-	_ Settings           = (*Controller)(nil)
-	_ Inbox              = (*Controller)(nil)
-	_ SessionAPI         = (*Controller)(nil)
+	_ Lifecycle             = (*Controller)(nil)
+	_ IdentityLifecycle     = (*Controller)(nil)
+	_ SessionTitleLifecycle = (*Controller)(nil)
+	_ TurnControl           = (*Controller)(nil)
+	_ Approvals             = (*Controller)(nil)
+	_ Goals                 = (*Controller)(nil)
+	_ SessionHistory        = (*Controller)(nil)
+	_ MemoryControl         = (*Controller)(nil)
+	_ Capabilities          = (*Controller)(nil)
+	_ Status                = (*Controller)(nil)
+	_ SessionPersistence    = (*Controller)(nil)
+	_ Input                 = (*Controller)(nil)
+	_ Settings              = (*Controller)(nil)
+	_ Inbox                 = (*Controller)(nil)
+	_ SessionAPI            = (*Controller)(nil)
 )

@@ -98,6 +98,13 @@ func TestRetiredV3OnlyResumeContinuesAndReopensSameCanonicalSession(t *testing.T
 	if len(listed) != 1 || listed[0].ID != machineSessionIDWithKey(importedRef.SessionID, identityKey) || listed[0].Turns != 2 {
 		t.Fatalf("post-import machine list = %+v, want one continued canonical session", listed)
 	}
+	target, err = resolveResumeEntry(sessionDir, retiredID)
+	if err != nil {
+		t.Fatalf("resolve imported session by retired id: %v", err)
+	}
+	if target.kind != resumeEntryCanonical || target.stored.Ref != importedRef {
+		t.Fatalf("retired id resolved to %+v, want canonical successor %+v", target, importedRef)
+	}
 
 	secondPlaceholder, err := service.Create(t.Context(), session.CreateOptions{SessionID: "second-placeholder"})
 	if err != nil {

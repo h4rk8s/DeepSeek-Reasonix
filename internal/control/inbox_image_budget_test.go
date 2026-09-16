@@ -29,7 +29,7 @@ func TestInboxAutoCompressesMultipleFrozenImagesToSingleItemLimit(t *testing.T) 
 		}
 		refs[i] = "@" + name
 	}
-	c := New(Options{SessionDir: dir, SessionPath: filepath.Join(dir, "s.jsonl"), WorkspaceRoot: workspace, Sink: event.Discard})
+	c := newOwnedTestController(t, Options{SessionDir: dir, SessionPath: filepath.Join(dir, "s.jsonl"), WorkspaceRoot: workspace, Sink: event.Discard})
 	rec, err := c.EnqueueInbox(InboxRequest{Submit: "inspect " + strings.Join(refs, " ")})
 	if err != nil {
 		t.Fatalf("enqueue multi-image follow-up: %v", err)

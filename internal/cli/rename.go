@@ -26,7 +26,7 @@ func (m *chatTUI) runRenameCommand(input string) {
 	sessions := resumeEntriesForController(m.ctrl.SessionDir(), m.ctrl)
 	title := ""
 	targetPath := ""
-	var targetCurrent control.IdentityLifecycle
+	var targetCurrent control.SessionTitleLifecycle
 	var targetStored *resumeEntry
 
 	// Check if the first arg after /rename is a session index (a number).
@@ -41,7 +41,7 @@ func (m *chatTUI) runRenameCommand(input string) {
 		switch entry.kind {
 		case resumeEntryCanonical:
 			if entry.isActive(m.ctrl) {
-				targetCurrent, _ = m.ctrl.(control.IdentityLifecycle)
+				targetCurrent, _ = m.ctrl.(control.SessionTitleLifecycle)
 			} else {
 				targetStored = &entry
 			}
@@ -57,7 +57,7 @@ func (m *chatTUI) runRenameCommand(input string) {
 		identity, identityOK := m.ctrl.(control.IdentityLifecycle)
 		if identityOK {
 			if _, active := identity.SessionRef(); active {
-				targetCurrent = identity
+				targetCurrent, _ = m.ctrl.(control.SessionTitleLifecycle)
 			}
 		}
 		if targetCurrent == nil {

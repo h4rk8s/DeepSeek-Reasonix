@@ -362,18 +362,12 @@ func resolveResumeEntry(dir, query string) (resumeEntry, error) {
 	var exact []resumeEntry
 	var partial []resumeEntry
 	for _, entry := range entries {
-		path := entry.path()
-		id := entry.stored.SessionID
-		if entry.kind == resumeEntryLegacy {
-			id = agent.BranchID(path)
-		}
-		base := filepath.Base(path)
-		if query == id || query == base || cleanResumeSource(query) == cleanResumeSource(path) || query == entry.key() {
+		exactMatch, partialMatch := resumeEntryMatchesQuery(entry, query, lower)
+		if exactMatch {
 			exact = append(exact, entry)
 			continue
 		}
-		haystack := strings.ToLower(strings.Join([]string{id, base, entry.displayTitle()}, "\n"))
-		if strings.Contains(haystack, lower) {
+		if partialMatch {
 			partial = append(partial, entry)
 		}
 	}
