@@ -615,12 +615,12 @@ func runtimeCompletionValues(kind cliCompletionValueKind) []string {
 }
 
 func completionSessionIDs() []string {
-	entries := localResumeEntries(resolveCLISessionDir(), 0)
+	entries := mergedResumeEntries(resolveCLISessionDir(), 0)
 	out := make([]string, 0, len(entries))
 	for _, entry := range entries {
-		id := entry.stored.SessionID
-		if entry.kind == resumeEntryLegacy {
-			id = agent.BranchID(entry.session.Path)
+		id := agent.BranchID(entry.session.Path)
+		if entry.target.canonical() {
+			id = entry.target.ref.SessionID
 		}
 		out = append(out, id)
 	}

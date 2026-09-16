@@ -32,7 +32,7 @@ func (t *UseCapabilityTool) searchCapabilities(ctx context.Context, query string
 	}
 	query = strings.TrimSpace(query)
 	cat := t.currentCatalog()
-	results, total := t.searchCapabilityResultsFromCatalog(cat, query, limit)
+	results, total := t.searchCapabilityResultsFromCatalog(ctx, cat, query, limit)
 	payload := struct {
 		Query          string                   `json:"query"`
 		Results        []capabilitySearchResult `json:"results"`
@@ -51,11 +51,11 @@ func (t *UseCapabilityTool) searchCapabilities(ctx context.Context, query string
 }
 
 func (t *UseCapabilityTool) searchCapabilityResults(query string, limit int) []capabilitySearchResult {
-	results, _ := t.searchCapabilityResultsFromCatalog(t.currentCatalog(), strings.TrimSpace(query), limit)
+	results, _ := t.searchCapabilityResultsFromCatalog(context.Background(), t.currentCatalog(), strings.TrimSpace(query), limit)
 	return results
 }
 
-func (t *UseCapabilityTool) searchCapabilityResultsFromCatalog(cat capability.Catalog, query string, limit int) ([]capabilitySearchResult, int) {
+func (t *UseCapabilityTool) searchCapabilityResultsFromCatalog(ctx context.Context, cat capability.Catalog, query string, limit int) ([]capabilitySearchResult, int) {
 	if limit <= 0 {
 		limit = 5
 	}

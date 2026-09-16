@@ -3,7 +3,6 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,7 +11,6 @@ import (
 	"reasonix/internal/agent"
 	"reasonix/internal/config"
 	"reasonix/internal/provider"
-	"reasonix/internal/session"
 )
 
 func TestSessionMachineListIsStableAndRedacted(t *testing.T) {
@@ -77,64 +75,6 @@ func TestSessionMachineProjectRootUsesProjectStore(t *testing.T) {
 	}
 	if len(response.Sessions) != 1 || response.Sessions[0].ID != machineSessionIDWithKey("project", identityKey) {
 		t.Fatalf("sessions = %+v, want project session", response.Sessions)
-	}
-}
-
-func TestSessionMachineListsRetiredV3WhenLegacyDirectoryDoesNotExist(t *testing.T) {
-	identityKey := installMachineTestIdentity(t)
-	root := t.TempDir()
-	legacyDir := filepath.Join(root, "sessions")
-	saveRetiredMachineTestSession(t, session.RetiredRootForLegacyDir(legacyDir), "retired-only", "retired prompt")
-
-	sessions, err := machineSessions(legacyDir, identityKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(sessions) != 1 || sessions[0].ID != machineSessionIDWithKey("retired-only", identityKey) || sessions[0].Turns != 1 {
-		t.Fatalf("sessions = %+v, want the v3-only session", sessions)
-	}
-	if _, err := os.Stat(legacyDir); !os.IsNotExist(err) {
-		t.Fatalf("legacy directory unexpectedly created: %v", err)
-	}
-}
-
-func TestSessionMachineListsMixedCanonicalRetiredAndLegacyWithoutDuplicates(t *testing.T) {
-	identityKey := installMachineTestIdentity(t)
-	root := t.TempDir()
-	legacyDir := filepath.Join(root, "sessions")
-	saveMachineTestSession(t, legacyDir, "legacy", time.Date(2026, 9, 14, 10, 0, 0, 0, time.UTC))
-	saveRetiredMachineTestSession(t, session.RetiredRootForLegacyDir(legacyDir), "retired", "retired prompt")
-	service, err := session.NewService("local", session.NewFilesystemPersistence(session.RootForLegacyDir(legacyDir)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	runtime, err := service.Create(t.Context(), session.CreateOptions{SessionID: "canonical"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	appendCanonicalMachineTurn(t, runtime, "canonical prompt")
-	t.Cleanup(func() { _ = service.Close(t.Context(), runtime.Ref()) })
-
-	sessions, err := machineSessions(legacyDir, identityKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := map[string]bool{
-		machineSessionIDWithKey("legacy", identityKey):    true,
-		machineSessionIDWithKey("retired", identityKey):   true,
-		machineSessionIDWithKey("canonical", identityKey): true,
-	}
-	if len(sessions) != len(want) {
-		t.Fatalf("sessions = %+v, want one row per storage generation", sessions)
-	}
-	for _, item := range sessions {
-		if !want[item.ID] {
-			t.Fatalf("unexpected session row %+v", item)
-		}
-		delete(want, item.ID)
-	}
-	if len(want) != 0 {
-		t.Fatalf("missing session ids: %v", want)
 	}
 }
 
@@ -239,78 +179,5 @@ func saveMachineTestSession(t *testing.T, dir, id string, updatedAt time.Time) {
 		Preview:       "PRIVATE prompt",
 	}); err != nil {
 		t.Fatalf("save branch meta: %v", err)
-	}
-}
-
-func saveRetiredMachineTestSession(t *testing.T, root, id, prompt string) {
-	t.Helper()
-	dir := filepath.Join(root, id)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	createdAt := time.Date(2026, 9, 14, 6, 44, 52, 0, time.UTC)
-	manifest, err := json.Marshal(session.Manifest{
-		SchemaVersion:    3,
-		Codec:            session.FinalV31Codec,
-		SessionID:        id,
-		CreatedAt:        createdAt,
-		WriterGeneration: 1,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "manifest.json"), append(manifest, '\n'), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	payload, err := json.Marshal(map[string]any{"message": provider.Message{ID: "user-1", Role: provider.RoleUser, Content: prompt}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	events := []session.Event{
-		{ID: "event-1", Sequence: 1, Kind: "turn/start"},
-		{ID: "event-2", Sequence: 2, Kind: "message/complete", Payload: payload},
-		{ID: "event-3", Sequence: 3, Kind: "turn/end", Payload: json.RawMessage(`{"status":"completed"}`)},
-	}
-	commit, err := json.Marshal(session.Commit{
-		SchemaVersion:    3,
-		Codec:            session.FinalV31Codec,
-		RecordType:       "commit",
-		ID:               "commit-1",
-		OperationID:      "turn-1",
-		OperationHash:    "test-operation-hash",
-		FirstSequence:    1,
-		EventCount:       len(events),
-		WriterGeneration: 1,
-		CreatedAt:        createdAt,
-		TurnID:           "turn-1",
-		Events:           events,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "events.jsonl"), append(commit, '\n'), 0o600); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func appendCanonicalMachineTurn(t *testing.T, runtime *session.Runtime, prompt string) {
-	t.Helper()
-	payload, err := json.Marshal(map[string]any{"message": provider.Message{ID: "user-1", Role: provider.RoleUser, Content: prompt}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := runtime.Session().Append(t.Context(), session.Batch{
-		OperationID: "turn-1",
-		TurnID:      "turn-1",
-		Events: []session.Event{
-			{Kind: "turn/start"},
-			{Kind: "message/complete", Payload: payload},
-			{Kind: "turn/end", Payload: json.RawMessage(`{"status":"completed"}`)},
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := runtime.Session().Flush(t.Context()); err != nil {
-		t.Fatal(err)
 	}
 }

@@ -82,6 +82,23 @@ func otherProjectResumeEntries(excludeDir string) []resumeEntry {
 	return out
 }
 
+// sessionSummary is the "N turns · display title" line shared by the /resume
+// list and its argument completion. Explicit session renames win, then topic
+// titles, then the raw preview so the user can identify sessions at a glance.
+func sessionSummary(s agent.SessionInfo) string {
+	preview := s.CustomTitle
+	if preview == "" {
+		preview = s.TopicTitle
+	}
+	if preview == "" {
+		preview = s.Preview
+	}
+	if preview == "" {
+		preview = "(no user message yet)"
+	}
+	return recoverySessionBadge(s) + fmt.Sprintf("%d turns · %s", s.Turns, preview)
+}
+
 // orderResumeSessions keeps conflict-recovery copies next to the session they
 // came from. Groups remain newest-first, while the newest visible leaf is first
 // within each group so interactive picker and numbered resume surfaces present

@@ -103,7 +103,7 @@ func (m chatTUI) terminalTitleSession() string {
 	if m.ctrl == nil {
 		return ""
 	}
-	identity, ok := m.ctrl.(control.IdentityLifecycle)
+	identity, ok := m.ctrl.(control.SessionTitleLifecycle)
 	if ok {
 		title, v3 := identity.CurrentSessionTitle()
 		if !v3 {

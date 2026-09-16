@@ -1,13 +1,13 @@
 # Jawa 本地 Reasonix 语义补丁台账
 
-更新时间：2026-09-14
+更新时间：2026-09-16
 
 ## 维护基线
 
 - 唯一长期分支：`jawa/reasonix-composer-state-visibility`
 - 主 checkout：`/Users/jawa/Lab/2026-07-06-reasonix-dev`
-- 本轮固定上游：`09cdab3866d77c6ff0d007ee61b6aca3128ebe54`（v1.38.8）
-- 补丁结构：13 个产品语义 owner + 2 个维护闸门 + 1 个临时 renderer pin；计费日历、队列图片预算、canonical session 适配等 follow-up fix 仍归所属 owner，准确线性提交数以本文给出的 `git log` 命令为准。
+- 本轮固定上游：`703c310f5b69c5079fe23a796893c8e836ce90a1`（v1.38.9 `dc915ab97` 之后 14 个 main-v2 提交）
+- 补丁结构：13 个产品语义 owner + 2 个维护闸门 + 1 个临时 renderer pin；计费日历、队列图片预算、canonical session 适配等 follow-up fix 仍归所属 owner。本轮历史栈 25 个提交重放为 24 个，单独的 generated inventory 刷新已折叠进维护闸门；准确线性提交数以本文给出的 `git log` 命令为准。
 - 同步入口：`scripts/jawa-upstream-sync.sh`
 - 临时 worktree：只允许位于仓库内 `.worktree/<task>`
 
@@ -620,6 +620,19 @@ Thought/Image 点击区域过大、hover 抖动、展开向下顶、选择文字
 | context | run loop | 删除已被上游移除的 contextual tool/todo guards，只保留完整 tool batch 后 maintenance。 |
 | maintenance | Desktop test、generated files、inventory、ratchet | 丢弃退役 recovery UI 的无效断言；其余生成物从当前源码重建。 |
 | billing | generated contract、ratchet | 通用 rate schedule 源码机械兼容；生成物和 baseline 从当前树重建。 |
+
+## 2026-09-16 v1.38.9 + main-v2 重放判定
+
+- 固定目标为 `703c310f5b69c5079fe23a796893c8e836ce90a1`，不在收口阶段继续追动中的 upstream。目标包含 v1.38.9 的 persistent shell、CDP browser 与 session reliability，并继续包含 append-only termination、retracted input ownership、ProjectTree recovery、Follow v2 和 canonical rename。
+- 原 25 个提交逐项 `range-diff` 到 24 个最终提交：13 个产品 owner、2 个维护 owner 和各 follow-up 顺序不变；`chore(sync): refresh generated inventory` 因前置维护提交已从最终源码重建同一结果而自然为空，没有形成重复 owner。
+- vision owner 只把 `ImageUnderstanding` sidecar 字段接入上游新 Controller close/finalize 边界，不带回旧 turn-loop。
+- CLI shell owner 保留用户确认的紧凑 footer：状态与模型组可见，半屏不常驻 `Shift+Tab/Ctrl+Y` 提示；上游已删除的 `ChatStatusYoloIdle` 不复活，YOLO 使用稳定短文案 `tools skipped`。
+- migration 同时保留上游 session header 校验与本地 legacy title backfill；已存在任何 `session/title` 事件（包括显式清空）时不覆盖用户选择。
+- canonical resume 同时保留上游 header-backed `CWD/ParentSessionID/Origin` 与本地 `SourcePath`，保留非阻塞 `Stat/enrichInfo` 与显式恢复所需的完整 `Get`；已导入 predecessor 被去重后，原 ID/路径仍作为 canonical successor 的恢复别名。inbox/jobs 目录继续交给 Session Service 派生。
+- canonical title 保持独立的可选 `SessionTitleLifecycle`，不得向上扩张 `IdentityLifecycle`；否则只实现身份生命周期的合法 adapter 会被误判成 legacy path controller，fork/open 等无关流程也会退化。
+- 上游 Service 现在由 host 持有 writer，`Controller.Close` 只释放 client binding。重启类和资源类测试已迁到 `Service.CloseAll/Shutdown` 或统一的 `newOwnedTestController`，不把生产生命周期退回 controller-owned writer。
+- generated inventory 从最终树重建为 784 项；Desktop host contract 的 JSON 与 TypeScript 输出也从同一最终树重建，覆盖 transcript、billing 和 background event 的新增字段；`repolint` baseline 从最终树重建为 1239 个 finding、439 个文件。各生成物均通过 current/clean 检查。
+- 完整门禁必须在本节对应提交之后重新执行；仅有 rebase 成功或局部测试通过不能交付。
 
 ## 每次追上游的执行协议
 

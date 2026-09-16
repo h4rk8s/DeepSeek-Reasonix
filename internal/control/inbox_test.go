@@ -163,7 +163,7 @@ func TestDeleteInboxItemWithdrawsUnconsumedSteer(t *testing.T) {
 func TestClearInboxAtomicallyRemovesRecoveredQueueAndUnpauses(t *testing.T) {
 	dir := t.TempDir()
 	session := filepath.Join(dir, "s.jsonl")
-	c := New(Options{SessionPath: session, SessionDir: dir, Sink: event.Discard})
+	c := newOwnedTestController(t, Options{SessionPath: session, SessionDir: dir, Sink: event.Discard})
 	var ids []string
 	for _, text := range []string{"first", "second", "third"} {
 		rec, err := c.EnqueueInbox(InboxRequest{Intent: sessioninbox.IntentSteer, Submit: text})
@@ -199,7 +199,7 @@ func TestClearInboxAtomicallyRemovesRecoveredQueueAndUnpauses(t *testing.T) {
 
 func TestClearInboxRetainsActivelyOwnedSteer(t *testing.T) {
 	dir := t.TempDir()
-	c := New(Options{SessionPath: filepath.Join(dir, "s.jsonl"), SessionDir: dir, Sink: event.Discard})
+	c := newOwnedTestController(t, Options{SessionPath: filepath.Join(dir, "s.jsonl"), SessionDir: dir, Sink: event.Discard})
 	queued, err := c.EnqueueInbox(InboxRequest{Submit: "clear me"})
 	if err != nil {
 		t.Fatal(err)

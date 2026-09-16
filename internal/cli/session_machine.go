@@ -269,36 +269,27 @@ func parseMachineTime(value string) time.Time {
 }
 
 func machineSessions(dir string, identityKey []byte) ([]machineSession, error) {
-	entries := localResumeEntries(dir, 0)
+	entries := mergedResumeEntries(dir, 0)
 	out := make([]machineSession, 0, len(entries))
 	for _, entry := range entries {
-		if entry.kind != resumeEntryLegacy {
-			var err error
-			entry, err = hydrateResumeEntry(context.Background(), entry)
-			if err != nil {
-				return nil, err
-			}
+		info := entry.session
+		turns := info.Turns
+		if !entry.target.canonical() && !info.CountsKnown {
+			_, turns = agent.SessionPreview(info.Path)
 		}
-		turns := entry.turns()
 		if turns == 0 {
 			continue
 		}
-		rawSessionID := entry.stored.SessionID
-		createdAt := entry.stored.CreatedAt
-		updatedAt := entry.stored.UpdatedAt
-		scope := "project"
+		rawSessionID := agent.BranchID(info.Path)
 		state := "idle"
-		recovered := false
-		switch entry.kind {
-		case resumeEntryLegacy:
-			info := entry.session
-			rawSessionID = agent.BranchID(info.Path)
-			createdAt = info.CreatedAt
-			updatedAt = info.ModTime
-			scope = info.Scope
-			if scope == "" {
-				scope = "global"
+		if entry.target.canonical() {
+			rawSessionID = entry.target.ref.SessionID
+			if service := cliSessionService(dir); service != nil {
+				if _, active := service.Runtime(entry.target.ref); active {
+					state = "active"
+				}
 			}
+		} else {
 			meta, ok, _ := agent.LoadBranchMeta(info.Path)
 			switch {
 			case agent.SessionLeaseHeld(info.Path):
@@ -308,22 +299,22 @@ func machineSessions(dir string, identityKey []byte) ([]machineSession, error) {
 			case info.Recovered:
 				state = "recovered"
 			}
-			recovered = info.Recovered
-		case resumeEntryCanonical:
-			if service := cliSessionServiceForRoot(filepath.Dir(entry.stored.Path)); service != nil {
-				if _, active := service.Runtime(entry.stored.Ref); active {
-					state = "active"
-				}
+		}
+		scope := info.Scope
+		if scope == "" {
+			scope = "project"
+			if !entry.target.canonical() {
+				scope = "global"
 			}
 		}
 		out = append(out, machineSession{
 			ID:        machineSessionIDWithKey(rawSessionID, identityKey),
-			CreatedAt: machineTime(createdAt),
-			UpdatedAt: machineTime(updatedAt),
+			CreatedAt: machineTime(info.CreatedAt),
+			UpdatedAt: machineTime(info.LastActivityAt),
 			Scope:     scope,
 			Turns:     turns,
 			State:     state,
-			Recovered: recovered,
+			Recovered: info.Recovered,
 		})
 	}
 	sort.SliceStable(out, func(i, j int) bool {

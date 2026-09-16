@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -25,7 +26,8 @@ func (m *chatTUI) runRenameCommand(input string) {
 	sessions := mergedResumeEntries(m.ctrl.SessionDir(), resumeListCap)
 	title := ""
 	targetPath := ""
-	var targetCurrent control.IdentityLifecycle
+	var targetCurrent control.SessionTitleLifecycle
+	var targetStored *resumeEntry
 
 	// Check if the first arg after /rename is a session index (a number).
 	idx, err := strconv.Atoi(args[1])
@@ -37,17 +39,21 @@ func (m *chatTUI) runRenameCommand(input string) {
 		}
 		picked := sessions[idx-1]
 		if picked.target.canonical() {
-			m.notice("rename: final-format sessions are renamed from the session title API, not the legacy sidecar")
-			return
+			if resumeEntryIsActive(m.ctrl, picked) {
+				targetCurrent, _ = m.ctrl.(control.SessionTitleLifecycle)
+			} else {
+				targetStored = &picked
+			}
+		} else {
+			targetPath = picked.session.Path
 		}
-		targetPath = picked.session.Path
 		title = strings.TrimSpace(strings.TrimPrefix(input, args[0]+" "+args[1]))
 	} else {
 		// "/rename <new title>" -- rename the current session.
 		identity, identityOK := m.ctrl.(control.IdentityLifecycle)
 		if identityOK {
 			if _, active := identity.SessionRef(); active {
-				targetCurrent = identity
+				targetCurrent, _ = m.ctrl.(control.SessionTitleLifecycle)
 			}
 		}
 		if targetCurrent == nil {
@@ -66,7 +72,14 @@ func (m *chatTUI) runRenameCommand(input string) {
 	}
 
 	var renameErr error
-	if targetCurrent != nil {
+	if targetStored != nil {
+		service := cliSessionServiceForRoot(filepath.Dir(targetStored.session.Path))
+		if service == nil {
+			renameErr = fmt.Errorf("canonical session service is unavailable")
+		} else {
+			renameErr = service.SetTitle(context.Background(), targetStored.target.ref, title)
+		}
+	} else if targetCurrent != nil {
 		renameErr = targetCurrent.SetSessionTitle(context.Background(), title)
 	} else {
 		renameErr = agent.RenameSession(targetPath, title)
@@ -75,7 +88,7 @@ func (m *chatTUI) runRenameCommand(input string) {
 		m.notice("rename: " + renameErr.Error())
 		return
 	}
-	if targetCurrent != nil || targetPath == m.ctrl.SessionPath() {
+	if targetCurrent != nil || (targetStored != nil && resumeEntryIsActive(m.ctrl, *targetStored)) || targetPath == m.ctrl.SessionPath() {
 		m.syncWindowTitle()
 	}
 
