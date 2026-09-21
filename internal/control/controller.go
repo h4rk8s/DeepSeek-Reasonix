@@ -4496,7 +4496,10 @@ func (c *Controller) SetSkillEnabled(name string, enabled bool) error {
 	// settings) don't drop this toggle or lose their own fields.
 	unlock := config.LockUserConfigEdits()
 	defer unlock()
-	cfg := config.LoadForEdit(config.UserConfigPath())
+	cfg, err := config.LoadForEditReadOnlyStrict(config.UserConfigPath())
+	if err != nil {
+		return fmt.Errorf("load config for skill edit: %w", err)
+	}
 	if err := cfg.SetSkillEnabled(name, enabled); err != nil {
 		return err
 	}
@@ -5059,6 +5062,10 @@ func (c *Controller) finalizeControllerClose() {
 		if c.inbox.store != nil {
 			c.inbox.store.Close()
 			c.inbox.store = nil
+		}
+		if c.inbox.tempLease != nil {
+			c.inbox.tempLease.Release()
+			c.inbox.tempLease = nil
 		}
 		c.inbox.mu.Unlock()
 		c.inbox.scanMu.Unlock()

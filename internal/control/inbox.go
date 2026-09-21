@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"reasonix/internal/event"
+	"reasonix/internal/session"
 	"reasonix/internal/sessioninbox"
 	"reasonix/internal/sessiontemp"
-	"reasonix/internal/store"
 )
 
 // TurnAdmission is the exported classification of TrySubmitInboxItem /
@@ -213,39 +213,34 @@ func (c *Controller) bindInboxStoreNotifications(st *sessioninbox.Store) {
 	})
 }
 
-// inboxBinding selects identity and storage ownership from the same runtime.
-// An import/display path can coexist with a canonical binding during startup;
-// it must not turn the canonical locator into a filesystem path.
-func (c *Controller) inboxBinding() (locator string, temporary bool) {
-	if _, runtime, exclusive := c.v3Binding(); exclusive {
-		if runtime == nil {
-			return "", true
+func (c *Controller) inboxPath() (string, error) {
+	if service, runtime, exclusive := c.v3Binding(); exclusive && service != nil && runtime != nil {
+		path, err := service.InboxDirectory(runtime.Ref())
+		if errors.Is(err, session.ErrRuntimeStateUnsupported) {
+			return "", nil
 		}
-		return "session-id:" + runtime.Ref().SessionID, true
+		return path, err
 	}
-	return c.SessionPath(), false
-}
-
-// inboxDirectoryLocked retains the existing process-local storage lifetime.
-// c.inbox.mu must be held by the caller.
-func (c *Controller) inboxDirectoryLocked(path string, temporary bool) (string, error) {
-	if temporary {
-		if c.inbox.tempLease == nil {
-			lease, err := c.sessionTemp.Acquire()
-			if err != nil {
-				return "", fmt.Errorf("open runtime inbox: %w", err)
-			}
-			c.inbox.tempLease = lease
-		}
-		return store.SessionInboxDir(filepath.Join(c.inbox.tempLease.Dir(), "runtime-inbox.jsonl")), nil
-	}
-	return store.SessionInboxDir(path), nil
+	return c.SessionPath(), nil
 }
 
 func (c *Controller) ensureInbox() (*sessioninbox.Store, error) {
-	path, temporary := c.inboxBinding()
+	path, err := c.inboxPath()
+	if err != nil {
+		return nil, fmt.Errorf("open canonical runtime inbox: %w", err)
+	}
 	c.inbox.mu.Lock()
 	defer c.inbox.mu.Unlock()
+	if path == "" && c.sessionEngineEnabled() {
+		if c.inbox.tempLease == nil {
+			lease, err := c.sessionTemp.Acquire()
+			if err != nil {
+				return nil, fmt.Errorf("open v3 runtime inbox: %w", err)
+			}
+			c.inbox.tempLease = lease
+		}
+		path = filepath.Join(c.inbox.tempLease.Dir(), "runtime-inbox.jsonl")
+	}
 	if path == "" {
 		return nil, fmt.Errorf("inbox requires a session identity")
 	}
@@ -259,11 +254,7 @@ func (c *Controller) ensureInbox() (*sessioninbox.Store, error) {
 		c.inbox.store.Close()
 		c.inbox.store = nil
 	}
-	dir, err := c.inboxDirectoryLocked(path, temporary)
-	if err != nil {
-		return nil, err
-	}
-	st, err := sessioninbox.OpenAt(path, dir, sessioninbox.Limits{})
+	st, err := sessioninbox.Open(path, sessioninbox.Limits{})
 	if err != nil {
 		return nil, err
 	}
@@ -285,10 +276,14 @@ func (c *Controller) ensureInbox() (*sessioninbox.Store, error) {
 // rebindInbox opens the inbox for the current session path. Safe across
 // NewSession/Resume/SetSessionPath; does not copy items on fork.
 func (c *Controller) rebindInbox() {
-	path, temporary := c.inboxBinding()
+	path, pathErr := c.inboxPath()
 	c.inbox.mu.Lock()
 	defer c.inbox.mu.Unlock()
 	if c.inbox.closed {
+		return
+	}
+	if pathErr != nil {
+		slog.Warn("controller: resolve canonical runtime inbox", "err", pathErr)
 		return
 	}
 	if c.inbox.store != nil {
@@ -305,15 +300,19 @@ func (c *Controller) rebindInbox() {
 		c.inbox.tempLease.Release()
 		c.inbox.tempLease = nil
 	}
+	if path == "" && c.sessionEngineEnabled() {
+		lease, err := c.sessionTemp.Acquire()
+		if err != nil {
+			slog.Warn("controller: open v3 runtime inbox", "err", err)
+			return
+		}
+		c.inbox.tempLease = lease
+		path = filepath.Join(lease.Dir(), "runtime-inbox.jsonl")
+	}
 	if path == "" {
 		return
 	}
-	dir, err := c.inboxDirectoryLocked(path, temporary)
-	if err != nil {
-		slog.Warn("controller: open runtime inbox", "err", err)
-		return
-	}
-	st, err := sessioninbox.OpenAt(path, dir, sessioninbox.Limits{})
+	st, err := sessioninbox.Open(path, sessioninbox.Limits{})
 	if err != nil {
 		slog.Warn("controller: open session inbox", "err", err, "path", path)
 		return
@@ -379,18 +378,40 @@ func (c *Controller) UpdateInboxItem(id, display, raw, submit string) (sessionin
 	submit = strings.TrimSpace(firstNonEmptyStr(submit, raw, display))
 	display = firstNonEmptyStr(display, submit)
 	raw = firstNonEmptyStr(raw, submit)
-	meta, previous, err := st.ReadItem(id)
+	_, previous, err := st.ReadItem(id)
 	if err != nil {
 		return sessioninbox.InboxItemMeta{}, err
 	}
-	env := previous
-	env.DisplayText, env.RawText, env.SubmitText = display, raw, submit
+	env := sessioninbox.PromptEnvelope{
+		DisplayText:          display,
+		RawText:              raw,
+		SubmitText:           submit,
+		Format:               previous.Format,
+		ImageInputs:          previous.ImageInputs,
+		ImageSourceRefs:      maps.Clone(previous.ImageSourceRefs),
+		AttachmentIdentities: previous.AttachmentIdentities,
+		Source:               previous.Source,
+		ExplicitRefs:         append([]string(nil), previous.ExplicitRefs...),
+		Invocation:           previous.Invocation,
+		Invocations:          append([]sessioninbox.StructuredInvocation(nil), previous.Invocations...),
+		Attachments:          append([]string(nil), previous.Attachments...),
+		Extra:                maps.Clone(previous.Extra),
+	}
 	if err := c.freezeInboxEnvelopeReferences(context.Background(), &env, submit, env.ExplicitRefs); err != nil {
 		return sessioninbox.InboxItemMeta{}, err
 	}
-	updated, err := st.UpdateItemIfVersion(id, env, sessioninbox.ContentVersion(meta))
+	updated, err := st.UpdateItem(id, env)
 	if err != nil {
 		return sessioninbox.InboxItemMeta{}, err
+	}
+	if len(env.ReferenceErrors) > 0 {
+		reason := strings.Join(env.ReferenceErrors, "; ")
+		if err := st.SetState(id, sessioninbox.StateBlocked, reason); err != nil {
+			return sessioninbox.InboxItemMeta{}, err
+		}
+		_ = st.SetPaused(true)
+		updated.State = sessioninbox.StateBlocked
+		updated.BlockReason = reason
 	}
 	return updated, nil
 }
@@ -402,7 +423,7 @@ func (c *Controller) AppendInboxItem(id, text, idempotency string, extra map[str
 	if err != nil {
 		return sessioninbox.InboxItemMeta{}, err
 	}
-	meta, previous, err := st.ReadItem(id)
+	_, previous, err := st.ReadItem(id)
 	if err != nil {
 		return sessioninbox.InboxItemMeta{}, err
 	}
@@ -433,7 +454,20 @@ func (c *Controller) AppendInboxItem(id, text, idempotency string, extra map[str
 		Source:      previous.Source,
 		Extra:       maps.Clone(extra),
 	}
-	return st.UpdateItemWithIdempotencyIfVersion(id, env, idempotency, aliasEnv, sessioninbox.ContentVersion(meta))
+	updated, err := st.UpdateItemWithIdempotency(id, env, idempotency, aliasEnv)
+	if err != nil {
+		return sessioninbox.InboxItemMeta{}, err
+	}
+	if len(env.ReferenceErrors) > 0 {
+		reason := strings.Join(env.ReferenceErrors, "; ")
+		if err := st.SetState(id, sessioninbox.StateBlocked, reason); err != nil {
+			return sessioninbox.InboxItemMeta{}, err
+		}
+		_ = st.SetPaused(true)
+		updated.State = sessioninbox.StateBlocked
+		updated.BlockReason = reason
+	}
+	return updated, nil
 }
 
 func (c *Controller) DeleteInboxItem(id string) error {
@@ -577,16 +611,15 @@ func (c *Controller) TrySubmitInboxItem(id string) (sessioninbox.InboxReceipt, e
 		return sessioninbox.InboxReceipt{}, materializeErr
 	}
 	if block != "" {
-		if err := st.TransitionPrepared(id, sessioninbox.ContentVersion(meta), sessioninbox.StateBlocked, block, true); err != nil {
-			return sessioninbox.InboxReceipt{}, err
-		}
+		_ = st.SetState(id, sessioninbox.StateBlocked, block)
+		_ = st.SetPaused(true)
 		return sessioninbox.InboxReceipt{}, fmt.Errorf("%w: %s", sessioninbox.ErrInvalidState, block)
 	}
 	// Persist the in-flight state before admission. Active tracking is installed
 	// only after Controller admission is reserved and before the turn can finish.
 	c.inbox.trackAdmission(id)
 	defer c.inbox.untrackAdmission(id)
-	if err := st.TransitionPrepared(id, sessioninbox.ContentVersion(meta), sessioninbox.StateRunning, "", true); err != nil {
+	if err := st.ClaimItem(id); err != nil {
 		return sessioninbox.InboxReceipt{}, err
 	}
 	c.inbox.mu.Lock()

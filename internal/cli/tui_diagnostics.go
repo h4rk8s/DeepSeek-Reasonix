@@ -30,9 +30,10 @@ const (
 // bounded recovery path rather than turning a successful save into Kill.
 const watchdogKillFallbackDelay = 12 * time.Second
 
-// Watchdog lifecycle phases. Only booting (no first Update) and running
-// (active turn / shell with no event-loop heartbeat) can escalate to kill.
-// Idle never terminates the process — that was the #7809 false-kill path.
+// Watchdog lifecycle phases. Booting (no first Update) may still escalate to a
+// kill. A running stall is diagnostic-only after one cancellation: terminal
+// output backpressure can block the renderer and event loop together, so lack
+// of UI heartbeats is not proof that the process is unrecoverable.
 type tuiWatchdogPhase int
 
 const (
@@ -75,7 +76,7 @@ type watchdogEscalation struct {
 // tuiDiagnostics owns diagnostics for the interactive terminal UI. Logs and
 // plugin stderr use a private file; typed notices remain user-facing if it
 // cannot be created. The watchdog uses booting/idle/running/closed: idle never
-// kills, while running stalls escalate through dump, cancel, grace, and kill.
+// kills, while running stalls escalate through dump and one cancel only.
 type tuiDiagnostics struct {
 	previous *slog.Logger
 	logger   *slog.Logger
@@ -404,25 +405,20 @@ func (d *tuiDiagnostics) onTick(now time.Time) {
 		return
 	}
 
-	// Grace window follow-up: same generation still running after cancel.
-	// Wait until the deadline; only then hard-kill if there is still no heartbeat.
+	// A renderer blocked on its PTY can also block TUI heartbeats. After the
+	// cancellation grace period, preserve the process and durable session for
+	// the terminal to drain or for an explicit user interrupt.
 	if phase == watchdogRunning && escalatedGen == gen && gen != 0 && !cancelDeadline.IsZero() {
 		if now.Before(cancelDeadline) {
 			d.mu.Unlock()
 			return
 		}
-		// Deadline reached. Re-check heartbeat under the same lock before kill.
-		if now.Sub(d.lastHeartbeat) >= tuiWatchdogStall && !(d.escalation.hardKillIssued && d.escalation.hardKilledGen == gen) {
-			d.escalation.hardKillIssued = true
-			d.escalation.hardKilledGen = gen
+		if now.Sub(d.lastHeartbeat) >= tuiWatchdogStall {
 			d.escalation.cancelDeadline = time.Time{}
-			diag := d.formatDiagLocked(now, "watchdog_hard_kill")
+			diag := d.formatDiagLocked(now, "watchdog_running_stall_preserved")
 			d.mu.Unlock()
-			d.killCalls.Add(1)
-			d.doDump("watchdog_hard_kill")
 			d.writeLine(diag)
 			d.Sync()
-			d.doKill()
 			return
 		}
 		// Heartbeat recovered (or phase raced) before hard-kill — clear grace.

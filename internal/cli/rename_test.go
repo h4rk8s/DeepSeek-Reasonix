@@ -116,7 +116,7 @@ func TestRenameCurrentSessionUpdatesTerminalWindowTitle(t *testing.T) {
 	if err := os.WriteFile(sessionPath, []byte("{}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	ctrl := control.New(control.Options{
+	ctrl := newOwnedTestController(t, control.Options{
 		SessionDir:  dir,
 		SessionPath: sessionPath,
 		Label:       "test",
@@ -155,7 +155,7 @@ func TestRenameRunsImmediatelyWhileTurnRunning(t *testing.T) {
 	if err := os.WriteFile(sessionPath, []byte("{}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	ctrl := control.New(control.Options{
+	ctrl := newOwnedTestController(t, control.Options{
 		SessionDir:  dir,
 		SessionPath: sessionPath,
 		Label:       "test",

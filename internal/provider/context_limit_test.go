@@ -2,6 +2,7 @@ package provider
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"testing"
 )
@@ -14,6 +15,18 @@ func TestParseContextLimitErrorJSONAndEnglish(t *testing.T) {
 	}
 	if errors.Unwrap(got) == nil {
 		t.Fatal("Unwrap must return the original APIError")
+	}
+}
+
+func TestAsContextLimitErrorNormalizesWrappedAPIError(t *testing.T) {
+	body := `{"error":{"message":"This model's maximum context length is 1048576 tokens. However, you requested 1109599 tokens (1101407 in the messages, 8192 in the completion). Please reduce the length of the messages or completion.","type":"invalid_request_error","param":null,"code":"invalid_request_error"}}`
+	err := fmt.Errorf("summary stream failed: %w", &APIError{Status: 400, Body: body})
+	got := AsContextLimitError(err)
+	if got == nil {
+		t.Fatal("wrapped DeepSeek APIError was not normalized")
+	}
+	if got.WindowTokens != 1048576 || got.RequestedTokens != 1109599 || got.PromptTokens != 1101407 || got.CompletionTokens != 8192 {
+		t.Fatalf("parsed overflow = %+v", got)
 	}
 }
 

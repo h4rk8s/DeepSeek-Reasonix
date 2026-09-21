@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -98,8 +99,8 @@ func TestTerminalSessionOperationCannotRegressToCancelling(t *testing.T) {
 	if m.maintenance != nil {
 		t.Fatalf("late cancelling event reactivated maintenance: %+v", m.maintenance)
 	}
-	if got := m.transcript[m.maintenanceTranscriptIdx]; got != terminalCard {
-		t.Fatalf("late cancelling event replaced terminal card:\n%s", got)
+	if got := m.transcript[m.maintenanceTranscriptIdx]; !reflect.DeepEqual(got, terminalCard) {
+		t.Fatalf("late cancelling event replaced terminal card:\n%s", got.rendered)
 	}
 }
 
@@ -154,8 +155,8 @@ func TestSessionOperationUpdatesOneCompactionCard(t *testing.T) {
 	}
 	card := m.transcript[cardIndex]
 	for _, want := range []string{"retained summary", "12.0K", "3.0K"} {
-		if !strings.Contains(card, want) {
-			t.Fatalf("completed card missing %q:\n%s", want, card)
+		if !strings.Contains(card.rendered, want) {
+			t.Fatalf("completed card missing %q:\n%s", want, card.rendered)
 		}
 	}
 }
@@ -163,8 +164,7 @@ func TestSessionOperationUpdatesOneCompactionCard(t *testing.T) {
 func TestEscCancelsMaintenanceOnceAndPreservesDraft(t *testing.T) {
 	ctrl := &maintenanceCLIController{SessionAPI: newOwnedTestController(t, control.Options{})}
 	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 80)
-	m.input.SetValue("keep this draft")
-	m.pastedBlocks = []pastedBlock{{label: "[paste #1]", text: "payload"}}
+	installTestComposerParts(t, &m, "keep [paste #1] draft", pastedBlock{label: "[paste #1]", payload: "payload"})
 
 	next, _ := m.Update(maintenanceEvent("op-1", "running", "running"))
 	m = next.(chatTUI)
@@ -174,10 +174,10 @@ func TestEscCancelsMaintenanceOnceAndPreservesDraft(t *testing.T) {
 	if ctrl.cancelCalls != 1 {
 		t.Fatalf("Esc cancel calls = %d, want 1", ctrl.cancelCalls)
 	}
-	if got := m.input.Value(); got != "keep this draft" {
+	if got := m.input.Value(); got != "keep [paste #1] draft" {
 		t.Fatalf("Esc changed maintenance draft to %q", got)
 	}
-	if len(m.pastedBlocks) != 1 || m.pastedBlocks[0].text != "payload" {
+	if len(m.pastedBlocks) != 1 || m.pastedBlocks[0].payload != "payload" {
 		t.Fatalf("Esc changed maintenance paste state: %+v", m.pastedBlocks)
 	}
 	if m.maintenance == nil || m.maintenance.Activity != "cancelling" {
@@ -189,7 +189,7 @@ func TestEscCancelsMaintenanceOnceAndPreservesDraft(t *testing.T) {
 	if ctrl.cancelCalls != 1 {
 		t.Fatalf("repeated Esc cancel calls = %d, want idempotent 1", ctrl.cancelCalls)
 	}
-	if got := m.input.Value(); got != "keep this draft" {
+	if got := m.input.Value(); got != "keep [paste #1] draft" {
 		t.Fatalf("repeated Esc changed maintenance draft to %q", got)
 	}
 }

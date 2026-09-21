@@ -67,9 +67,9 @@ func (c *Controller) EnqueueInboxContext(ctx context.Context, req InboxRequest) 
 	if intent != sessioninbox.IntentSteer {
 		intent = sessioninbox.IntentFollowup
 	}
-	sessionID := agent.BranchID(st.SessionPath())
-	if id, canonical := strings.CutPrefix(st.SessionPath(), "session-id:"); canonical {
-		sessionID = id
+	sessionID := strings.TrimSpace(c.SessionID())
+	if sessionID == "" {
+		sessionID = agent.BranchID(st.SessionPath())
 	}
 	rec, err := st.Enqueue(sessioninbox.EnqueueRequest{
 		Intent:      intent,

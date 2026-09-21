@@ -276,6 +276,13 @@ func AsContextLimitError(err error) *ContextLimitError {
 	if err != nil && errors.As(err, &limit) {
 		return limit
 	}
+	// Compatibility providers and streamed failures may still surface a bare
+	// APIError. Normalize at the consumption boundary so recovery does not
+	// depend on which transport path produced the provider response.
+	var apiErr *APIError
+	if err != nil && errors.As(err, &apiErr) {
+		return ParseContextLimitError(apiErr)
+	}
 	return nil
 }
 

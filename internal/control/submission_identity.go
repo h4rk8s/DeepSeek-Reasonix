@@ -397,9 +397,8 @@ func (c *Controller) prepareSubmissionImagesContext(ctx context.Context, req Sub
 		}
 		sources = append(sources, attachment.Source{Existing: ref, DisplayName: ref.DisplayName, Path: key})
 	}
-	// Structured attachments promise image understanding for this turn. Legacy
-	// @.reasonix/attachments paths are also frozen below, but a text-only model may
-	// retain them as tool-readable references without a vision fallback.
+	// Structured attachments promise image understanding. Legacy path-based
+	// images are frozen below but remain tool-readable on text-only models.
 	prepared.requiresImageUnderstanding = len(sources) > 0
 	for _, source := range c.explicitImageSources(req.Input) {
 		if frozen := req.frozenSources[normalizedImageReferencePath(source.Path)]; frozen != nil {
@@ -416,10 +415,10 @@ func (c *Controller) prepareSubmissionImagesContext(ctx context.Context, req Sub
 			sources = append(sources, source)
 		}
 	}
+	sources = c.appendOrdinaryImageSources(req.Input, sources)
 	if len(sources) == 0 {
 		return prepared, nil
 	}
-	sources = c.appendOrdinaryImageSources(req.Input, sources)
 	batch, err := svc.PrepareBatch(ctx, sources)
 	if err != nil {
 		return preparedImageReferences{}, imageFailuresFromAttachment(err)

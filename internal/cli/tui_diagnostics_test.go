@@ -261,7 +261,7 @@ func TestWatchdogRunningElapsedHeartbeatPreventsKill(t *testing.T) {
 	}
 }
 
-func TestWatchdogRunningStallEscalatesDumpCancelThenKill(t *testing.T) {
+func TestWatchdogRunningStallDumpsAndCancelsWithoutKillingProcess(t *testing.T) {
 	clock := &fakeWatchClock{now: time.Unix(1_700_000_000, 0)}
 	d := newWatchdogForTest(t, clock)
 	d.NoteBooted()
@@ -300,16 +300,17 @@ func TestWatchdogRunningStallEscalatesDumpCancelThenKill(t *testing.T) {
 		t.Fatalf("killCalls during grace = %d, want 0", d.killCalls.Load())
 	}
 
-	// Grace expires, still no heartbeat → hard-kill once.
+	// Grace expires, still no heartbeat: preserve the TUI process. PTY output
+	// backpressure can block both rendering and heartbeat delivery.
 	clock.now = clock.now.Add(200 * time.Millisecond)
 	d.onTick(clock.now)
-	if d.killCalls.Load() != 1 {
-		t.Fatalf("killCalls after grace = %d, want 1", d.killCalls.Load())
+	if d.killCalls.Load() != 0 {
+		t.Fatalf("killCalls after grace = %d, want 0", d.killCalls.Load())
 	}
-	// Repeat tick does not re-kill.
+	// Repeat ticks stay quiet and do not re-cancel.
 	clock.now = clock.now.Add(time.Second)
 	d.onTick(clock.now)
-	if d.killCalls.Load() != 1 || d.cancelCalls.Load() != 1 {
+	if d.killCalls.Load() != 0 || d.cancelCalls.Load() != 1 {
 		t.Fatalf("duplicate escalation: cancel=%d kill=%d", d.cancelCalls.Load(), d.killCalls.Load())
 	}
 }
@@ -337,7 +338,7 @@ func TestWatchdogGraceHeartbeatAbortsKill(t *testing.T) {
 }
 
 // TestWatchdogCancelOncePerGeneration pins "one Cancel per Turn": after a grace
-// abort via heartbeat, a later stall on the same generation may dump/kill but
+// abort via heartbeat, a later stall on the same generation may dump again but
 // must not invoke Cancel() again.
 func TestWatchdogCancelOncePerGeneration(t *testing.T) {
 	clock := &fakeWatchClock{now: time.Unix(1_700_000_000, 0)}
@@ -368,11 +369,11 @@ func TestWatchdogCancelOncePerGeneration(t *testing.T) {
 	if d.dumpCalls.Load() != 2 {
 		t.Fatalf("second stall dumpCalls = %d, want 2 (re-dump allowed)", d.dumpCalls.Load())
 	}
-	// Grace after second escalation still hard-kills once.
+	// Grace after the second escalation still preserves the process.
 	clock.now = clock.now.Add(tuiWatchdogCancelGrace)
 	d.onTick(clock.now)
-	if d.killCalls.Load() != 1 {
-		t.Fatalf("killCalls after second grace = %d, want 1", d.killCalls.Load())
+	if d.killCalls.Load() != 0 {
+		t.Fatalf("killCalls after second grace = %d, want 0", d.killCalls.Load())
 	}
 }
 
@@ -588,16 +589,9 @@ func TestWatchdogKillRequestsGracefulShutdownFirst(t *testing.T) {
 		completion.complete()
 	}
 	d.killFn = func() { kills++ }
-	d.NoteBooted()
-	d.NoteRunning(func() {})
-
-	// Real stall: escalate, cancel, grace, kill decision.
-	clock.now = clock.now.Add(tuiWatchdogStall)
-	d.onTick(clock.now)
-	clock.now = clock.now.Add(time.Second)
-	d.onTick(clock.now)
-	clock.now = clock.now.Add(tuiWatchdogCancelGrace)
-	d.onTick(clock.now)
+	// The kill mechanism remains available for a boot stall; running stalls do
+	// not invoke it because UI silence can be terminal output backpressure.
+	d.doKill()
 
 	if shutdowns != 1 {
 		t.Fatalf("graceful shutdown requests = %d, want 1", shutdowns)

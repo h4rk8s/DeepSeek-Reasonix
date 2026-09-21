@@ -75,11 +75,9 @@ func (p *denseTokenizerProvider) Stream(_ context.Context, req provider.Request)
 	if prompt+completion > p.window {
 		p.overflows++
 		body := fmt.Sprintf(deepSeekOverflowBody, p.window, prompt+completion, prompt, completion)
-		limit := provider.ParseContextLimitError(&provider.APIError{Provider: p.Name(), Status: 400, Body: body})
-		if limit == nil {
-			return nil, fmt.Errorf("test body did not parse as a context limit: %s", body)
-		}
-		return nil, limit
+		// Production compatibility providers may return the raw API failure.
+		// Recovery must normalize it instead of requiring a pre-wrapped error.
+		return nil, &provider.APIError{Provider: p.Name(), Status: 400, Body: body}
 	}
 	text := "ok"
 	if isSummaryRequest(req) {

@@ -3666,7 +3666,13 @@ func TestQueueIndicatorRendering(t *testing.T) {
 
 	m = newInboxTestChatTUI(t)
 	m.state = tuiRunning
-	m.seedInbox("see @.reasonix/attachments/clipboard-20260710-130309.438441-000001.png")
+	if _, err := m.ctrl.EnqueueInbox(control.InboxRequest{
+		Display: "see @.reasonix/attachments/clipboard-20260710-130309.438441-000001.png",
+		Submit:  "see image",
+		Source:  "test",
+	}); err != nil {
+		t.Fatal(err)
+	}
 	m.queueEditCursor = -1
 	qi = m.renderQueueIndicator()
 	if strings.Contains(qi, "@.reasonix/attachments") {

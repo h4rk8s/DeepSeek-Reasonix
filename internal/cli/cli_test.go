@@ -523,13 +523,22 @@ func TestParsePermissionModeClaudeAliases(t *testing.T) {
 		"acceptEdits":       {approval: control.ToolApprovalWorkspaceWrite},
 		"dontAsk":           {approval: control.ToolApprovalReadOnly},
 		"plan":              {approval: control.ToolApprovalAsk, plan: true},
-		"bypassPermissions": {approval: control.ToolApprovalWorkspaceWrite},
+		"bypassPermissions": {approval: control.ToolApprovalDangerFullAccess},
+		"yolo":              {approval: control.ToolApprovalDangerFullAccess},
 	}
 	for input, want := range tests {
 		got, err := parsePermissionMode(input)
 		if err != nil || !reflect.DeepEqual(got, want) {
 			t.Errorf("parsePermissionMode(%q) = (%+v, %v), want %+v", input, got, err, want)
 		}
+	}
+}
+
+func TestLegacyYoloEnablesDangerFullAccess(t *testing.T) {
+	ctrl := newOwnedTestController(t, control.Options{})
+	applyLegacyYolo(ctrl, true)
+	if got := ctrl.ToolApprovalMode(); got != control.ToolApprovalDangerFullAccess {
+		t.Fatalf("legacy --yolo mode = %q, want %q", got, control.ToolApprovalDangerFullAccess)
 	}
 }
 

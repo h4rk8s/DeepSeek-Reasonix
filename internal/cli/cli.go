@@ -393,8 +393,10 @@ func parsePermissionMode(value string) (cliPermissionMode, error) {
 		return cliPermissionMode{approval: control.ToolApprovalDangerFullAccess}, nil
 	case "ask", "manual":
 		return cliPermissionMode{approval: control.ToolApprovalReadOnly}, nil
-	case "auto", "bypasspermissions", "bypass-permissions", "yolo":
+	case "auto":
 		return cliPermissionMode{approval: control.ToolApprovalWorkspaceWrite}, nil
+	case "bypasspermissions", "bypass-permissions", "yolo":
+		return cliPermissionMode{approval: control.ToolApprovalDangerFullAccess}, nil
 	case "acceptedits", "accept-edits":
 		return cliPermissionMode{approval: control.ToolApprovalWorkspaceWrite}, nil
 	case "dontask", "dont-ask":
@@ -422,6 +424,12 @@ func applyPermissionMode(ctrl *control.Controller, mode cliPermissionMode) {
 	}
 	ctrl.SetToolApprovalMode(mode.approval)
 	ctrl.SetPlanMode(mode.plan)
+}
+
+func applyLegacyYolo(ctrl *control.Controller, enabled bool) {
+	if ctrl != nil && enabled {
+		ctrl.SetToolApprovalMode(control.ToolApprovalDangerFullAccess)
+	}
 }
 
 // resolveCLISessionDir returns the session dir for CLI invocations. When the
@@ -1025,7 +1033,7 @@ func chatREPL(args []string, version string) int {
 	fs.Lookup("resume").NoOptDefVal = resumePickerSentinel
 	copySession := fs.Bool("copy", false, "with --resume/--continue: duplicate the selected session and continue in the copy (escape hatch when the original is held by another Reasonix process)")
 	legacyYolo := fs.Bool("dangerously-skip-permissions", false, "deprecated: use --permission-mode danger-full-access")
-	fs.BoolVar(legacyYolo, "yolo", false, "deprecated alias; migrates to workspace-write")
+	fs.BoolVar(legacyYolo, "yolo", false, "deprecated alias for --permission-mode danger-full-access")
 	_ = fs.MarkHidden("dangerously-skip-permissions")
 	_ = fs.MarkHidden("yolo")
 	dir := fs.String("dir", "", "change to this directory first (project root); config, sandbox and file tools resolve from here")
@@ -1239,11 +1247,7 @@ func chatREPL(args []string, version string) int {
 	// task tool) keep their headless gate from setup — no UI to prompt through.
 	ctrl.EnableInteractiveApproval()
 	applyPermissionMode(ctrl, permissions)
-	// Legacy bypass flags migrate conservatively to the workspace preset. Full
-	// access is only reachable through an explicit canonical preset selection.
-	if *legacyYolo {
-		ctrl.SetToolApprovalMode(control.ToolApprovalWorkspaceWrite)
-	}
+	applyLegacyYolo(ctrl, *legacyYolo)
 
 	m := newChatTUI(ctrl, missing, eventCh, termW)
 	m.diagnostics = diagnostics

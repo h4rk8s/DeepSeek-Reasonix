@@ -25,6 +25,11 @@ func (s *Service) SetTitle(ctx context.Context, ref SessionRef, title string) er
 
 var ErrSessionTitleChanged = errors.New("session title changed")
 
+// ErrRuntimeStateUnsupported means the persistence implementation cannot
+// provide a durable directory for runtime-owned sidecars. Callers may use a
+// process-local fallback; other runtime-directory errors must remain fatal.
+var ErrRuntimeStateUnsupported = errors.New("session: persistence does not support durable runtime state")
+
 // SetTitleIfSequence checks and commits against the sequence of the latest
 // session/title event. Same-value manual writes and A→B→A both advance this
 // revision, so a delayed generated title cannot overwrite them.
@@ -101,7 +106,7 @@ func (s *Service) runtimeDirectory(ref SessionRef, component string) (string, er
 	}
 	filesystem, ok := s.persistence.(*FilesystemPersistence)
 	if !ok {
-		return "", errors.New("session: persistence does not support durable runtime state")
+		return "", ErrRuntimeStateUnsupported
 	}
 	dir, err := filesystem.sessionDir(ref.SessionID, true)
 	if err != nil {

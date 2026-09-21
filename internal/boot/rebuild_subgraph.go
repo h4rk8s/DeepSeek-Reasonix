@@ -3,6 +3,7 @@ package boot
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"reasonix/internal/config"
@@ -285,6 +286,9 @@ func awaitSidecarsReady(ctx context.Context, mgr *sidecar.Manager) error {
 func controllerSessionID(c *control.Controller) string {
 	if c == nil {
 		return ""
+	}
+	if id := strings.TrimSpace(c.SessionID()); id != "" {
+		return id
 	}
 	if p := c.SessionPath(); p != "" {
 		return p

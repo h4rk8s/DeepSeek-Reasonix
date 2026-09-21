@@ -634,6 +634,17 @@ Thought/Image 点击区域过大、hover 抖动、展开向下顶、选择文字
 - generated inventory 从最终树重建为 784 项；Desktop host contract 的 JSON 与 TypeScript 输出也从同一最终树重建，覆盖 transcript、billing 和 background event 的新增字段；`repolint` baseline 从最终树重建为 1239 个 finding、439 个文件。各生成物均通过 current/clean 检查。
 - 完整门禁必须在本节对应提交之后重新执行；仅有 rebase 成功或局部测试通过不能交付。
 
+## 2026-09-21 main-v2 运行期回归修复
+
+- CLI shell owner 修正 legacy `--yolo` 映射：`yolo`、`bypasspermissions` 和 `bypass-permissions` 都进入 `danger-full-access`，不得降级成 `workspace-write`；footer 因此显示 `YOLO · tools skipped`，不是 `Workspace`。
+- CLI shell owner 收紧 watchdog：boot 阶段无进展仍可 hard-kill；进入 running 后，renderer/PTY 背压只触发一次诊断 dump 和当前请求 cancel，宽限期后保留会话进程，不再把“终端暂时写不出去”误判成整个 Reasonix 必须退出。
+- context owner 在消费边界再次归一化裸露或被包装的 provider `APIError`。DeepSeek 的真实 400 context-limit 即使绕过 transport 预包装，也必须进入 calibration/replan ladder，第二次 summary request 严格小于被拒请求，禁止原样重发。
+- session/runtime owner 让 canonical session 的 inbox 和 jobs 都由 Session Service 派生到同一持久运行目录；仅当 persistence 明确声明不支持 durable runtime state 时，测试或嵌入实现才回退进程临时目录。Controller 关闭时释放对应 temp lease，避免测试及长期进程遗留 owner lock。
+- 图片队列 owner 修正普通 `@image` 在加入持久附件列表前提前返回的问题。队列保存外部附件摘要而非大块 inline data URL；工作区原图随后变化时，执行仍读取入队时冻结的字节，同时 text-only 主模型保留工具可读路径语义，不被强迫启用 vision。
+- maintenance owner 把 Desktop draft、Controller skill edit 和 serve effort 写入迁到严格、可返回错误的 config loader；同步后的 production panic-loader 闸门继续保持通过。`repolint` baseline 从最终树重建为 1194 个 finding、434 个文件。
+- 现场依据：`2026-09-18-jev-learning` 的 compaction 请求被 DeepSeek 报告为 `1101407 messages + 8192 completion > 1048576`；本地日志只记录一次请求并直接失败，证明旧路径没有进入 overflow ladder。回归测试使用同形态裸 400，不使用预构造的 `ContextLimitError`。
+- 以上均折叠进既有 `interactive shell`、`oversized context`、session/runtime、图片队列与维护 owner，不增加产品语义补丁数量，不改变 canonical transcript，也不写入真实历史会话做验收。
+
 ## 每次追上游的执行协议
 
 ### 1. 固定基线

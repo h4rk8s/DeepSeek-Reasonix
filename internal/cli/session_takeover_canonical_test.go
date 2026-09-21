@@ -596,7 +596,7 @@ func TestCanonicalTakeoverOfActiveSessionIsRejected(t *testing.T) {
 	if ref, bound := ctrl.SessionRef(); !bound || ref.SessionID != "fresh-cli" {
 		t.Fatalf("controller = %+v bound=%v, want the active session untouched", ref, bound)
 	}
-	out := strings.Join(m.transcript, "\n")
+	out := strings.Join(renderedTranscriptBlocks(m.transcript), "\n")
 	if !strings.Contains(out, i18n.M.ResumeAlreadyActive) {
 		t.Fatalf("transcript missing the already-active notice:\n%s", out)
 	}

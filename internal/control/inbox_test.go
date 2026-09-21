@@ -490,6 +490,9 @@ func TestSubmitInboxUsesFrozenReferenceWithoutLiveReresolve(t *testing.T) {
 		WorkspaceRoot: workspace,
 	})
 	defer c.autosaveWG.Wait()
+	if !c.imageInputEnabled() {
+		t.Fatal("test controller should accept native image inputs")
+	}
 
 	rec, err := c.EnqueueInbox(InboxRequest{Submit: "review @note.txt"})
 	if err != nil {
@@ -591,21 +594,20 @@ func TestInboxUsesFrozenImageBytesAfterWorkspaceChanges(t *testing.T) {
 	if err := os.WriteFile(imagePath, mustBase64(t, tinyPNG), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	prov := &recordingProvider{streams: [][]provider.Chunk{{
-		{Type: provider.ChunkText, Text: "done"},
-		{Type: provider.ChunkDone},
-	}}}
+	prov := &reviewImageProvider{requests: make(chan provider.Request, 1)}
 	sess := agent.NewSession("sys")
 	exec := agent.New(prov, tool.NewRegistry(), sess, agent.Options{}, event.Discard)
 	sink, done, _ := collectSink()
+	visionCapable := true
 	c := newOwnedTestController(t, Options{
-		Runner:        exec,
-		Executor:      exec,
-		Sink:          sink,
-		SessionDir:    dir,
-		SessionPath:   filepath.Join(dir, "s.jsonl"),
-		WorkspaceRoot: workspace,
-		ModelRef:      "custom/vision-pro",
+		Runner:           exec,
+		Executor:         exec,
+		Sink:             sink,
+		SessionDir:       dir,
+		SessionPath:      filepath.Join(dir, "s.jsonl"),
+		WorkspaceRoot:    workspace,
+		ModelRef:         "custom/vision-pro",
+		FrozenImageInput: &visionCapable,
 	})
 	defer c.autosaveWG.Wait()
 
@@ -614,10 +616,10 @@ func TestInboxUsesFrozenImageBytesAfterWorkspaceChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, env, err := c.ReadInboxItem(rec.ItemID)
-	if err != nil || len(env.FrozenImages) != 1 {
+	if err != nil || len(env.ImageInputs) != 1 || env.ImageInputs[0].Attachment == nil {
 		t.Fatalf("frozen image envelope = %+v err=%v", env, err)
 	}
-	frozen := env.FrozenImages[0]
+	frozenDigest := env.ImageInputs[0].Attachment.Content.Digest
 	if err := os.WriteFile(imagePath, []byte("changed after enqueue"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -625,12 +627,15 @@ func TestInboxUsesFrozenImageBytesAfterWorkspaceChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForDone(t, done)
-	if len(prov.requests) != 1 {
-		t.Fatalf("provider requests = %d, want 1", len(prov.requests))
+	var req provider.Request
+	select {
+	case req = <-prov.requests:
+	default:
+		t.Fatal("provider did not receive the queued image")
 	}
-	messages := prov.requests[0].Messages
-	if len(messages) == 0 || len(messages[len(messages)-1].Images) != 1 || messages[len(messages)-1].Images[0] != frozen {
-		t.Fatalf("provider did not receive the enqueue-time image snapshot: %+v", messages)
+	messages := req.Messages
+	if len(messages) == 0 || len(messages[len(messages)-1].Images) != 1 || messages[len(messages)-1].Images[0] != "data:image/png;base64,"+tinyPNG {
+		t.Fatalf("provider did not receive the enqueue-time image snapshot (digest %s): %+v", frozenDigest, messages)
 	}
 }
 

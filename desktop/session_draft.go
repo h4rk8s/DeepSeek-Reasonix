@@ -405,7 +405,11 @@ func (a *App) GetDraftContext(draftID string) (SessionDraftContextView, error) {
 	if err != nil {
 		return SessionDraftContextView{Commands: []CommandInfo{}, Servers: []ServerView{}}, err
 	}
-	result := SessionDraftContextView{Draft: state.Draft, Operation: state.Operation, Commands: draftCommandInfos(record), Servers: draftMCPServerViews(record, state.Draft.Settings), Models: a.desktopModelCatalog(state.Draft.Settings.Model, draftWorkspaceRoot(record), nil)}
+	commands, err := draftCommandInfos(record)
+	if err != nil {
+		return SessionDraftContextView{Commands: []CommandInfo{}, Servers: []ServerView{}}, err
+	}
+	result := SessionDraftContextView{Draft: state.Draft, Operation: state.Operation, Commands: commands, Servers: draftMCPServerViews(record, state.Draft.Settings), Models: a.desktopModelCatalog(state.Draft.Settings.Model, draftWorkspaceRoot(record), nil)}
 	return result, nil
 }
 
@@ -438,7 +442,7 @@ func draftMCPServerViews(record draftstate.Draft, settings SessionDraftSettings)
 	return orderServerViews(servers, settings.MCPOrder)
 }
 
-func draftCommandInfos(record draftstate.Draft) []CommandInfo {
+func draftCommandInfos(record draftstate.Draft) ([]CommandInfo, error) {
 	root := record.WorkspaceRoot
 	if record.Scope != "project" {
 		root = globalWorkspaceRoot()
@@ -451,9 +455,9 @@ func draftCommandInfos(record draftstate.Draft) []CommandInfo {
 		}
 		out = append(out, CommandInfo{Name: item.Name, Description: item.Description, Hint: item.ArgHint, Kind: "custom", Group: "actions", Plugin: item.Plugin})
 	}
-	cfg := config.LoadForEdit(config.UserConfigPath())
-	if projectCfg, err := config.LoadForRootReadOnly(root); err == nil {
-		cfg = projectCfg
+	cfg, err := config.LoadForRootReadOnly(root)
+	if err != nil {
+		return nil, err
 	}
 	store := skill.New(skill.Options{
 		ProjectRoot: root, CustomPaths: cfg.SkillCustomPaths(), PluginPaths: cfg.PluginPackageSkillOwners(),
@@ -468,7 +472,7 @@ func draftCommandInfos(record draftstate.Draft) []CommandInfo {
 		}
 		out = append(out, CommandInfo{Name: item.SlashName(), Description: item.Description, Kind: kind, Group: group, Plugin: item.Plugin, Color: item.Color})
 	}
-	return resolveDocsCommand(out)
+	return resolveDocsCommand(out), nil
 }
 
 func draftOperationView(op draftstate.Operation, tab *TabMeta) SessionDraftSubmissionView {
