@@ -277,7 +277,11 @@ func machineSessions(dir string, identityKey []byte) ([]machineSession, error) {
 		if !entry.target.canonical() && !info.CountsKnown {
 			_, turns = agent.SessionPreview(info.Path)
 		}
-		if turns == 0 {
+		// canonicalResumeEntries already removes metadata-ready empty sessions.
+		// A zero here for a canonical row can instead mean its asynchronous
+		// metadata projection has not been rebuilt yet; hiding that row makes a
+		// real session permanently invisible to short-lived machine commands.
+		if turns == 0 && !entry.target.canonical() {
 			continue
 		}
 		rawSessionID := agent.BranchID(info.Path)

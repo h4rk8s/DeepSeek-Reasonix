@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -76,6 +77,33 @@ func TestSessionMachineProjectRootUsesProjectStore(t *testing.T) {
 	if len(response.Sessions) != 1 || response.Sessions[0].ID != machineSessionIDWithKey("project", identityKey) {
 		t.Fatalf("sessions = %+v, want project session", response.Sessions)
 	}
+}
+
+func TestSessionMachineListsCanonicalSessionBeforeMetadataRebuild(t *testing.T) {
+	identityKey := installMachineTestIdentity(t)
+	dir := t.TempDir()
+	sessionDir := filepath.Join(dir, "sessions")
+	v4root := filepath.Join(dir, "sessions-v4")
+	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	createCanonicalTestSession(t, v4root, "pending1", "canonical history")
+
+	var out bytes.Buffer
+	if code := runSessionCommand([]string{"list", "--dir", sessionDir, "--json"}, &out); code != 0 {
+		t.Fatalf("list exit code = %d, output = %s", code, out.String())
+	}
+	var response machineSessionList
+	if err := json.Unmarshal(out.Bytes(), &response); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	want := machineSessionIDWithKey("pending1", identityKey)
+	for _, item := range response.Sessions {
+		if item.ID == want {
+			return
+		}
+	}
+	t.Fatalf("canonical session missing before metadata rebuild: %+v", response.Sessions)
 }
 
 func TestSessionMachineShowAndStatusExposeOnlySafeState(t *testing.T) {
