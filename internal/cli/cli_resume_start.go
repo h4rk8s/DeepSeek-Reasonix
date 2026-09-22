@@ -125,10 +125,13 @@ func commitStartupResume(binding *cliTakeoverBinding, manager *cliTakeoverManage
 }
 
 func commitInteractiveStartupResume(binding *cliTakeoverBinding, manager *cliTakeoverManager, ctrl *control.Controller,
-	resumed *agent.Session, target cliResumeTarget, approve func(error) bool) error {
-	progress := newStartupProgress(os.Stderr, !target.empty() && isInteractive(), i18n.M.ResumeLoading)
-	defer progress.Stop()
-	return commitStartupResume(binding, manager, ctrl, resumed, target, approve)
+	resumed *agent.Session, target cliResumeTarget, diagnostics *tuiDiagnostics, approve func(error) bool) error {
+	diagnostics.StartStartupProgress(os.Stderr, !target.empty() && isInteractive(), i18n.M.ResumeLoading)
+	err := commitStartupResume(binding, manager, ctrl, resumed, target, approve)
+	if err != nil {
+		diagnostics.StopStartupProgress()
+	}
+	return err
 }
 
 // flagTakeoverApproval answers for --takeover, which commits before the

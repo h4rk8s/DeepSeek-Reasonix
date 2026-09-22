@@ -1198,7 +1198,7 @@ func chatREPL(args []string, version string) int {
 	// Decide where this conversation's auto-save lands. A resume reuses the
 	// file so closing/reopening keeps appending to the same history; a fresh
 	// session lands in a new file stamped with the model name.
-	if err := commitInteractiveStartupResume(takeoverBinding, takeoverManager, ctrl, startupResumeSession, resumeTarget,
+	if err := commitInteractiveStartupResume(takeoverBinding, takeoverManager, ctrl, startupResumeSession, resumeTarget, diagnostics,
 		promptTakeoverApproval); err != nil {
 		return cliTakeoverFailure(takeoverBinding, leases, takeoverManager, err)
 	}
@@ -1248,7 +1248,7 @@ func chatREPL(args []string, version string) int {
 	applyPermissionMode(ctrl, permissions)
 	applyLegacyYolo(ctrl, *legacyYolo)
 
-	m := newChatTUI(ctrl, missing, eventCh, termW)
+	m := newChatTUIWithStartupProgress(ctrl, missing, eventCh, termW, diagnostics)
 	m.diagnostics = diagnostics
 	m.updateWatchdogStatusProvider()
 	m.planMode = permissions.plan

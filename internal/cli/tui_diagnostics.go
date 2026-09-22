@@ -78,12 +78,13 @@ type watchdogEscalation struct {
 // cannot be created. The watchdog uses booting/idle/running/closed: idle never
 // kills, while running stalls escalate through dump and one cancel only.
 type tuiDiagnostics struct {
-	previous *slog.Logger
-	logger   *slog.Logger
-	writer   io.Writer
-	file     *os.File
-	path     string
-	close    sync.Once
+	previous        *slog.Logger
+	logger          *slog.Logger
+	writer          io.Writer
+	file            *os.File
+	path            string
+	close           sync.Once
+	startupProgress *startupProgress
 
 	stopWatch chan struct{}
 	watchOnce sync.Once
@@ -616,6 +617,7 @@ func (d *tuiDiagnostics) Close() {
 	if d == nil {
 		return
 	}
+	d.StopStartupProgress()
 	d.close.Do(func() {
 		d.mu.Lock()
 		d.phase = watchdogClosed

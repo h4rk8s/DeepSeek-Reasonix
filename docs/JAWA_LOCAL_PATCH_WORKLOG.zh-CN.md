@@ -644,7 +644,7 @@ Thought/Image 点击区域过大、hover 抖动、展开向下顶、选择文字
 - 图片队列 owner 修正普通 `@image` 在加入持久附件列表前提前返回的问题。队列保存外部附件摘要而非大块 inline data URL；工作区原图随后变化时，执行仍读取入队时冻结的字节，同时 text-only 主模型保留工具可读路径语义，不被强迫启用 vision。
 - maintenance owner 把 Desktop draft、Controller skill edit 和 serve effort 写入迁到严格、可返回错误的 config loader；同步后的 production panic-loader 闸门继续保持通过。`repolint` baseline 从最终树重建为 1195 个 finding、435 个文件。
 - 现场依据：`2026-09-18-jev-learning` 的 compaction 请求被 DeepSeek 报告为 `1101407 messages + 8192 completion > 1048576`；本地日志只记录一次请求并直接失败，证明旧路径没有进入 overflow ladder。回归测试使用同形态裸 400，不使用预构造的 `ContextLimitError`。
-- 真实恢复验收确认 context owner 已工作：同一 v4 会话从 resume 后约 `2.4M/236%` 经手动有界 rescue 最终降至约 `683.9K/68%`。CLI shell owner 补充长操作可见性：TUI 接管前的 canonical restore 持续显示加载阶段与耗时；手动压缩在同一 operation card 上显示第 N 批摘要及每批落地后的 context 估算，不再让数分钟网络摘要表现成无状态卡死。中途的 `798.1K` 是后一批完成前的真实投影，不作为 footer 失效另建状态源。
+- 真实恢复验收确认 context owner 已工作：同一 v4 会话从 resume 后约 `2.4M/236%` 经手动有界 rescue 最终降至约 `683.9K/68%`。CLI shell owner 补充长操作可见性：canonical restore 从绑定开始持续显示加载阶段与耗时，直到完整 display history 读取结束、TUI 即将接管终端才清除；手动压缩在同一 operation card 上显示第 N 批摘要及每批落地后的 context 估算，不再让数分钟网络摘要表现成无状态卡死。中途的 `798.1K` 是后一批完成前的真实投影，不作为 footer 失效另建状态源。
 - 以上均折叠进既有 `interactive shell`、`oversized context`、session/runtime、图片队列与维护 owner，不增加产品语义补丁数量，不改变 canonical transcript，也不写入真实历史会话做验收。
 
 ## 每次追上游的执行协议

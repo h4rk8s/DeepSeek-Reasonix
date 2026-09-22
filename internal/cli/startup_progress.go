@@ -3,6 +3,8 @@ package cli
 import (
 	"fmt"
 	"io"
+	"reasonix/internal/control"
+	"reasonix/internal/event"
 	"sync"
 	"time"
 )
@@ -76,4 +78,29 @@ func (p *startupProgress) render(now time.Time) {
 func startupProgressLine(stage string, elapsed time.Duration) string {
 	seconds := max(0, int(elapsed/time.Second))
 	return fmt.Sprintf("\r\x1b[2K  ⋯ %s · %ds", stage, seconds)
+}
+
+func (d *tuiDiagnostics) StartStartupProgress(out io.Writer, enabled bool, stage string) {
+	if d == nil {
+		return
+	}
+	d.StopStartupProgress()
+	d.startupProgress = newStartupProgress(out, enabled, stage)
+}
+
+func (d *tuiDiagnostics) StopStartupProgress() {
+	if d == nil || d.startupProgress == nil {
+		return
+	}
+	d.startupProgress.Stop()
+	d.startupProgress = nil
+}
+
+func newChatTUIWithStartupProgress(ctrl control.SessionAPI, missing string, eventCh chan event.Event, termW int,
+	diagnostics *tuiDiagnostics) chatTUI {
+	diagnostics.Milestone("history_load_begin")
+	m := newChatTUI(ctrl, missing, eventCh, termW)
+	diagnostics.Milestone("history_load_done")
+	diagnostics.StopStartupProgress()
+	return m
 }
