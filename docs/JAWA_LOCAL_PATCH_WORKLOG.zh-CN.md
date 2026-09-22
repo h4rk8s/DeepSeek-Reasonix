@@ -6,15 +6,15 @@
 
 - 唯一长期分支：`jawa/reasonix-composer-state-visibility`
 - 主 checkout：`/Users/jawa/Lab/2026-07-06-reasonix-dev`
-- 本轮固定上游：`703c310f5b69c5079fe23a796893c8e836ce90a1`（v1.38.9 `dc915ab97` 之后 14 个 main-v2 提交）
-- 补丁结构：13 个产品语义 owner + 2 个维护闸门 + 1 个临时 renderer pin；计费日历、队列图片预算、canonical session 适配等 follow-up fix 仍归所属 owner。本轮历史栈 25 个提交重放为 24 个，单独的 generated inventory 刷新已折叠进维护闸门；准确线性提交数以本文给出的 `git log` 命令为准。
+- 本轮固定上游：`ec0df71ec1290345d606e6ba61f2965a76694447`（`desktop-v1.38.11-56-gec0df71ec`）
+- 补丁结构：13 个产品语义 owner + 2 个维护闸门 + 1 个临时 renderer pin，共 16 个受维护单元。计费日历、队列图片预算、canonical session 适配、runtime context pressure 和 resume/compaction progress 等 follow-up fix 仍归所属 owner，不增加语义补丁数量。固定上游至当前 HEAD 共 30 个线性提交，其中 29 个实现/维护提交，另 1 个为本台账的口径修正；准确提交列表以本文给出的 `git log` 命令为准。
 - 同步入口：`scripts/jawa-upstream-sync.sh`
 - 临时 worktree：只允许位于仓库内 `.worktree/<task>`
 
 本台账描述行为契约，不把某次提交 SHA 当成真源。每次重放后，准确提交以：
 
 ```sh
-git log --reverse --format='%H %s' origin/main-v2..HEAD
+git log --reverse --format='%H %s' ec0df71ec1290345d606e6ba61f2965a76694447..HEAD
 ```
 
 为准。最后一个提交不能在自己的正文中记录自己的 SHA，避免自指。
