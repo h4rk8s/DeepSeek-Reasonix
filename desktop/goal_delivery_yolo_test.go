@@ -25,6 +25,8 @@ func newGoalDeliveryYoloTestApp(t *testing.T, goalStatus string) (*App, *Workspa
 	setDesktopTestCredential(t, "GOAL_DELIVERY_ALT_KEY", "sk-test")
 	cfg := config.Default()
 	cfg.DefaultModel = "test/model"
+	environmentEnabled := false
+	cfg.Environment.Enabled = &environmentEnabled
 	cfg.Desktop.ProviderAccess = []string{"test", "alt"}
 	cfg.Providers = []config.ProviderEntry{
 		{
