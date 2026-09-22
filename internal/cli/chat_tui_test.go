@@ -504,6 +504,35 @@ func TestRunningQueueAndTodoKeepComposerVisible(t *testing.T) {
 	}
 }
 
+func TestCompactedWorkingLineUsesOneBudgetRow(t *testing.T) {
+	m := newInboxTestChatTUI(t)
+	m.state = tuiRunning
+	m.readStatusLabel = "扩展信源已变，第一节到第三节需要重新读取并校验全部证据"
+	m.seedInbox("注意不要在当前项目留下任何临时痕迹，这是明确要求")
+
+	const width = 54
+	p := m.projectStatus(width, false)
+	if strings.Count(wrapStatusLine(p.working, width), "\n") == 0 {
+		t.Fatalf("test setup needs a working label that would wrap before compaction: %q", p.working)
+	}
+	wantRows := 1 + strings.Count(p.block, "\n") + 1
+	if p.rows != wantRows {
+		t.Fatalf("status projection rows = %d, want %d (one compact working row + footer): %q",
+			p.rows, wantRows, p.working)
+	}
+
+	next, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: 16})
+	m = next.(chatTUI)
+	view := ansi.Strip(m.View().Content)
+	if got := strings.Count(view, "[1]"); got != 1 {
+		t.Fatalf("one queued item should render once, got %d copies:\n%s", got, view)
+	}
+	if got, want := m.transcriptHeight()+m.bottomRows(), m.height; got != want {
+		t.Fatalf("transcriptHeight(%d) + bottomRows(%d) = %d, want %d",
+			m.transcriptHeight(), m.bottomRows(), got, want)
+	}
+}
+
 func TestManualNewlineGrowsComposerWithoutHidingFirstLine(t *testing.T) {
 	ctrl := newOwnedTestController(t, control.Options{})
 	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 40)

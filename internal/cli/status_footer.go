@@ -217,7 +217,10 @@ func (m chatTUI) projectStatus(width int, styled bool) statusProjection {
 	}
 	p.block = m.renderStatusBlock(p.primary, width)
 	if p.working != "" {
-		p.rows += strings.Count(wrapStatusLine(p.working, width), "\n") + 1
+		// View compacts the live working status to one terminal row. Keep the
+		// reservation identical or a long CJK phase label leaves a stale row
+		// behind when the queue/composer shelf moves between frames.
+		p.rows++
 	}
 	p.rows += strings.Count(p.block, "\n") + 1
 	return p
