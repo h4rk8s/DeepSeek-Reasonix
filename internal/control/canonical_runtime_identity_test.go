@@ -25,7 +25,7 @@ func canonicalIdentityController(t *testing.T, service *session.Service, id, leg
 		SessionService: service, SessionRuntime: runtime, ExclusiveSession: true, SessionPath: legacy})
 }
 
-func TestCanonicalInboxWithLegacyImportPathUsesTemporaryStorage(t *testing.T) {
+func TestCanonicalInboxWithLegacyImportPathUsesDurableCanonicalStorage(t *testing.T) {
 	t.Chdir(t.TempDir())
 	service, err := session.NewService("local", session.NewFilesystemPersistence(t.TempDir()))
 	if err != nil {
@@ -37,7 +37,11 @@ func TestCanonicalInboxWithLegacyImportPathUsesTemporaryStorage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.SessionPath() != "session-id:imported.session" || !filepath.IsAbs(st.Dir()) {
+	wantDir, err := service.InboxDirectory(session.SessionRef{HostID: "local", SessionID: "imported.session"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.SessionPath() != "session-id:imported.session" || st.Dir() != wantDir || !filepath.IsAbs(st.Dir()) {
 		t.Fatalf("mixed locator and storage path: locator=%q directory=%q", st.SessionPath(), st.Dir())
 	}
 	if _, err := os.Stat("session-id:imported.session.inbox"); !os.IsNotExist(err) {

@@ -7,7 +7,7 @@
 - 唯一长期分支：`jawa/reasonix-composer-state-visibility`
 - 主 checkout：`/Users/jawa/Lab/2026-07-06-reasonix-dev`
 - 本轮固定上游：`4fad310c931e4c24e267fbee20276f54a0fe6122`（`desktop-v1.38.11-80-g4fad310c9`）
-- 补丁结构：13 个产品语义 owner + 2 个维护闸门 + 1 个临时 renderer pin，共 16 个受维护单元。计费日历、队列图片预算、canonical session 适配、runtime context pressure 和 resume/compaction progress 等 follow-up fix 仍归所属 owner，不增加语义补丁数量。固定上游至当前 HEAD 共 31 个线性提交，其中 30 个实现/维护提交，另 1 个为台账口径修正；准确提交列表以本文给出的 `git log` 命令为准。
+- 补丁结构：13 个产品语义 owner + 2 个维护闸门 + 1 个临时 renderer pin，共 16 个受维护单元。计费日历、队列图片预算、canonical session 适配、runtime context pressure 和 resume/compaction progress 等 follow-up fix 仍归所属 owner，不增加语义补丁数量。固定上游至当前 HEAD 共 32 个线性提交，其中 31 个实现/维护提交，另 1 个为台账口径修正；准确提交列表以本文给出的 `git log` 命令为准。
 - 同步入口：`scripts/jawa-upstream-sync.sh`
 - 临时 worktree：只允许位于仓库内 `.worktree/<task>`
 
@@ -653,6 +653,7 @@ Thought/Image 点击区域过大、hover 抖动、展开向下顶、选择文字
 - 吸收 upstream 的 duplicate compaction admission、`/compact` feedback/history detection、upgrade-safe eager session creation、canonical inbox identity、settled tool state 和 live transcript 用户行顺序修复，不复制第二套 admission、identity 或 transcript owner。
 - config owner 接入 schema 11 与新版 DeepSeek catalog；普通 CLI boot 继续只读，禁止为了升级在启动阶段静默重写 `~/.reasonix/config.toml`。显式 config edit/upgrade 仍由权威 config owner 负责。
 - session/runtime owner 采用 upstream canonical identity 与 recovered input 边界；本地继续让 canonical inbox/jobs 由 Session Service 派生到会话 `.runtime/`，仅不支持 durable runtime state 的测试或嵌入 persistence 才回退临时目录。
+- canonical inbox 维持逻辑 identity 与物理 directory 双键：`session-id:<id>` 负责 fencing/receipt，`.runtime/inbox-v1` 负责持久化；禁止把 import path、canonical ID 或物理目录互相冒充。
 - context 与 CLI shell owner 复用 upstream compact 回执和历史判定；本地保留 provider overflow calibration、resume 全历史加载进度和分批 compact 进度。两者共享既有 operation/maintenance 状态，不新增语义 owner。
 - 冲突中的 Desktop contract、migration inventory 与 repolint baseline 全部从最终源码重建：inventory 911 项，repolint baseline 1193 findings / 434 files；不得提交任一冲突侧的陈旧生成物。
 - 最终结构仍为 13 个产品语义 owner、2 个维护闸门和 1 个临时 renderer pin；本轮没有新增产品语义补丁或循环依赖。

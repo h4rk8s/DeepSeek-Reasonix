@@ -15,6 +15,7 @@ import (
 	"reasonix/internal/session"
 	"reasonix/internal/sessioninbox"
 	"reasonix/internal/sessiontemp"
+	"reasonix/internal/store"
 )
 
 // TurnAdmission is the exported classification of TrySubmitInboxItem /
@@ -213,38 +214,58 @@ func (c *Controller) bindInboxStoreNotifications(st *sessioninbox.Store) {
 	})
 }
 
-func (c *Controller) inboxPath() (string, error) {
-	if service, runtime, exclusive := c.v3Binding(); exclusive && service != nil && runtime != nil {
-		path, err := service.InboxDirectory(runtime.Ref())
-		if errors.Is(err, session.ErrRuntimeStateUnsupported) {
-			return "", nil
+type inboxBinding struct {
+	identity  string
+	directory string
+	temporary bool
+}
+
+func (c *Controller) resolveInboxBinding() (inboxBinding, error) {
+	if service, runtime, exclusive := c.v3Binding(); exclusive {
+		if service == nil || runtime == nil {
+			return inboxBinding{temporary: true}, nil
 		}
-		return path, err
+		identity := "session-id:" + runtime.Ref().SessionID
+		directory, err := service.InboxDirectory(runtime.Ref())
+		if errors.Is(err, session.ErrRuntimeStateUnsupported) {
+			return inboxBinding{identity: identity, temporary: true}, nil
+		}
+		return inboxBinding{identity: identity, directory: directory}, err
 	}
-	return c.SessionPath(), nil
+	path := strings.TrimSpace(c.SessionPath())
+	if path == "" {
+		return inboxBinding{}, nil
+	}
+	return inboxBinding{identity: path, directory: store.SessionInboxDir(path)}, nil
+}
+
+// inboxDirectoryLocked resolves the physical store without changing its
+// logical session identity. c.inbox.mu must be held by the caller.
+func (c *Controller) inboxDirectoryLocked(binding inboxBinding) (string, error) {
+	if !binding.temporary {
+		return binding.directory, nil
+	}
+	if c.inbox.tempLease == nil {
+		lease, err := c.sessionTemp.Acquire()
+		if err != nil {
+			return "", fmt.Errorf("open v3 runtime inbox: %w", err)
+		}
+		c.inbox.tempLease = lease
+	}
+	return store.SessionInboxDir(filepath.Join(c.inbox.tempLease.Dir(), "runtime-inbox.jsonl")), nil
 }
 
 func (c *Controller) ensureInbox() (*sessioninbox.Store, error) {
-	path, err := c.inboxPath()
+	binding, err := c.resolveInboxBinding()
 	if err != nil {
 		return nil, fmt.Errorf("open canonical runtime inbox: %w", err)
 	}
 	c.inbox.mu.Lock()
 	defer c.inbox.mu.Unlock()
-	if path == "" && c.sessionEngineEnabled() {
-		if c.inbox.tempLease == nil {
-			lease, err := c.sessionTemp.Acquire()
-			if err != nil {
-				return nil, fmt.Errorf("open v3 runtime inbox: %w", err)
-			}
-			c.inbox.tempLease = lease
-		}
-		path = filepath.Join(c.inbox.tempLease.Dir(), "runtime-inbox.jsonl")
-	}
-	if path == "" {
+	if binding.identity == "" {
 		return nil, fmt.Errorf("inbox requires a session identity")
 	}
-	if c.inbox.store != nil && c.inbox.store.SessionPath() == path {
+	if c.inbox.store != nil && c.inbox.store.SessionPath() == binding.identity {
 		return c.inbox.store, nil
 	}
 	if c.inbox.closed {
@@ -254,7 +275,11 @@ func (c *Controller) ensureInbox() (*sessioninbox.Store, error) {
 		c.inbox.store.Close()
 		c.inbox.store = nil
 	}
-	st, err := sessioninbox.Open(path, sessioninbox.Limits{})
+	directory, err := c.inboxDirectoryLocked(binding)
+	if err != nil {
+		return nil, err
+	}
+	st, err := sessioninbox.OpenDirectory(directory, binding.identity, sessioninbox.Limits{})
 	if err != nil {
 		return nil, err
 	}
@@ -276,18 +301,18 @@ func (c *Controller) ensureInbox() (*sessioninbox.Store, error) {
 // rebindInbox opens the inbox for the current session path. Safe across
 // NewSession/Resume/SetSessionPath; does not copy items on fork.
 func (c *Controller) rebindInbox() {
-	path, pathErr := c.inboxPath()
+	binding, bindingErr := c.resolveInboxBinding()
 	c.inbox.mu.Lock()
 	defer c.inbox.mu.Unlock()
 	if c.inbox.closed {
 		return
 	}
-	if pathErr != nil {
-		slog.Warn("controller: resolve canonical runtime inbox", "err", pathErr)
+	if bindingErr != nil {
+		slog.Warn("controller: resolve canonical runtime inbox", "err", bindingErr)
 		return
 	}
 	if c.inbox.store != nil {
-		if path != "" && c.inbox.store.SessionPath() == path {
+		if binding.identity != "" && c.inbox.store.SessionPath() == binding.identity {
 			return
 		}
 		// Pending work must remain inspectable if this session is reopened.
@@ -300,21 +325,17 @@ func (c *Controller) rebindInbox() {
 		c.inbox.tempLease.Release()
 		c.inbox.tempLease = nil
 	}
-	if path == "" && c.sessionEngineEnabled() {
-		lease, err := c.sessionTemp.Acquire()
-		if err != nil {
-			slog.Warn("controller: open v3 runtime inbox", "err", err)
-			return
-		}
-		c.inbox.tempLease = lease
-		path = filepath.Join(lease.Dir(), "runtime-inbox.jsonl")
-	}
-	if path == "" {
+	if binding.identity == "" {
 		return
 	}
-	st, err := sessioninbox.Open(path, sessioninbox.Limits{})
+	directory, err := c.inboxDirectoryLocked(binding)
 	if err != nil {
-		slog.Warn("controller: open session inbox", "err", err, "path", path)
+		slog.Warn("controller: open runtime inbox", "err", err)
+		return
+	}
+	st, err := sessioninbox.OpenDirectory(directory, binding.identity, sessioninbox.Limits{})
+	if err != nil {
+		slog.Warn("controller: open session inbox", "err", err, "path", binding.identity)
 		return
 	}
 	c.bindInboxStoreNotifications(st)
