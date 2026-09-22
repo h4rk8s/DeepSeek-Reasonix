@@ -80,6 +80,7 @@ var ChineseTraditional = Messages{
 	ResumeBadIndexFmt:      "請選擇 1–%d 的會話（用 /resume 檢視列表）",
 	ResumeAlreadyActive:    "已在該會話中",
 	ResumedTitle:           "已恢復會話",
+	ResumeLoading:          "正在恢復會話 · 載入已儲存歷史",
 	ResumePickTitle:        "選擇要恢復的會話",
 	ResumePickHint:         "↑/↓ 移動 · Enter 恢復 · Esc 取消",
 	ResumeRecoveryBadgeFmt: "[衝突副本 · 父會話 %s]",
@@ -232,6 +233,8 @@ var ChineseTraditional = Messages{
 	CompactionRecoveryRequired: "壓縮需要復原處理",
 	CompactionInterrupted:      "上次壓縮已中斷",
 	CompactionEstimatedTokens:  "估算 token",
+	CompactionPassFmt:          "正在壓縮對話 · 第 %d 批摘要",
+	CompactionPassDoneFmt:      "正在壓縮對話 · 第 %d 批完成 · 目前約 %s context",
 
 	ExtFormFieldsHint:         "欄位將透過逐項提問收集",
 	ExtRunActionFmt:           "執行 %s",

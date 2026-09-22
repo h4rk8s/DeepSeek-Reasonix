@@ -79,6 +79,7 @@ var English = Messages{
 	ResumeBadIndexFmt:   "pick a session 1–%d (run /resume to list)",
 	ResumeAlreadyActive: "already in that session",
 	ResumedTitle:        "resumed session",
+	ResumeLoading:       "restoring session · loading saved history",
 
 	RenameUsage:            "usage: /rename <new title>  or  /rename <n> <new title>",
 	RenameNoSession:        "no active session to rename",
@@ -237,6 +238,8 @@ var English = Messages{
 	CompactionRecoveryRequired: "Compaction needs recovery",
 	CompactionInterrupted:      "The previous compaction was interrupted",
 	CompactionEstimatedTokens:  "estimated tokens",
+	CompactionPassFmt:          "compacting conversation · summary pass %d",
+	CompactionPassDoneFmt:      "compacting conversation · pass %d complete · ~%s context",
 
 	ExtFormFieldsHint:         "fields are collected through the usual prompts",
 	ExtRunActionFmt:           "run %s",

@@ -161,6 +161,53 @@ func TestSessionOperationUpdatesOneCompactionCard(t *testing.T) {
 	}
 }
 
+func TestManualCompactionCardShowsEachSummaryPass(t *testing.T) {
+	ctrl := &maintenanceCLIController{SessionAPI: newOwnedTestController(t, control.Options{})}
+	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 80)
+
+	next, _ := m.Update(maintenanceEvent("op-1", "running", "running"))
+	m = next.(chatTUI)
+	next, _ = m.Update(agentEventMsg(event.Event{
+		Kind:       event.CompactionStarted,
+		Compaction: event.Compaction{Trigger: "manual"},
+	}))
+	m = next.(chatTUI)
+	if m.maintenancePasses != 1 || m.maintenance == nil ||
+		!strings.Contains(m.maintenance.Detail, "pass 1") {
+		t.Fatalf("first pass state = passes:%d maintenance:%+v", m.maintenancePasses, m.maintenance)
+	}
+
+	next, _ = m.Update(agentEventMsg(event.Event{
+		Kind: event.ContextMaintenanceEvent,
+		Maintenance: &event.ContextMaintenance{
+			Status: "applied", Action: "summary", ResultTokens: 798100,
+		},
+	}))
+	m = next.(chatTUI)
+	if m.maintenance == nil || !strings.Contains(m.maintenance.Detail, "798.1K context") {
+		t.Fatalf("completed pass detail = %+v", m.maintenance)
+	}
+	if got := m.transcript[m.maintenanceTranscriptIdx].rendered; !strings.Contains(got, "798.1K context") {
+		t.Fatalf("live compaction card = %q", got)
+	}
+
+	next, _ = m.Update(agentEventMsg(event.Event{
+		Kind:       event.CompactionStarted,
+		Compaction: event.Compaction{Trigger: "manual"},
+	}))
+	m = next.(chatTUI)
+	if m.maintenancePasses != 2 || m.maintenance == nil ||
+		!strings.Contains(m.maintenance.Detail, "pass 2") {
+		t.Fatalf("second pass state = passes:%d maintenance:%+v", m.maintenancePasses, m.maintenance)
+	}
+
+	next, _ = m.Update(maintenanceEvent("op-1", "finalizing", "completed"))
+	m = next.(chatTUI)
+	if m.maintenancePasses != 0 {
+		t.Fatalf("terminal operation retained pass count %d", m.maintenancePasses)
+	}
+}
+
 func TestEscCancelsMaintenanceOnceAndPreservesDraft(t *testing.T) {
 	ctrl := &maintenanceCLIController{SessionAPI: newOwnedTestController(t, control.Options{})}
 	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 80)

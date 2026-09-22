@@ -97,6 +97,7 @@ type Messages struct {
 	ResumeBadIndexFmt   string // shown when /resume gets an out-of-range index (one %d)
 	ResumeAlreadyActive string // shown when /resume targets the current session
 	ResumedTitle        string // banner title after a /resume switch
+	ResumeLoading       string // startup progress while replaying saved history
 
 	RenameUsage            string // /rename with no args
 	RenameNoSession        string // /rename with no active session
@@ -260,6 +261,8 @@ type Messages struct {
 	CompactionRecoveryRequired string // persistence/cancellation state needs recovery
 	CompactionInterrupted      string // a previous non-terminal operation was interrupted
 	CompactionEstimatedTokens  string // label for estimated before/after token counts
+	CompactionPassFmt          string // live manual compaction pass, one %d
+	CompactionPassDoneFmt      string // completed manual compaction pass, %d then token text
 
 	// extension structured-UI surfaces (ExtensionSurface / ExtensionStatus events).
 	ExtFormFieldsHint string // form card: field values are collected through the usual prompts

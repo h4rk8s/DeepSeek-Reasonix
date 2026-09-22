@@ -46,6 +46,8 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 		m.ingestCompactionStarted(e)
 	case event.CompactionDone:
 		m.ingestCompactionDone(e)
+	case event.ContextMaintenanceEvent:
+		m.ingestContextMaintenance(e)
 	case event.SessionOperation:
 		m.ingestSessionOperation(e)
 	case event.Phase:
@@ -309,10 +311,32 @@ func (m *chatTUI) ingestCompactionStarted(e event.Event) {
 	// Manual maintenance has one stable SessionOperation card. Keep the legacy
 	// compaction events for automatic passes and older controllers only.
 	if m.maintenance != nil {
+		if strings.EqualFold(m.maintenance.Kind, "compact") {
+			m.maintenancePasses++
+			updated := *m.maintenance
+			updated.Detail = fmt.Sprintf(i18n.M.CompactionPassFmt, m.maintenancePasses)
+			m.maintenance = &updated
+			m.renderSessionOperation(&updated)
+		}
 		return
 	}
 	m.finalizeStreamed()
 	m.commitSemanticLine(dim("  ⋯ "+i18n.M.CompactionWorking), transcriptmodel.KindCompaction)
+}
+
+func (m *chatTUI) ingestContextMaintenance(e event.Event) {
+	if m.maintenance == nil || e.Maintenance == nil ||
+		!strings.EqualFold(m.maintenance.Kind, "compact") ||
+		!strings.EqualFold(e.Maintenance.Status, "applied") ||
+		m.maintenancePasses == 0 {
+		return
+	}
+	updated := *m.maintenance
+	updated.ResultTokens = e.Maintenance.ResultTokens
+	updated.Detail = fmt.Sprintf(i18n.M.CompactionPassDoneFmt, m.maintenancePasses,
+		shortTokens(e.Maintenance.ResultTokens))
+	m.maintenance = &updated
+	m.renderSessionOperation(&updated)
 }
 
 func (m *chatTUI) ingestCompactionDone(e event.Event) {
@@ -382,6 +406,7 @@ func (m *chatTUI) ingestSessionOperation(e event.Event) {
 	if sessionOperationTerminal(incoming.Status) {
 		m.maintenanceTerminal[incoming.OperationID] = struct{}{}
 		m.maintenance = nil
+		m.maintenancePasses = 0
 		m.followSessionLease()
 	}
 }
@@ -490,7 +515,11 @@ func sessionOperationLine(op *event.SessionOperationInfo) string {
 	case "recovery_required":
 		return sessionOperationFailureLine(i18n.M.CompactionRecoveryRequired, op.Detail)
 	default:
-		return dim("  ⋯ " + i18n.M.CompactionWorking)
+		label := i18n.M.CompactionWorking
+		if detail := strings.TrimSpace(op.Detail); detail != "" {
+			label = detail
+		}
+		return dim("  ⋯ " + label)
 	}
 }
 

@@ -80,6 +80,7 @@ var Chinese = Messages{
 	ResumeBadIndexFmt:   "请选择 1–%d 的会话（用 /resume 查看列表）",
 	ResumeAlreadyActive: "已在该会话中",
 	ResumedTitle:        "已恢复会话",
+	ResumeLoading:       "正在恢复会话 · 加载已保存历史",
 
 	RenameUsage:            "用法：/rename <新名称>  或  /rename <序号> <新名称>",
 	RenameNoSession:        "当前没有活跃会话可重命名",
@@ -238,6 +239,8 @@ var Chinese = Messages{
 	CompactionRecoveryRequired: "压缩需要恢复处理",
 	CompactionInterrupted:      "上次压缩已中断",
 	CompactionEstimatedTokens:  "估算 token",
+	CompactionPassFmt:          "正在压缩对话 · 第 %d 批摘要",
+	CompactionPassDoneFmt:      "正在压缩对话 · 第 %d 批完成 · 当前约 %s context",
 
 	ExtFormFieldsHint:         "字段将通过逐项提问收集",
 	ExtRunActionFmt:           "运行 %s",

@@ -95,16 +95,16 @@ type chatTUI struct {
 	// maintenance is the active controller-owned compaction lifecycle. It is
 	// deliberately separate from state: maintenance keeps the composer usable
 	// for durable queueing and must not start ordinary turn timers or metrics.
-	maintenance                 *event.SessionOperationInfo
-	maintenanceTranscriptID     string
-	maintenanceTranscriptIdx    int
-	maintenanceTerminal         map[string]struct{}
-	maintenanceLatest           map[string]event.SessionOperationInfo
-	compactCompatibilityPending bool
-	compactLifecycleObserved    bool
-	runStart                    time.Time
-	elapsed                     int
-	elapsedTickGeneration       uint64
+	maintenance                                           *event.SessionOperationInfo
+	maintenanceTranscriptID                               string
+	maintenanceTranscriptIdx                              int
+	maintenanceTerminal                                   map[string]struct{}
+	maintenanceLatest                                     map[string]event.SessionOperationInfo
+	maintenancePasses                                     int
+	compactCompatibilityPending, compactLifecycleObserved bool
+	runStart                                              time.Time
+	elapsed                                               int
+	elapsedTickGeneration                                 uint64
 	// Recovery state is cleared by progress or completion.
 	retryAttempt int
 	retryMax     int

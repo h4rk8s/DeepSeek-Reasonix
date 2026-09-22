@@ -124,6 +124,13 @@ func commitStartupResume(binding *cliTakeoverBinding, manager *cliTakeoverManage
 	return cliStartupCanonicalTakeover(ctrl, manager, target)
 }
 
+func commitInteractiveStartupResume(binding *cliTakeoverBinding, manager *cliTakeoverManager, ctrl *control.Controller,
+	resumed *agent.Session, target cliResumeTarget, approve func(error) bool) error {
+	progress := newStartupProgress(os.Stderr, !target.empty() && isInteractive(), i18n.M.ResumeLoading)
+	defer progress.Stop()
+	return commitStartupResume(binding, manager, ctrl, resumed, target, approve)
+}
+
 // flagTakeoverApproval answers for --takeover, which commits before the
 // conflict is known.
 func flagTakeoverApproval(enabled bool) func(error) bool {

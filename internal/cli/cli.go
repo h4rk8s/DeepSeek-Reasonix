@@ -1144,7 +1144,6 @@ func chatREPL(args []string, version string) int {
 			return 1
 		}
 	}
-
 	ctx := context.Background()
 	if err := applyResumeModel(model, resumePath, cfg); err != nil {
 		return cliTakeoverFailure(takeoverBinding, leases, takeoverManager, err)
@@ -1199,7 +1198,7 @@ func chatREPL(args []string, version string) int {
 	// Decide where this conversation's auto-save lands. A resume reuses the
 	// file so closing/reopening keeps appending to the same history; a fresh
 	// session lands in a new file stamped with the model name.
-	if err := commitStartupResume(takeoverBinding, takeoverManager, ctrl, startupResumeSession, resumeTarget,
+	if err := commitInteractiveStartupResume(takeoverBinding, takeoverManager, ctrl, startupResumeSession, resumeTarget,
 		promptTakeoverApproval); err != nil {
 		return cliTakeoverFailure(takeoverBinding, leases, takeoverManager, err)
 	}

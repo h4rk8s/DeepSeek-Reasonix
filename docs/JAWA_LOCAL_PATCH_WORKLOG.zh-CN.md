@@ -1,6 +1,6 @@
 # Jawa 本地 Reasonix 语义补丁台账
 
-更新时间：2026-09-16
+更新时间：2026-09-22
 
 ## 维护基线
 
@@ -634,7 +634,7 @@ Thought/Image 点击区域过大、hover 抖动、展开向下顶、选择文字
 - generated inventory 从最终树重建为 784 项；Desktop host contract 的 JSON 与 TypeScript 输出也从同一最终树重建，覆盖 transcript、billing 和 background event 的新增字段；`repolint` baseline 从最终树重建为 1239 个 finding、439 个文件。各生成物均通过 current/clean 检查。
 - 完整门禁必须在本节对应提交之后重新执行；仅有 rebase 成功或局部测试通过不能交付。
 
-## 2026-09-21 main-v2 运行期回归修复
+## 2026-09-21/22 main-v2 运行期回归修复
 
 - CLI shell owner 修正 legacy `--yolo` 映射：`yolo`、`bypasspermissions` 和 `bypass-permissions` 都进入 `danger-full-access`，不得降级成 `workspace-write`；footer 因此显示 `YOLO · tools skipped`，不是 `Workspace`。
 - CLI shell owner 收紧 watchdog：boot 阶段无进展仍可 hard-kill；进入 running 后，renderer/PTY 背压只触发一次诊断 dump 和当前请求 cancel，宽限期后保留会话进程，不再把“终端暂时写不出去”误判成整个 Reasonix 必须退出。
@@ -644,6 +644,7 @@ Thought/Image 点击区域过大、hover 抖动、展开向下顶、选择文字
 - 图片队列 owner 修正普通 `@image` 在加入持久附件列表前提前返回的问题。队列保存外部附件摘要而非大块 inline data URL；工作区原图随后变化时，执行仍读取入队时冻结的字节，同时 text-only 主模型保留工具可读路径语义，不被强迫启用 vision。
 - maintenance owner 把 Desktop draft、Controller skill edit 和 serve effort 写入迁到严格、可返回错误的 config loader；同步后的 production panic-loader 闸门继续保持通过。`repolint` baseline 从最终树重建为 1195 个 finding、435 个文件。
 - 现场依据：`2026-09-18-jev-learning` 的 compaction 请求被 DeepSeek 报告为 `1101407 messages + 8192 completion > 1048576`；本地日志只记录一次请求并直接失败，证明旧路径没有进入 overflow ladder。回归测试使用同形态裸 400，不使用预构造的 `ContextLimitError`。
+- 真实恢复验收确认 context owner 已工作：同一 v4 会话从 resume 后约 `2.4M/236%` 经手动有界 rescue 最终降至约 `683.9K/68%`。CLI shell owner 补充长操作可见性：TUI 接管前的 canonical restore 持续显示加载阶段与耗时；手动压缩在同一 operation card 上显示第 N 批摘要及每批落地后的 context 估算，不再让数分钟网络摘要表现成无状态卡死。中途的 `798.1K` 是后一批完成前的真实投影，不作为 footer 失效另建状态源。
 - 以上均折叠进既有 `interactive shell`、`oversized context`、session/runtime、图片队列与维护 owner，不增加产品语义补丁数量，不改变 canonical transcript，也不写入真实历史会话做验收。
 
 ## 每次追上游的执行协议
