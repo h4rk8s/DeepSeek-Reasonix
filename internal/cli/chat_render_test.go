@@ -1225,6 +1225,44 @@ func TestToolWorkingLineThenClears(t *testing.T) {
 	}
 }
 
+// TestConsecutiveNoOutputToolsKeepOneWorkingRow covers parallel dispatches
+// that have not streamed output yet. The renderer owns one live timer, so a
+// newer dispatch must replace the older placeholder while preserving both
+// indexed slots for out-of-order results.
+func TestConsecutiveNoOutputToolsKeepOneWorkingRow(t *testing.T) {
+	m := newTestChatTUI()
+	m.ingestEvent(event.Event{Kind: event.ToolDispatch, Tool: event.Tool{ID: "c1", Name: "symbol_context", Args: `{"q":"first"}`}})
+	firstIdx := m.shellTranscriptIdx["c1"]
+	m.tickToolRunning()
+
+	m.ingestEvent(event.Event{Kind: event.ToolDispatch, Tool: event.Tool{ID: "c2", Name: "symbol_context", Args: `{"q":"second"}`}})
+	secondIdx := m.shellTranscriptIdx["c2"]
+	m.tickToolRunning()
+
+	joined := strings.Join(renderedTranscriptBlocks(m.transcript), "\n")
+	if got := strings.Count(joined, "working"); got != 1 {
+		t.Fatalf("parallel no-output tools should render one active working row, got %d:\n%s", got, joined)
+	}
+	if firstIdx == secondIdx || strings.TrimSpace(ansi.Strip(m.transcript[firstIdx].rendered)) != "" {
+		t.Fatalf("superseded placeholder should be cleared without losing its slot: first=%d second=%d first block=%q",
+			firstIdx, secondIdx, ansi.Strip(m.transcript[firstIdx].rendered))
+	}
+
+	// A late result for the first tool must not clear the second tool's timer.
+	m.ingestEvent(event.Event{Kind: event.ToolResult, Tool: event.Tool{ID: "c1", Name: "symbol_context"}})
+	joined = strings.Join(renderedTranscriptBlocks(m.transcript), "\n")
+	if got := strings.Count(joined, "working"); got != 1 || m.toolStreamID != "c2" {
+		t.Fatalf("late first result should leave the active second timer intact: id=%q working=%d\n%s",
+			m.toolStreamID, got, joined)
+	}
+
+	m.ingestEvent(event.Event{Kind: event.ToolResult, Tool: event.Tool{ID: "c2", Name: "symbol_context"}})
+	joined = strings.Join(renderedTranscriptBlocks(m.transcript), "\n")
+	if strings.Contains(joined, "working") {
+		t.Fatalf("all working rows should clear after both tools finish:\n%s", joined)
+	}
+}
+
 // TestConsecutiveToolCallsKeepMarkersUnderOwnCard is a regression test for
 // back-to-back Bash tool calls. Before the fix, the late ToolProgress for
 // the first tool (already superseded in the controller by a second

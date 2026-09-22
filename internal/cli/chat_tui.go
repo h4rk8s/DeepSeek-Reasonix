@@ -3207,6 +3207,15 @@ func (m *chatTUI) beginToolRunning(id string) {
 	if id == "" {
 		return
 	}
+	// The live tool renderer has one active timer. When parallel dispatches
+	// arrive before either tool produces output, retire the superseded timer's
+	// placeholder before opening the next one. Its indexed slot remains in the
+	// transcript so late progress or a result can still be projected under the
+	// correct tool card instead of leaving two frozen "working" rows visible.
+	if !m.nativeScrollback && m.toolStreamID != "" && m.toolStreamID != id &&
+		m.toolStreamIdx >= 0 && m.toolLineCount == 0 && m.toolPartial == "" {
+		m.rewriteConnectorBlock(m.toolStreamIdx, nil)
+	}
 	m.toolStreamID = id
 	m.toolTail = m.toolTail[:0]
 	m.toolPartial = ""
