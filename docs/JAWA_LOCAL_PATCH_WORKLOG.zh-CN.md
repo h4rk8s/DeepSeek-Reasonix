@@ -6,15 +6,15 @@
 
 - 唯一长期分支：`jawa/reasonix-composer-state-visibility`
 - 主 checkout：`/Users/jawa/Lab/2026-07-06-reasonix-dev`
-- 本轮固定上游：`ec0df71ec1290345d606e6ba61f2965a76694447`（`desktop-v1.38.11-56-gec0df71ec`）
-- 补丁结构：13 个产品语义 owner + 2 个维护闸门 + 1 个临时 renderer pin，共 16 个受维护单元。计费日历、队列图片预算、canonical session 适配、runtime context pressure 和 resume/compaction progress 等 follow-up fix 仍归所属 owner，不增加语义补丁数量。固定上游至当前 HEAD 共 30 个线性提交，其中 29 个实现/维护提交，另 1 个为本台账的口径修正；准确提交列表以本文给出的 `git log` 命令为准。
+- 本轮固定上游：`4fad310c931e4c24e267fbee20276f54a0fe6122`（`desktop-v1.38.11-80-g4fad310c9`）
+- 补丁结构：13 个产品语义 owner + 2 个维护闸门 + 1 个临时 renderer pin，共 16 个受维护单元。计费日历、队列图片预算、canonical session 适配、runtime context pressure 和 resume/compaction progress 等 follow-up fix 仍归所属 owner，不增加语义补丁数量。固定上游至当前 HEAD 共 31 个线性提交，其中 30 个实现/维护提交，另 1 个为台账口径修正；准确提交列表以本文给出的 `git log` 命令为准。
 - 同步入口：`scripts/jawa-upstream-sync.sh`
 - 临时 worktree：只允许位于仓库内 `.worktree/<task>`
 
 本台账描述行为契约，不把某次提交 SHA 当成真源。每次重放后，准确提交以：
 
 ```sh
-git log --reverse --format='%H %s' ec0df71ec1290345d606e6ba61f2965a76694447..HEAD
+git log --reverse --format='%H %s' 4fad310c931e4c24e267fbee20276f54a0fe6122..HEAD
 ```
 
 为准。最后一个提交不能在自己的正文中记录自己的 SHA，避免自指。
@@ -646,6 +646,16 @@ Thought/Image 点击区域过大、hover 抖动、展开向下顶、选择文字
 - 现场依据：`2026-09-18-jev-learning` 的 compaction 请求被 DeepSeek 报告为 `1101407 messages + 8192 completion > 1048576`；本地日志只记录一次请求并直接失败，证明旧路径没有进入 overflow ladder。回归测试使用同形态裸 400，不使用预构造的 `ContextLimitError`。
 - 真实恢复验收确认 context owner 已工作：同一 v4 会话从 resume 后约 `2.4M/236%` 经手动有界 rescue 最终降至约 `683.9K/68%`。CLI shell owner 补充长操作可见性：canonical restore 从绑定开始持续显示加载阶段与耗时，直到完整 display history 读取结束、TUI 即将接管终端才清除；手动压缩在同一 operation card 上显示第 N 批摘要及每批落地后的 context 估算，不再让数分钟网络摘要表现成无状态卡死。中途的 `798.1K` 是后一批完成前的真实投影，不作为 footer 失效另建状态源。
 - 以上均折叠进既有 `interactive shell`、`oversized context`、session/runtime、图片队列与维护 owner，不增加产品语义补丁数量，不改变 canonical transcript，也不写入真实历史会话做验收。
+
+## 2026-09-22 main-v2 canonical inbox / compact feedback 重放
+
+- 固定目标为 `4fad310c931e4c24e267fbee20276f54a0fe6122`，相对前一固定基线新增 24 个 upstream 提交；本地 30 个提交保持原顺序重放，随后新增 1 个生成物与台账维护提交。
+- 吸收 upstream 的 duplicate compaction admission、`/compact` feedback/history detection、upgrade-safe eager session creation、canonical inbox identity、settled tool state 和 live transcript 用户行顺序修复，不复制第二套 admission、identity 或 transcript owner。
+- config owner 接入 schema 11 与新版 DeepSeek catalog；普通 CLI boot 继续只读，禁止为了升级在启动阶段静默重写 `~/.reasonix/config.toml`。显式 config edit/upgrade 仍由权威 config owner 负责。
+- session/runtime owner 采用 upstream canonical identity 与 recovered input 边界；本地继续让 canonical inbox/jobs 由 Session Service 派生到会话 `.runtime/`，仅不支持 durable runtime state 的测试或嵌入 persistence 才回退临时目录。
+- context 与 CLI shell owner 复用 upstream compact 回执和历史判定；本地保留 provider overflow calibration、resume 全历史加载进度和分批 compact 进度。两者共享既有 operation/maintenance 状态，不新增语义 owner。
+- 冲突中的 Desktop contract、migration inventory 与 repolint baseline 全部从最终源码重建：inventory 911 项，repolint baseline 1193 findings / 434 files；不得提交任一冲突侧的陈旧生成物。
+- 最终结构仍为 13 个产品语义 owner、2 个维护闸门和 1 个临时 renderer pin；本轮没有新增产品语义补丁或循环依赖。
 
 ## 每次追上游的执行协议
 
