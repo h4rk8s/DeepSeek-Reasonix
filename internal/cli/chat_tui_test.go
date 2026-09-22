@@ -533,6 +533,105 @@ func TestCompactedWorkingLineUsesOneBudgetRow(t *testing.T) {
 	}
 }
 
+func TestBottomRailTransitionMatrixKeepsSingleAlignedFrame(t *testing.T) {
+	for _, width := range []int{48, 72, 110} {
+		t.Run(fmt.Sprintf("width_%d", width), func(t *testing.T) {
+			m := newInboxTestChatTUI(t)
+			m.presentation = hybridTestPresentation()
+			m.modelRef = "deepseek-flash/deepseek-v4-flash"
+			m.plannerModelRef = "deepseek-pro/deepseek-v4-pro"
+			m.input.SetValue("保留输入框")
+
+			type transition struct {
+				name       string
+				apply      func(*chatTUI)
+				wantQueue  bool
+				wantTodo   bool
+				wantVision bool
+			}
+			transitions := []transition{
+				{
+					name: "idle",
+					apply: func(m *chatTUI) {
+						m.state = tuiIdle
+					},
+				},
+				{
+					name: "running_with_queue",
+					apply: func(m *chatTUI) {
+						m.state = tuiRunning
+						m.readStatusLabel = "扩展信源已变，第一节到第三节需要重新读取并校验全部证据"
+						m.seedInbox("注意不要在当前项目留下任何临时痕迹，这是明确要求")
+					},
+					wantQueue: true,
+				},
+				{
+					name: "vision_with_queue",
+					apply: func(m *chatTUI) {
+						m.turnPhase = string(event.TurnPhaseVision)
+						m.visionModelRef = "deepseek-flash/deepseek-v4-flash-vision-exp"
+					},
+					wantQueue:  true,
+					wantVision: true,
+				},
+				{
+					name: "vision_with_queue_and_todo",
+					apply: func(m *chatTUI) {
+						m.todos = []event.Todo{
+							{Content: "核对底栏投影", Status: "completed"},
+							{Content: "检查 vision 切换", Status: "in_progress"},
+							{Content: "验证窄屏恢复", Status: "pending"},
+						}
+					},
+					wantQueue:  true,
+					wantTodo:   true,
+					wantVision: true,
+				},
+				{
+					name: "settled_after_dynamic_rows",
+					apply: func(m *chatTUI) {
+						m.state = tuiIdle
+						m.readStatusLabel = ""
+						m.turnPhase = ""
+						m.visionModelRef = ""
+						m.todos = nil
+					},
+					wantQueue: true,
+				},
+			}
+
+			for _, step := range transitions {
+				t.Run(step.name, func(t *testing.T) {
+					step.apply(&m)
+					next, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: 24})
+					m = next.(chatTUI)
+
+					view := ansi.Strip(m.View().Content)
+					if got := strings.Count(view, "\n") + 1; got != m.height {
+						t.Fatalf("View() total lines = %d, want %d:\n%s", got, m.height, view)
+					}
+					if got, want := m.transcriptHeight()+m.bottomRows(), m.height; got != want {
+						t.Fatalf("transcriptHeight(%d) + bottomRows(%d) = %d, want %d",
+							m.transcriptHeight(), m.bottomRows(), got, want)
+					}
+					if !strings.Contains(view, "保留输入框") {
+						t.Fatalf("composer disappeared during transition:\n%s", view)
+					}
+					if got := strings.Count(view, "[1]"); (got == 1) != step.wantQueue {
+						t.Fatalf("queued row count = %d, wantQueue=%v:\n%s", got, step.wantQueue, view)
+					}
+					if got := strings.Count(view, "To-dos"); (got == 1) != step.wantTodo {
+						t.Fatalf("todo panel count = %d, wantTodo=%v:\n%s", got, step.wantTodo, view)
+					}
+					if got := strings.Count(view, "vision flash"); width >= 72 && (got == 1) != step.wantVision {
+						t.Fatalf("vision footer count = %d, wantVision=%v:\n%s", got, step.wantVision, view)
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestManualNewlineGrowsComposerWithoutHidingFirstLine(t *testing.T) {
 	ctrl := newOwnedTestController(t, control.Options{})
 	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 40)

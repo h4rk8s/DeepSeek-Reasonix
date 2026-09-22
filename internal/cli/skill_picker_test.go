@@ -8,6 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"reasonix/internal/control"
 	"reasonix/internal/i18n"
 	"reasonix/internal/skill"
 )
@@ -762,8 +763,7 @@ func TestSortedSkills(t *testing.T) {
 
 func TestSkillPickerRendersInMainArea(t *testing.T) {
 	m := newTestChatTUI()
-	m.width = 80
-	m.height = 40
+	m.ctrl = newOwnedTestController(t, control.Options{})
 	m.skillPick = &skillPicker{
 		mode: pickerSkills,
 		skills: []skill.Skill{
@@ -772,10 +772,12 @@ func TestSkillPickerRendersInMainArea(t *testing.T) {
 			{Name: "c", Description: "desc", Scope: skill.ScopeBuiltin},
 		},
 	}
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
+	m = next.(chatTUI)
 
 	rows := m.bottomRows()
 	footerRows := strings.Count(m.renderMainManagerFooter(), "\n") + 1
-	if want := footerRows + 2; rows != want {
+	if want := footerRows + m.computeStatusLineCount(m.width); rows != want {
 		t.Fatalf("bottomRows with skill picker open got %d, want %d (footer + status rows)", rows, want)
 	}
 	if !m.hideComposer() {

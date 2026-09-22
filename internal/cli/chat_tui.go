@@ -459,9 +459,8 @@ type chatTUI struct {
 	statuslineOut string
 	gitStatus     gitStatus
 
-	// statusLineCount is the number of terminal rows the status block occupies:
-	// optional wrapped working line plus two fixed pinned rows. Updated each
-	// frame via computeStatusLineCount so bottomRows can reserve the correct height.
+	// statusLineCount caches the projected status height for diagnostics and
+	// tests. bottomRows measures the shared bottom-rail projection directly.
 	statusLineCount int
 
 	// modelSwitchPending is true while any async controller rebuild is in flight.
@@ -2306,17 +2305,34 @@ func (m *chatTUI) commitTurnSeparator() {
 	}
 }
 
-// bottomRows is the terminal-row height of the pinned bottom region: any open
-// bottom panels (todo / approval / chooser / rewind / completion), the composer
-// when visible, and the two fixed status rows. Full-screen managers such as MCP
-// and skills normally render inside the main transcript area; in native
-// scrollback mode they join the bottom rail because there is no main viewport.
-func (m chatTUI) bottomRows() int {
-	rows := 0
-	if m.showJumpToBottomPrompt() {
-		rows++
+type bottomRailProjection struct {
+	beforeComposer     []string
+	rowsBeforeComposer int
+	hideComposer       bool
+	statusBlock        string
+	statusRows         int
+}
+
+func (p bottomRailProjection) rows(composerRows int) int {
+	return p.rowsBeforeComposer + composerRows + p.statusRows
+}
+
+// projectBottomRail is the sole owner of the pinned region's component order
+// and row accounting. View and viewport sizing consume this same projection so
+// adding or changing a panel cannot leave stale terminal rows behind.
+func (m chatTUI) projectBottomRail(width int, styled bool) bottomRailProjection {
+	width = max(width, 10)
+	p := bottomRailProjection{hideComposer: m.hideComposer()}
+	appendPart := func(part string) {
+		if part == "" {
+			return
+		}
+		p.beforeComposer = append(p.beforeComposer, part)
+		p.rowsBeforeComposer += strings.Count(part, "\n") + 1
 	}
-	for _, s := range []string{
+
+	appendPart(m.renderJumpToBottomPrompt(width))
+	for _, part := range []string{
 		m.renderTodoPanel(),
 		m.renderApprovalBanner(),
 		m.renderChooser(),
@@ -2329,32 +2345,34 @@ func (m chatTUI) bottomRows() int {
 		m.renderCopyPicker(),
 		m.renderCompletion(),
 	} {
-		if s != "" {
-			rows += strings.Count(s, "\n") + 1
-		}
+		appendPart(part)
 	}
-	// Remove the hardcoded working-line increment — it is counted inside
-	// statusLineCount via computeStatusLineCount, which also accounts for
-	// wrapping. The fallback to 2 (unwrapped) covers the initial frame and
-	// tests that don't call Update first.
 	if m.nativeScrollback {
-		if main := m.renderMainManager(); main != "" {
-			rows += strings.Count(main, "\n") + 1
-		}
+		appendPart(m.renderMainManager())
 	}
-	if footer := m.renderMainManagerFooter(); footer != "" {
-		rows += strings.Count(footer, "\n") + 1
+
+	status := m.projectStatus(width, styled)
+	if status.working != "" {
+		appendPart(workingStyle.Width(width).MaxWidth(width).Render(compactStatusLine(status.working, width)))
 	}
-	if !m.hideComposer() {
-		if qi := m.renderQueueIndicator(); qi != "" {
-			rows += strings.Count(qi, "\n") + 1
-		}
-		rows += m.input.Height() + m.composerBorderRows()
+	appendPart(m.renderMainManagerFooter())
+	if !p.hideComposer {
+		appendPart(m.renderQueueIndicator())
 	}
-	if m.statusLineCount > 0 {
-		return rows + m.statusLineCount
+	p.statusBlock = statusBlockStyle.Width(width).MaxWidth(width).Render(status.block)
+	p.statusRows = strings.Count(p.statusBlock, "\n") + 1
+	return p
+}
+
+// bottomRows is the terminal-row height of the pinned bottom region: any open
+// bottom panels, the composer when visible, and the projected status footer.
+func (m chatTUI) bottomRows() int {
+	p := m.projectBottomRail(m.width, false)
+	composerRows := 0
+	if !p.hideComposer {
+		composerRows = m.input.Height() + m.composerBorderRows()
 	}
-	return rows + 2 // fallback for tests that don't set statusLineCount
+	return p.rows(composerRows)
 }
 
 // hideComposer is the single ownership gate for the bottom composer.
@@ -3635,7 +3653,8 @@ func (m chatTUI) View() tea.View {
 		return v
 	}
 	boxW := max(m.width, 10)
-	hideComposer := m.hideComposer()
+	rail := m.projectBottomRail(boxW, true)
+	hideComposer := rail.hideComposer
 	shellMode := strings.HasPrefix(strings.TrimSpace(m.input.Value()), "!")
 	var box string
 	if !hideComposer {
@@ -3649,88 +3668,20 @@ func (m chatTUI) View() tea.View {
 		box = style.Render(m.renderComposerInput())
 	}
 
-	status := m.projectStatus(boxW, true)
-	// Bottom region pinned under the transcript viewport: optional panels, the
-	// composer when visible, then the two status rows. Its height feeds
-	// transcriptHeight so the viewport above fills exactly the rest of the screen.
-	var parts []string
-	rowsAboveBox := 0 // terminal rows occupied by panels/working line before the composer
-	if jump := m.renderJumpToBottomPrompt(boxW); jump != "" {
-		parts = append(parts, jump)
-		rowsAboveBox++
-	}
-	if todo := m.renderTodoPanel(); todo != "" {
-		parts = append(parts, todo)
-		rowsAboveBox += strings.Count(todo, "\n") + 1
-	}
-	if banner := m.renderApprovalBanner(); banner != "" {
-		parts = append(parts, banner)
-		rowsAboveBox += strings.Count(banner, "\n") + 1
-	}
-	if card := m.renderChooser(); card != "" {
-		parts = append(parts, card)
-		rowsAboveBox += strings.Count(card, "\n") + 1
-	}
-	if card := m.renderElicit(); card != "" {
-		parts = append(parts, card)
-		rowsAboveBox += strings.Count(card, "\n") + 1
-	}
-	if card := m.renderRewind(); card != "" {
-		parts = append(parts, card)
-		rowsAboveBox += strings.Count(card, "\n") + 1
-	}
-	if card := m.renderMCPImport(); card != "" {
-		parts = append(parts, card)
-		rowsAboveBox += strings.Count(card, "\n") + 1
-	}
-	if card := m.renderResumePicker(); card != "" {
-		parts = append(parts, card)
-		rowsAboveBox += strings.Count(card, "\n") + 1
-	}
-	if card := m.renderQuickPicker(); card != "" {
-		parts = append(parts, card)
-		rowsAboveBox += strings.Count(card, "\n") + 1
-	}
-	if card := m.renderConnectionSetup(); card != "" {
-		parts = append(parts, card)
-		rowsAboveBox += strings.Count(card, "\n") + 1
-	}
-	if card := m.renderCopyPicker(); card != "" {
-		parts = append(parts, card)
-		rowsAboveBox += strings.Count(card, "\n") + 1
-	}
-	if menu := m.renderCompletion(); menu != "" {
-		parts = append(parts, menu)
-		rowsAboveBox += strings.Count(menu, "\n") + 1
-	}
-	if m.nativeScrollback {
-		if card := m.renderMainManager(); card != "" {
-			parts = append(parts, card)
-			rowsAboveBox += strings.Count(card, "\n") + 1
-		}
-	}
+	// Bottom region pinned under the transcript viewport. Its component order
+	// and measured height come from the same projection as bottomRows.
+	parts := append([]string(nil), rail.beforeComposer...)
+	rowsAboveBox := rail.rowsBeforeComposer
 	// Layout: the working spinner (when running), then the composer when visible,
 	// then the persistent status block. Wide terminals keep two information rows
 	// separated by a quiet rule: interaction + model/profile, then flexible Git
 	// + fixed telemetry. Narrow
 	// terminals break only between those semantic groups. Padding to full width
 	// prevents stale cells.
-	if status.working != "" {
-		parts = append(parts, workingStyle.Width(boxW).MaxWidth(boxW).Render(compactStatusLine(status.working, boxW)))
-		rowsAboveBox++
-	}
-	if footer := m.renderMainManagerFooter(); footer != "" {
-		parts = append(parts, footer)
-		rowsAboveBox += strings.Count(footer, "\n") + 1
-	}
 	if !hideComposer {
-		if qi := m.renderQueueIndicator(); qi != "" {
-			parts = append(parts, qi)
-			rowsAboveBox += strings.Count(qi, "\n") + 1
-		}
 		parts = append(parts, box)
 	}
-	parts = append(parts, statusBlockStyle.Width(boxW).MaxWidth(boxW).Render(status.block))
+	parts = append(parts, rail.statusBlock)
 
 	if m.nativeScrollback {
 		v := tea.NewView(strings.Join(parts, "\n"))
@@ -4409,7 +4360,7 @@ func compactStatusLine(s string, width int) string {
 // (optional working line + first status line + data line) will occupy. Status
 // rows are compacted, never wrapped, so this is intentionally fixed-height.
 func (m chatTUI) computeStatusLineCount(width int) int {
-	return m.projectStatus(width, false).rows
+	return m.projectStatus(max(width, 10), false).rows
 }
 
 // The composer grows with its content up to this comfort cap. The effective
