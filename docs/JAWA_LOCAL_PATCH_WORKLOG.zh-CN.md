@@ -7,7 +7,7 @@
 - 唯一长期分支：`jawa/reasonix-composer-state-visibility`
 - 主 checkout：`/Users/jawa/Lab/2026-07-06-reasonix-dev`
 - 本轮固定上游：`4fad310c931e4c24e267fbee20276f54a0fe6122`（`desktop-v1.38.11-80-g4fad310c9`）
-- 补丁结构：13 个产品语义 owner + 2 个维护闸门 + 1 个临时 renderer pin，共 16 个受维护单元。计费日历、队列图片预算、canonical session 适配、runtime context pressure 和 resume/compaction progress 等 follow-up fix 仍归所属 owner，不增加语义补丁数量。固定上游至当前 HEAD 共 34 个线性提交，其中 33 个实现/维护提交，另 1 个为台账口径修正；准确提交列表以本文给出的 `git log` 命令为准。
+- 补丁结构：13 个产品语义 owner + 2 个维护闸门 + 1 个临时 renderer pin，共 16 个受维护单元。计费日历、队列图片预算、canonical session 适配、runtime context pressure 和 resume/compaction progress 等 follow-up fix 仍归所属 owner，不增加语义补丁数量。固定上游至当前 HEAD 共 35 个线性提交，其中 34 个实现/维护提交，另 1 个为台账口径修正；准确提交列表以本文给出的 `git log` 命令为准。
 - 同步入口：`scripts/jawa-upstream-sync.sh`
 - 临时 worktree：只允许位于仓库内 `.worktree/<task>`
 
@@ -658,6 +658,7 @@ Thought/Image 点击区域过大、hover 抖动、展开向下顶、选择文字
 - 冲突中的 Desktop contract、migration inventory 与 repolint baseline 全部从最终源码重建：inventory 911 项，repolint baseline 1193 findings / 434 files；不得提交任一冲突侧的陈旧生成物。
 - Desktop Goal/Plan rebuild 单测显式关闭真实 environment probe，避免测试调用本机 `docker --version` 并在 `forkExec` 前置阶段悬挂；生产环境探测逻辑和用户配置不变。
 - CLI presentation owner 在连续零输出 tool dispatch 时只保留当前 live timer；被取代的 `working` 占位原位清空但保留 indexed slot，旧 tool 的迟到 progress/result 仍回到自己的 card，不再同时残留冻结计时和新计时两条伪“错位”状态。
+- CLI-only 安装的默认版本只匹配 `v*` tag，避免仓库中距离更近的 `desktop-v*` tag 污染 `reasonix --version`；这只改变 CLI 构建标识，不引入 Desktop 安装或运行依赖。
 - 最终结构仍为 13 个产品语义 owner、2 个维护闸门和 1 个临时 renderer pin；本轮没有新增产品语义补丁或循环依赖。
 
 ## 每次追上游的执行协议
