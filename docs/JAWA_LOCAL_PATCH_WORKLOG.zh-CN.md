@@ -1,13 +1,13 @@
 # Jawa 本地 Reasonix 语义补丁台账
 
-更新时间：2026-09-22
+更新时间：2026-09-23
 
 ## 维护基线
 
 - 唯一长期分支：`jawa/reasonix-composer-state-visibility`
 - 主 checkout：`/Users/jawa/Lab/2026-07-06-reasonix-dev`
 - 本轮固定上游：`4fad310c931e4c24e267fbee20276f54a0fe6122`（`desktop-v1.38.11-80-g4fad310c9`）
-- 补丁结构：13 个产品语义 owner + 2 个维护闸门 + 1 个临时 renderer pin，共 16 个受维护单元。计费日历、队列图片预算、canonical session 适配、runtime context pressure 和 resume/compaction progress 等 follow-up fix 仍归所属 owner，不增加语义补丁数量。固定上游至当前 HEAD 共 38 个线性提交，其中 37 个实现/维护提交，另 1 个为台账口径修正；准确提交列表以本文给出的 `git log` 命令为准。
+- 补丁结构：14 个产品语义 owner + 2 个维护闸门 + 1 个临时 renderer pin，共 17 个受维护单元。计费日历、队列图片预算、canonical session 适配、runtime context pressure 和 resume/compaction progress 等 follow-up fix 仍归所属 owner，不增加语义补丁数量。固定上游至当前 HEAD 共 39 个线性提交，其中 38 个实现/维护提交，另 1 个为台账口径修正；准确提交列表以本文给出的 `git log` 命令为准。
 - 同步入口：`scripts/jawa-upstream-sync.sh`
 - 临时 worktree：只允许位于仓库内 `.worktree/<task>`
 
@@ -60,13 +60,16 @@ upstream memory Scope + FreshnessFor
 upstream ContextManager
   -> overflow recovery + complete-tool-boundary maintenance
 
+committed tool round + provider terminal
+  -> visible final completion
+
 upstream operation ledger
   -> exact receipt reference
 ```
 
 箭头只允许从基础 owner 指向 consumer。最终代码中不存在反向 import，也不存在一个 consumer 回写基础真源的自指环。
 
-## 13 个产品语义补丁
+## 14 个产品语义补丁
 
 下面顺序是长期线的真实 replay 顺序。每一个中间提交都应可构建；后续补丁可以把早期临时表示迁移到最终 owner，但不得要求“未来提交先存在”。
 
@@ -495,16 +498,44 @@ Thought/Image 点击区域过大、hover 抖动、展开向下顶、选择文字
 
 上游支持 stable-ID atomic attachment、完整鼠标/删除/撤销和 queue/history 保真后可退休。
 
+### 14. `fix(agent): require visible completion after tool work`
+
+**用户问题**
+
+长程任务执行多个工具后，模型偶尔只返回 reasoning 并以 `finish_reason=stop` 结束。上游把它当作成功完成，TUI 直接回到输入框，却没有任何可见结论或继续动作，看起来像任务无故中断。
+
+**最终行为**
+
+- 本轮只要成功进入过工具执行，reasoning-only terminal 就不能作为用户可见完成。
+- 复用既有 empty-final bounded retry，要求模型基于已完成工作给出可见答案；最多重试既有上限，连续失败时明确报错。
+- 没有工具的普通 reasoning-only clean stop 仍保留上游行为，不为每个短问答增加请求。
+- 不从 reasoning 文本猜测“是否完成”，只消费 typed turn state、visible content 和 provider terminal。
+
+**Owner 与边界**
+
+- Owner：agent final-response completion contract。
+- 单向依赖 `turnRuntime.usedAnyTool`；不回写 tool executor、ContextManager、TUI 或 transcript projection，不产生循环依赖。
+
+**验证**
+
+- tool round -> reasoning-only stop -> visible-final retry；
+- 普通 reasoning-only completion 仍只调用一次 provider；
+- 显式 `RequireVisibleFinal`、Goal、subagent 和 CLI completion 回归。
+
+**退休条件**
+
+上游对 post-tool reasoning-only terminal 提供同等有界恢复，并保证前台任务不会在没有可见结果时静默结束后可退休。
+
 ## 2 个维护闸门
 
-### 14. `test(tool): benchmark the canonical tool contract`
+### 15. `test(tool): benchmark the canonical tool contract`
 
 - 目的：守住一份 canonical ToolKind/schema/executor，检测 schema allocation 和 contract 漂移。
 - 它不是产品能力，也不宣称已经实现 DeepSeek/Codex/OpenCode 多方言 A/B。
 - 若未来做 dialect projection，只允许变更 name/description/schema/envelope；permission、sandbox、path、execution、event 和 evidence 仍共用 canonical executor。
 - 上游已有等价 benchmark 时可合并；不能为了减少提交删掉唯一的回归门。
 
-### 15. `chore(sync): maintain semantic patch stack and structural ratchet`
+### 16. `chore(sync): maintain semantic patch stack and structural ratchet`
 
 - 只容纳 replay 脚本、详细 worklog、上游测试环境兼容和代码结构 ratchet。
 - 从巨型文件抽出已有 owner，不新增用户行为：
@@ -515,9 +546,9 @@ Thought/Image 点击区域过大、hover 抖动、展开向下顶、选择文字
   - config edit、eventwire usage、serve effort、Desktop channel route -> 各自 owner 文件
 - `repolint` 必须证明相对旧长期分支不扩大 complexity/file/function/test-size 债务。
 - `internal/worktree` 的 `TestMain` 必须隔离 global/system Git config，任何 hook 测试都不得解析或改写用户的 `core.hooksPath`。
-- 维护补丁不得重新收容本应属于前 13 个 owner 的 runtime feature。
+- 维护补丁不得重新收容本应属于前 14 个 owner 的 runtime feature。
 
-## 旧 20 补丁到当前 15 个 owner 的映射
+## 旧 20 补丁到当前 16 个 owner 的映射
 
 | 旧补丁 | 新 owner | 处理结果 |
 |---|---|---|
@@ -528,11 +559,11 @@ Thought/Image 点击区域过大、hover 抖动、展开向下顶、选择文字
 | 5 worktree lifecycle | 4 subagent isolation | 保留隔离；删除本地 git-apply 生命周期 |
 | 6 usage ledger | 5 usage | 保留完整性/归因；删除本地 repricing 和 UsageModel 双真源 |
 | 7 memory recall | 6 memory | 保留 diversity；删除 SourceScope/LastConfirmedAt 双真源 |
-| 8 tool benchmark | 14 maintenance test | 移出产品语义计数 |
+| 8 tool benchmark | 15 maintenance test | 移出产品语义计数 |
 | 9 strict config | 7 config | 与 provenance 合并，panic API 改为 error |
 | 10 disclosures | 9 presentation | 与 transcript/status/viewport 展示合并 |
 | 11 queue clear | 10 inbox | 原样保留并固定 autocomplete |
-| 12 sync workflow | 15 maintenance | runtime 变更归还 owner，只保留维护资产 |
+| 12 sync workflow | 16 maintenance | runtime 变更归还 owner，只保留维护资产 |
 | 13 canonical transcript | 8 transcript | 提升为唯一语义 projection |
 | 14 capability repair | 11 capability | 保留并限制为 deterministic one-retry |
 | 15 config provenance | 7 config | 与 authoritative config 合并 |
@@ -541,7 +572,7 @@ Thought/Image 点击区域过大、hover 抖动、展开向下顶、选择文字
 | 18 evidence receipt | upstream operation ledger | v1.38.6 已以更强的 operation-scoped host receipt 覆盖，退休本地顺序 ID 实现 |
 | 19 vision footer | 9 presentation | 并入 status projection，不再单独计数 |
 | 20 image token | 13 composer | 重写为 stable-ID typed parts |
-| owner refactor commits | 对应 1-15 | fixup 到各 owner；结构抽取集中进入 15 |
+| owner refactor commits | 对应 1-16 | fixup 到各 owner；结构抽取集中进入 16 |
 
 结果：没有用户能力被按名称粗暴删除；删除的是已被上游更强覆盖的第二套 receipt ID，以及重复真源、错误 apply/repricing、自然语言猜测和散落实现。
 
@@ -663,6 +694,14 @@ Thought/Image 点击区域过大、hover 抖动、展开向下顶、选择文字
 - CLI presentation owner 进一步把 jump、todo、approval、picker、live working、manager footer、inbox queue 和 status footer 收敛为单一 bottom-rail projection，`View()` 与 viewport 高度预算不再各维护一份组件清单。48/72/110 列下的 idle、running、vision、queue、todo 及回落状态使用连续切换矩阵验收，防止新增动态行再次产生空行、重复行或 composer/footer 位移。
 - 真实 Ghostty 现场仍捕获到旧 pinned working 行残留；该行同时带 token/inbox，确认不是第二个工具计时器，而是 queue/composer/footer 改变 working 行距底部偏移后，增量重绘未清掉上一帧边界。viewport projection 仅在非 resize、非 native scrollback 且 working 行持续存在但实际换位时请求一次全量重绘；位于 working 上方的 todo/jump 变化和稳定计时帧继续增量渲染，不扩大成泛化清屏。
 - 最终结构仍为 13 个产品语义 owner、2 个维护闸门和 1 个临时 renderer pin；本轮没有新增产品语义补丁或循环依赖。
+
+## 2026-09-23 post-tool 可见完成语义
+
+- 真实现场：`2026-09-21-jev-h4rk` 恢复的长程研究会话完成连续 Bash 工具轮后，只出现 `Thought for 2s` 和 usage，随后 TUI 回到输入框；进程仍存活，watchdog 从 running 正常进入 idle，且没有 cancel 或 hard-kill，因此不是 crash、PTY 背压或 context compact。
+- 根因：上游 `handleFinalResponse` 把 reasoning-only clean `stop` 视为成功完成，即使同一 Run 已执行工具且没有任何用户可见结果。
+- 本地契约：`turnRuntime.usedAnyTool` 为真时，reasoning-only terminal 进入既有 bounded visible-final retry；没有工具的普通 clean stop 不变。判断只依赖 typed turn state，不解析 reasoning 文本。
+- 该行为由新增的 final-response completion owner 持有，不并入 ContextManager、CLI renderer 或 transcript owner。结构更新为 14 个产品语义 owner、2 个维护闸门和 1 个临时 renderer pin，共 17 个受维护单元；依赖保持单向，无循环。
+- `repolint` baseline 从最终树重建为 1191 个 finding、435 个文件；新增回归位于独立测试文件，不继续扩大既有超大 `empty_final_test.go`。
 
 ## 每次追上游的执行协议
 

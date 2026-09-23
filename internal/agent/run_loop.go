@@ -323,11 +323,10 @@ func (a *Agent) handleFinalResponse(ctx context.Context, state *turnRuntime, tex
 		return false, a.gracePause(state)
 	}
 	if !hasVisibleFinalAnswer(text) {
-		// Harness-style termination accepts a reasoning-only clean stop. Only
-		// explicit internal callers that require visible output retain the
-		// bounded synthetic retry below. A truly empty response is classified
-		// before this function and retried with the frozen provider request.
-		if a.requireVisibleFinal {
+		// A post-tool reasoning-only stop strands long-running work without a
+		// visible result, so tools and explicit callers use the bounded retry.
+		// Truly empty provider responses are classified and retried earlier.
+		if a.requireVisibleFinal || state.usedAnyTool {
 			state.terminal.emptyFinalBlocks++
 			if state.terminal.emptyFinalBlocks >= maxEmptyFinalBlocks {
 				return false, fmt.Errorf("model finished without a visible final answer %d times", state.terminal.emptyFinalBlocks)
