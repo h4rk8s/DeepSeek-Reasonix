@@ -7,7 +7,7 @@
 - 唯一长期分支：`jawa/reasonix-composer-state-visibility`
 - 主 checkout：`/Users/jawa/Lab/2026-07-06-reasonix-dev`
 - 本轮固定上游：`4fad310c931e4c24e267fbee20276f54a0fe6122`（`desktop-v1.38.11-80-g4fad310c9`）
-- 补丁结构：13 个产品语义 owner + 2 个维护闸门 + 1 个临时 renderer pin，共 16 个受维护单元。计费日历、队列图片预算、canonical session 适配、runtime context pressure 和 resume/compaction progress 等 follow-up fix 仍归所属 owner，不增加语义补丁数量。固定上游至当前 HEAD 共 37 个线性提交，其中 36 个实现/维护提交，另 1 个为台账口径修正；准确提交列表以本文给出的 `git log` 命令为准。
+- 补丁结构：13 个产品语义 owner + 2 个维护闸门 + 1 个临时 renderer pin，共 16 个受维护单元。计费日历、队列图片预算、canonical session 适配、runtime context pressure 和 resume/compaction progress 等 follow-up fix 仍归所属 owner，不增加语义补丁数量。固定上游至当前 HEAD 共 38 个线性提交，其中 37 个实现/维护提交，另 1 个为台账口径修正；准确提交列表以本文给出的 `git log` 命令为准。
 - 同步入口：`scripts/jawa-upstream-sync.sh`
 - 临时 worktree：只允许位于仓库内 `.worktree/<task>`
 
@@ -661,6 +661,7 @@ Thought/Image 点击区域过大、hover 抖动、展开向下顶、选择文字
 - CLI-only 安装的默认版本只匹配 `v*` tag，避免仓库中距离更近的 `desktop-v*` tag 污染 `reasonix --version`；这只改变 CLI 构建标识，不引入 Desktop 安装或运行依赖。
 - CLI presentation owner 让单行截断的 live working 状态只占一个预算行；长中文 phase label 不再按上游多行布局重复预留高度，避免 inbox/composer 移位时残留上一帧的重复 `[1]` 行。
 - CLI presentation owner 进一步把 jump、todo、approval、picker、live working、manager footer、inbox queue 和 status footer 收敛为单一 bottom-rail projection，`View()` 与 viewport 高度预算不再各维护一份组件清单。48/72/110 列下的 idle、running、vision、queue、todo 及回落状态使用连续切换矩阵验收，防止新增动态行再次产生空行、重复行或 composer/footer 位移。
+- 真实 Ghostty 现场仍捕获到旧 pinned working 行残留；该行同时带 token/inbox，确认不是第二个工具计时器，而是 queue/composer/footer 改变 working 行距底部偏移后，增量重绘未清掉上一帧边界。viewport projection 仅在非 resize、非 native scrollback 且 working 行持续存在但实际换位时请求一次全量重绘；位于 working 上方的 todo/jump 变化和稳定计时帧继续增量渲染，不扩大成泛化清屏。
 - 最终结构仍为 13 个产品语义 owner、2 个维护闸门和 1 个临时 renderer pin；本轮没有新增产品语义补丁或循环依赖。
 
 ## 每次追上游的执行协议

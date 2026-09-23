@@ -5,25 +5,30 @@ import tea "charm.land/bubbletea/v2"
 // viewportProjection captures the pre-update facts needed to preserve the
 // visible transcript anchor while the semantic model changes.
 type viewportProjection struct {
-	logFirstFrame bool
-	followTail    bool
-	lines         int
-	width         int
-	height        int
-	yOffset       int
-	resizeAnchor  transcriptResizeAnchor
+	logFirstFrame  bool
+	followTail     bool
+	lines          int
+	width          int
+	height         int
+	workingOffset  int
+	workingVisible bool
+	yOffset        int
+	resizeAnchor   transcriptResizeAnchor
 }
 
 func captureViewportProjection(m chatTUI, msg tea.Msg) viewportProjection {
 	if m.diagnostics != nil {
 		m.diagnostics.NoteBooted()
 	}
+	workingOffset, workingVisible := m.bottomWorkingOffset()
 	p := viewportProjection{
-		followTail: m.shouldFollowTail(),
-		lines:      len(m.transcript),
-		width:      m.width,
-		height:     m.height,
-		yOffset:    m.viewport.YOffset(),
+		followTail:     m.shouldFollowTail(),
+		lines:          len(m.transcript),
+		width:          m.width,
+		height:         m.height,
+		workingOffset:  workingOffset,
+		workingVisible: workingVisible,
+		yOffset:        m.viewport.YOffset(),
 	}
 	if m.diagnostics != nil && !m.firstFrameLogged {
 		_, p.logFirstFrame = msg.(tea.WindowSizeMsg)
@@ -51,6 +56,18 @@ func (m chatTUI) applyViewportProjection(msg tea.Msg, before viewportProjection,
 	m.syncViewportTranscript(before, contentWidth, widthChanged)
 	mouseCmd := m.viewportMouseCommand(msg, before)
 
+	_, windowResize := msg.(tea.WindowSizeMsg)
+	workingOffset, workingVisible := m.bottomWorkingOffset()
+	workingMoved := before.height > 0 && !windowResize && !m.nativeScrollback &&
+		before.workingVisible && workingVisible && workingOffset != before.workingOffset
+	if workingMoved {
+		// Some terminals retain the previous pinned working row when queue,
+		// composer, or footer rows move it to a new Y position. Redraw only for
+		// that exact boundary move; transcript/jump changes above the row and
+		// stable timer frames stay incremental.
+		m.sessionSwitch = false
+		return m, batchCmds(tea.ClearScreen, mouseCmd, cmd)
+	}
 	if m.legacyScrollClear && m.viewport.YOffset() != before.yOffset && !m.nativeScrollback && !m.sessionSwitch {
 		m.sessionSwitch = false
 		return m, batchCmds(tea.ClearScreen, mouseCmd, cmd)

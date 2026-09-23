@@ -632,6 +632,77 @@ func TestBottomRailTransitionMatrixKeepsSingleAlignedFrame(t *testing.T) {
 	}
 }
 
+func TestPinnedWorkingRowMoveRequestsOneFullRedraw(t *testing.T) {
+	ctrl := newOwnedTestController(t, control.Options{})
+	base := newChatTUI(ctrl, "", make(chan event.Event, 1), 80)
+	next, _ := base.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	base = next.(chatTUI)
+	base.state = tuiRunning
+
+	assertClear := func(t *testing.T, before, after chatTUI, want bool) {
+		t.Helper()
+		projection := captureViewportProjection(before, struct{}{})
+		_, cmd := after.applyViewportProjection(struct{}{}, projection, nil)
+		if got := cmd != nil; got != want {
+			beforeOffset, _ := before.bottomWorkingOffset()
+			afterOffset, _ := after.bottomWorkingOffset()
+			t.Fatalf("ClearScreen command present = %v, want %v (working offset %d -> %d)",
+				got, want, beforeOffset, afterOffset)
+		}
+		if !want {
+			return
+		}
+		if got, wantType := reflect.TypeOf(cmd()), reflect.TypeOf(tea.ClearScreen()); got != wantType {
+			t.Fatalf("redraw command type = %v, want %v", got, wantType)
+		}
+	}
+
+	t.Run("grow", func(t *testing.T) {
+		after := base
+		after.input.SetHeight(base.input.Height() + 1)
+		assertClear(t, base, after, true)
+	})
+	t.Run("shrink", func(t *testing.T) {
+		before := base
+		before.input.SetHeight(base.input.Height() + 1)
+		assertClear(t, before, base, true)
+	})
+	t.Run("panel_above_working", func(t *testing.T) {
+		after := base
+		after.todos = []event.Todo{{Content: "inspect", Status: "in_progress"}}
+		assertClear(t, base, after, false)
+	})
+	t.Run("stable_timer_frame", func(t *testing.T) {
+		before := base
+		after := before
+		after.elapsed++
+		after.turnTokens += 100
+		assertClear(t, before, after, false)
+	})
+	t.Run("queue_appears_and_clears", func(t *testing.T) {
+		m := newInboxTestChatTUI(t)
+		next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+		m = next.(chatTUI)
+		m.state = tuiRunning
+
+		beforeQueue := captureViewportProjection(m, struct{}{})
+		m.seedInbox("queued feedback")
+		_, cmd := m.applyViewportProjection(struct{}{}, beforeQueue, nil)
+		if cmd == nil || reflect.TypeOf(cmd()) != reflect.TypeOf(tea.ClearScreen()) {
+			t.Fatal("adding a queue row below pinned working should request one full redraw")
+		}
+
+		beforeClear := captureViewportProjection(m, struct{}{})
+		if got := m.runQueueCommand([]string{"clear"}); got != "cleared 1 queued item" {
+			t.Fatalf("/queue clear = %q", got)
+		}
+		_, cmd = m.applyViewportProjection(struct{}{}, beforeClear, nil)
+		if cmd == nil || reflect.TypeOf(cmd()) != reflect.TypeOf(tea.ClearScreen()) {
+			t.Fatal("removing a queue row below pinned working should request one full redraw")
+		}
+	})
+}
+
 func TestManualNewlineGrowsComposerWithoutHidingFirstLine(t *testing.T) {
 	ctrl := newOwnedTestController(t, control.Options{})
 	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 40)

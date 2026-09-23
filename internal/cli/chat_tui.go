@@ -2308,6 +2308,8 @@ func (m *chatTUI) commitTurnSeparator() {
 type bottomRailProjection struct {
 	beforeComposer     []string
 	rowsBeforeComposer int
+	rowsThroughWorking int
+	hasWorking         bool
 	hideComposer       bool
 	statusBlock        string
 	statusRows         int
@@ -2315,6 +2317,13 @@ type bottomRailProjection struct {
 
 func (p bottomRailProjection) rows(composerRows int) int {
 	return p.rowsBeforeComposer + composerRows + p.statusRows
+}
+
+func (p bottomRailProjection) workingOffset(composerRows int) (int, bool) {
+	if !p.hasWorking {
+		return 0, false
+	}
+	return p.rowsBeforeComposer - p.rowsThroughWorking + composerRows + p.statusRows, true
 }
 
 // projectBottomRail is the sole owner of the pinned region's component order
@@ -2354,6 +2363,8 @@ func (m chatTUI) projectBottomRail(width int, styled bool) bottomRailProjection 
 	status := m.projectStatus(width, styled)
 	if status.working != "" {
 		appendPart(workingStyle.Width(width).MaxWidth(width).Render(compactStatusLine(status.working, width)))
+		p.hasWorking = true
+		p.rowsThroughWorking = p.rowsBeforeComposer
 	}
 	appendPart(m.renderMainManagerFooter())
 	if !p.hideComposer {
@@ -2373,6 +2384,15 @@ func (m chatTUI) bottomRows() int {
 		composerRows = m.input.Height() + m.composerBorderRows()
 	}
 	return p.rows(composerRows)
+}
+
+func (m chatTUI) bottomWorkingOffset() (int, bool) {
+	p := m.projectBottomRail(m.width, false)
+	composerRows := 0
+	if !p.hideComposer {
+		composerRows = m.input.Height() + m.composerBorderRows()
+	}
+	return p.workingOffset(composerRows)
 }
 
 // hideComposer is the single ownership gate for the bottom composer.
