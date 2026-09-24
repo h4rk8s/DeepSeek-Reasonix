@@ -1717,7 +1717,7 @@
       "kind": "command",
       "name": "GetSessionOrganization",
       "detail": "(workspace SessionOrganizationWorkspace) (SessionOrganizationSnapshot, error)",
-      "location": "desktop/session_organization.go:241",
+      "location": "desktop/session_organization.go:246",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -6157,7 +6157,7 @@
       "kind": "command",
       "name": "UpdateSessionOrganization",
       "detail": "(workspace SessionOrganizationWorkspace, expectedRevision uint64, mutation SessionOrganizationMutation) (SessionOrganizationSnapshot, error)",
-      "location": "desktop/session_organization.go:249",
+      "location": "desktop/session_organization.go:254",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },

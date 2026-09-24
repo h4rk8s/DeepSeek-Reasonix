@@ -889,26 +889,6 @@ export type TranscriptEntryKind =
   | "extension"
   | "unknown";
 
-export interface HistoryToolCall {
-	partial?: boolean;
-	pending?: boolean;
-	parentId?: string;
-	argChars?: number;
-	startedAt?: number;
-  id: string;
-  name: string;
-  arguments: string;
-  resolvedName?: string;
-  capabilityId?: string;
-  resolvedReadOnly?: boolean;
-  subject?: string;
-  summary?: string;
-  diff?: string;
-  added?: number;
-  removed?: number;
-  argumentsArchived?: boolean;
-}
-
 export interface HistoryPage {
   messages: HistoryMessage[];
   startTurn: number;

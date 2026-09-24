@@ -4,13 +4,13 @@
     "commented-code": 0,
     "complexity": 1917,
     "essay": 1795,
-    "file-size": 99874,
+    "file-size": 99880,
     "function-size": 8121,
     "layering": 1,
     "marker": 0,
     "narrative": 63,
     "struct-state": 104,
-    "test-file-size": 65390
+    "test-file-size": 65353
   },
   "files": {
     "cmd/e2ebench/main.go": {
@@ -138,7 +138,7 @@
       "file-size": 177
     },
     "desktop/frontend/src/lib/bridge.ts": {
-      "file-size": 5131
+      "file-size": 5137
     },
     "desktop/frontend/src/lib/crash.ts": {
       "file-size": 97
@@ -676,7 +676,7 @@
     },
     "internal/cli/cli_test.go": {
       "essay": 1,
-      "test-file-size": 1482
+      "test-file-size": 1445
     },
     "internal/cli/complete.go": {
       "essay": 1,

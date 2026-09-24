@@ -6,15 +6,15 @@
 
 - 唯一长期分支：`jawa/reasonix-composer-state-visibility`
 - 主 checkout：`/Users/jawa/Lab/2026-07-06-reasonix-dev`
-- 本轮固定上游：`62862f48a6923cada12f629da150cc098f25002d`（`desktop-v1.38.12-6-g62862f48a`）
-- 补丁结构：14 个产品语义 owner + 2 个维护闸门 + 1 个临时 renderer pin，共 17 个受维护单元。计费日历、队列图片预算、canonical session 适配、runtime context pressure 和 resume/compaction progress 等 follow-up fix 仍归所属 owner，不增加语义补丁数量。固定上游至当前 HEAD 共 40 个线性提交：原 39 个补丁逐项重放，另 1 个为本轮生成物与台账维护提交；准确提交列表以本文给出的 `git log` 命令为准。
+- 本轮固定上游：`675b5741f587b6faa9b1fff6e5b01f563cdc2e7b`
+- 补丁结构：14 个产品语义 owner + 2 个维护闸门 + 1 个临时 renderer pin，共 17 个受维护单元。计费日历、队列图片预算、canonical session 适配、runtime context pressure 和 resume/compaction progress 等 follow-up fix 仍归所属 owner，不增加语义补丁数量。固定上游至当前 HEAD 共 41 个线性提交：原 40 个补丁逐项重放，另 1 个为本轮生成物与台账维护提交；准确提交列表以本文给出的 `git log` 命令为准。
 - 同步入口：`scripts/jawa-upstream-sync.sh`
 - 临时 worktree：只允许位于仓库内 `.worktree/<task>`
 
 本台账描述行为契约，不把某次提交 SHA 当成真源。每次重放后，准确提交以：
 
 ```sh
-git log --reverse --format='%H %s' 62862f48a6923cada12f629da150cc098f25002d..HEAD
+git log --reverse --format='%H %s' 675b5741f587b6faa9b1fff6e5b01f563cdc2e7b..HEAD
 ```
 
 为准。最后一个提交不能在自己的正文中记录自己的 SHA，避免自指。
@@ -713,6 +713,13 @@ Thought/Image 点击区域过大、hover 抖动、展开向下顶、选择文字
 - subagent worktree owner 继续复用 upstream boot assembly；冲突后删除未使用的旧 `workspacelease` import，不引入第二个 lease owner。
 - Desktop contract、migration inventory 与 repolint baseline 均从最终集成树重建，不选择任一冲突侧的陈旧文件：inventory 922 项，repolint baseline 1182 findings / 435 files。
 - 最终仍为 14 个产品语义 owner、2 个维护闸门和 1 个临时 renderer pin，共 17 个受维护单元；依赖图保持单向，无循环。
+
+## 2026-09-24 queued guidance identity 重放判定
+
+- 固定目标为 `675b5741f587b6faa9b1fff6e5b01f563cdc2e7b`，相对上一固定基线新增 3 个 upstream 提交。`6448d8c98` 修复 queued guidance 的 live receipt 与 durable history 重复展示；`b12145f9d` 和 `675b5741f` 修正 Desktop titlebar 与 archived session 可见性。
+- 原 40 个本地提交保持顺序重放。唯一源码冲突在 Desktop `historyItems.ts`：保留 upstream 的 notice message identity，同时保留本地 typed `kind` 投影，确保 applied/unapplied guidance 在 event-first、history-first、legacy、local 和 remote 路径只出现一行。Go agent/transcript/inbox 回归与前端 transcript 测试组覆盖该契约。
+- 前端 typecheck 揭示旧 `types.ts` 仍重复声明 `HistoryToolCall`，而 `resultObservation` 已在独立 `historyToolTypes.ts`。删除旧声明，以独立类型为唯一真源；不改变 wire 格式或 runtime 行为。
+- Desktop inventory 与 repolint baseline 从最终集成树重建，仍为 922 项与 1182 findings / 435 files。产品语义 owner 仍为 14 个，维护闸门 2 个，renderer pin 1 个，无新增语义依赖。
 
 ## 每次追上游的执行协议
 

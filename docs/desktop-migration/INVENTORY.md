@@ -236,7 +236,7 @@ Every entry carries one class: `keep-business` keeps its Go implementation and c
 | `GetSessionComposerState` | `(ref session.SessionRef) (SessionComposerState, error)` | desktop/session_composer_state.go:100 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `GetSessionDraft` | `(draftID string) (SessionDraftView, error)` | desktop/session_draft.go:292 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `GetSessionDraftState` | `(draftID string) (SessionDraftState, error)` | desktop/session_draft.go:129 | keep-business (保留业务实现) | hostrpc desktop/invoke |
-| `GetSessionOrganization` | `(workspace SessionOrganizationWorkspace) (SessionOrganizationSnapshot, error)` | desktop/session_organization.go:241 | keep-business (保留业务实现) | hostrpc desktop/invoke |
+| `GetSessionOrganization` | `(workspace SessionOrganizationWorkspace) (SessionOrganizationSnapshot, error)` | desktop/session_organization.go:246 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `GetSessionPreparation` | `(operationID string) (SessionPreparationView, error)` | desktop/session_preparation.go:186 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `GetSessionUpgradeStatus` | `() (SessionUpgradeStatus, error)` | desktop/session_recovery_api.go:79 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `GetSessionVersionState` | `(key ProjectTopicKey) SessionVersionStateView` | desktop/recovery_lineage.go:54 | keep-business (保留业务实现) | hostrpc desktop/invoke |
@@ -791,7 +791,7 @@ Every entry carries one class: `keep-business` keeps its Go implementation and c
 | `UpdateMCPServer` | `(name string, in MCPServerInput) error` | desktop/app.go:8271 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `UpdatePlugin` | `(name string) (string, error)` | desktop/plugin_packages_app.go:291 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `UpdateRemoteHost` | `(id string, in RemoteHostInput) (RemoteHostView, error)` | desktop/remote_app.go:317 | keep-business (保留业务实现) | hostrpc desktop/invoke |
-| `UpdateSessionOrganization` | `(workspace SessionOrganizationWorkspace, expectedRevision uint64, mutation SessionOrganizationMutation) (SessionOrganizationSnapshot, error)` | desktop/session_organization.go:249 | keep-business (保留业务实现) | hostrpc desktop/invoke |
+| `UpdateSessionOrganization` | `(workspace SessionOrganizationWorkspace, expectedRevision uint64, mutation SessionOrganizationMutation) (SessionOrganizationSnapshot, error)` | desktop/session_organization.go:254 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `UpdateSubagentProfile` | `(name string, scope string, input SubagentProfileInput) error` | desktop/subagents_app.go:150 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `UpgradeDeepSeekProviderAccess` | `(name string) (string, error)` | desktop/settings_app.go:2591 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `UsageStats` | `(req UsageStatsRequest) (UsageStatsRange, error)` | desktop/stats_app.go:45 | keep-business (保留业务实现) | hostrpc desktop/invoke |
