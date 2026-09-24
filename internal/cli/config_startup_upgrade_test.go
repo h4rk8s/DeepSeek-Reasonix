@@ -47,6 +47,30 @@ command = "legacy-bin"
 	}
 }
 
+func TestRunLoadsProjectPluginsWithoutPersistingMigration(t *testing.T) {
+	isolateCLIConfigHome(t)
+	t.Chdir(t.TempDir())
+	if err := os.WriteFile("reasonix.toml", []byte(`
+[[plugins]]
+name = "cwd-project"
+command = "cwd-project-bin"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out := captureStdout(t, func() {
+		if rc := Run([]string{"mcp", "list"}, "test-version"); rc != 0 {
+			t.Fatalf("mcp list rc = %d, want 0", rc)
+		}
+	})
+	if !strings.Contains(out, "cwd-project") {
+		t.Fatalf("mcp list should include the project-local plugin:\n%s", out)
+	}
+	if _, err := os.Stat(config.UserConfigPath()); !os.IsNotExist(err) {
+		t.Fatalf("ordinary CLI startup persisted project config into user config: %v", err)
+	}
+}
+
 func TestRunDoesNotPersistUserConfigUpgradesOnStartup(t *testing.T) {
 	isolateCLIConfigHome(t)
 	path := config.UserConfigPath()

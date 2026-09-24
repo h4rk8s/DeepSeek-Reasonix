@@ -3,7 +3,7 @@
 
 export const DESKTOP_PROTOCOL_VERSION = 11;
 
-export const DESKTOP_CONTRACT_DIGEST = "sha256:8bd3b74b195c2d40ffd312b3df9b52a65d3836f894ca6be1e2459ae56ce03f78";
+export const DESKTOP_CONTRACT_DIGEST = "sha256:a4f7e08811772eacee95937b4013cc85164641fc5a2fb1223a9d688169d42c27";
 
 export const DESKTOP_COMMANDS = [
   "AIRenameSession",
@@ -858,6 +858,7 @@ export interface CostQuote {
   rateDate?: string;
   rateBand?: string;
   ratedAt?: string;
+  rateScheduleId?: string;
   incompleteReason?: string;
   legacyEstimate?: boolean;
   catalogSource?: string;
@@ -1426,6 +1427,13 @@ export interface AskQuestion {
   multi?: boolean;
 }
 
+export interface BackgroundJob {
+  id: string;
+  kind: string;
+  status: string;
+  sessionId?: string;
+}
+
 export interface CacheDiagnostics {
   prefixHash: string;
   prefixChanged: boolean;
@@ -1547,7 +1555,9 @@ export interface Event {
   sessionReset?: boolean;
   workspace?: WorkspaceChanged | null;
   phase?: string;
+  modelRef?: string;
   completion?: CompletionSummary | null;
+  backgroundJob?: BackgroundJob | null;
 }
 
 export interface ExtensionActionRef {
@@ -1788,6 +1798,7 @@ export interface Usage {
   reasoningTokens?: number;
   estimated?: boolean;
   source?: string;
+  model?: string;
   cacheDiagnostics?: CacheDiagnostics | null;
   sessionCacheHitTokens: number;
   sessionCacheMissTokens: number;
@@ -5682,6 +5693,7 @@ export interface Message {
   completionReceipt?: CompletionReceipt | null;
   completionSummary?: CompletionSummary | null;
   turnId?: string;
+  kind?: string;
   role: string;
   content: string;
   detail?: string;
@@ -5724,6 +5736,7 @@ export interface Message {
   readCompletion?: ReadCompletion | null;
   protocolRecovery?: ProtocolRecoveryAction | null;
   diagnostic?: FailureDiagnostic | null;
+  missing?: string[];
   serverSearch?: ServerSearchCall[];
   attachments?: Attachment[];
 }

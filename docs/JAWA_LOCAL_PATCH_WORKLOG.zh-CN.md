@@ -1,20 +1,20 @@
 # Jawa 本地 Reasonix 语义补丁台账
 
-更新时间：2026-09-23
+更新时间：2026-09-24
 
 ## 维护基线
 
 - 唯一长期分支：`jawa/reasonix-composer-state-visibility`
 - 主 checkout：`/Users/jawa/Lab/2026-07-06-reasonix-dev`
-- 本轮固定上游：`4fad310c931e4c24e267fbee20276f54a0fe6122`（`desktop-v1.38.11-80-g4fad310c9`）
-- 补丁结构：14 个产品语义 owner + 2 个维护闸门 + 1 个临时 renderer pin，共 17 个受维护单元。计费日历、队列图片预算、canonical session 适配、runtime context pressure 和 resume/compaction progress 等 follow-up fix 仍归所属 owner，不增加语义补丁数量。固定上游至当前 HEAD 共 39 个线性提交，其中 38 个实现/维护提交，另 1 个为台账口径修正；准确提交列表以本文给出的 `git log` 命令为准。
+- 本轮固定上游：`62862f48a6923cada12f629da150cc098f25002d`（`desktop-v1.38.12-6-g62862f48a`）
+- 补丁结构：14 个产品语义 owner + 2 个维护闸门 + 1 个临时 renderer pin，共 17 个受维护单元。计费日历、队列图片预算、canonical session 适配、runtime context pressure 和 resume/compaction progress 等 follow-up fix 仍归所属 owner，不增加语义补丁数量。固定上游至当前 HEAD 共 40 个线性提交：原 39 个补丁逐项重放，另 1 个为本轮生成物与台账维护提交；准确提交列表以本文给出的 `git log` 命令为准。
 - 同步入口：`scripts/jawa-upstream-sync.sh`
 - 临时 worktree：只允许位于仓库内 `.worktree/<task>`
 
 本台账描述行为契约，不把某次提交 SHA 当成真源。每次重放后，准确提交以：
 
 ```sh
-git log --reverse --format='%H %s' 4fad310c931e4c24e267fbee20276f54a0fe6122..HEAD
+git log --reverse --format='%H %s' 62862f48a6923cada12f629da150cc098f25002d..HEAD
 ```
 
 为准。最后一个提交不能在自己的正文中记录自己的 SHA，避免自指。
@@ -702,6 +702,17 @@ Thought/Image 点击区域过大、hover 抖动、展开向下顶、选择文字
 - 本地契约：`turnRuntime.usedAnyTool` 为真时，reasoning-only terminal 进入既有 bounded visible-final retry；没有工具的普通 clean stop 不变。判断只依赖 typed turn state，不解析 reasoning 文本。
 - 该行为由新增的 final-response completion owner 持有，不并入 ContextManager、CLI renderer 或 transcript owner。结构更新为 14 个产品语义 owner、2 个维护闸门和 1 个临时 renderer pin，共 17 个受维护单元；依赖保持单向，无循环。
 - `repolint` baseline 从最终树重建为 1191 个 finding、435 个文件；新增回归位于独立测试文件，不继续扩大既有超大 `empty_final_test.go`。
+
+## 2026-09-24 v1.38.12 + main-v2 重放判定
+
+- 固定目标为 `62862f48a6923cada12f629da150cc098f25002d`，相对上一固定基线新增 41 个 upstream 提交；原 39 个本地提交保持顺序重放，没有退休、新增或合并产品语义 owner。
+- upstream 本轮主要增加 provider transport diagnostics、canonical session/history paging、model change 时 background gateway 保留以及 Desktop/release 维护；共享 core 改进全部吸收，Desktop 仍只作为共享 core 的编译与契约验证面，不改变 CLI-only 交付。
+- config owner 拒绝 upstream 新增的 ordinary startup auto-rewrite：普通 `mcp list`、启动和只读检查可以在内存中理解旧 schema，但不得静默迁移或改写 `~/.reasonix/config.toml`。显式 config edit/upgrade 仍是唯一写入入口；相关 upstream 测试改写为字节级不变契约。
+- background jobs 同时保留 upstream 的 session-bound sink 与本地 lifecycle/usage attribution：notice、started、completed、failed、cancelled 和 teardown timeout 全部发送到绑定会话，避免 model change 或 gateway 重建后串到当前会话。
+- canonical session owner 在 controller rebuild 时优先绑定 Session Service 派生的 jobs 目录，同时保留 upstream replacement-in-progress guard；不支持 canonical runtime state 的嵌入实现继续使用 legacy active-session path fallback。
+- subagent worktree owner 继续复用 upstream boot assembly；冲突后删除未使用的旧 `workspacelease` import，不引入第二个 lease owner。
+- Desktop contract、migration inventory 与 repolint baseline 均从最终集成树重建，不选择任一冲突侧的陈旧文件：inventory 922 项，repolint baseline 1182 findings / 435 files。
+- 最终仍为 14 个产品语义 owner、2 个维护闸门和 1 个临时 renderer pin，共 17 个受维护单元；依赖图保持单向，无循环。
 
 ## 每次追上游的执行协议
 

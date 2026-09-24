@@ -68,7 +68,6 @@ import (
 	"reasonix/internal/tool"
 	"reasonix/internal/tool/builtin"
 	"reasonix/internal/tool/sessiontool"
-	"reasonix/internal/workspacelease"
 	"reasonix/internal/worktree"
 )
 
