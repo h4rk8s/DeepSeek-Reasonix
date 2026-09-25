@@ -69,7 +69,7 @@ func (m *chatTUI) syncScrollModeAfterGesture() {
 }
 
 // useLegacyViewportScrollClear limits the application-level redraw workaround
-// to Warp, where Bubble Tea's scroll optimization can strand stale rows. It is
+// to terminals where Bubble Tea's scroll optimization can strand stale rows. It is
 // disabled on Windows even if Warp identifies itself there because Bubble Tea
 // already avoids the incompatible optimization on that platform, and an extra
 // asynchronous ClearScreen visibly flickers (#8090).
@@ -79,8 +79,13 @@ func useLegacyViewportScrollClear(goos string, environ []string) bool {
 	}
 	for _, entry := range environ {
 		key, value, ok := strings.Cut(entry, "=")
-		if ok && key == "TERM_PROGRAM" && strings.EqualFold(strings.TrimSpace(value), "WarpTerminal") {
-			return true
+		if ok && key == "TERM_PROGRAM" {
+			switch strings.ToLower(strings.TrimSpace(value)) {
+			case "warpterminal":
+				return true
+			case "ghostty":
+				return goos == "darwin"
+			}
 		}
 	}
 	return false

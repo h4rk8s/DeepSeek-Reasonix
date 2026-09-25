@@ -145,7 +145,7 @@ type chatTUI struct {
 	// Ctrl+Y should restore after toggling the canonical danger-full-access
 	// preset under the user-facing YOLO label.
 	yoloRestoreToolApprovalMode string
-	// legacyScrollClear keeps the per-offset ClearScreen workaround only for Warp.
+	// legacyScrollClear keeps the per-offset ClearScreen workaround for affected terminals.
 	legacyScrollClear bool
 	// sessionSwitch suppresses that workaround during a transcript rebuild (#5441).
 	sessionSwitch bool
@@ -1759,13 +1759,8 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "ctrl+l":
-			if m.state != tuiRunning {
-				m.finalizeStreamed()
-				m.clearTranscriptDisplay()
-				m.commitTranscriptSource(transcriptSource{kind: transcriptSourceBanner})
-				m.transcriptDirty = true
-				m.forceGotoBottom = true
-				m.notice(i18n.M.SlashClsDone)
+			if clear := m.handleCtrlL(); clear != nil {
+				cmds = append(cmds, clear)
 			}
 			return m, finalize(m, cmds)
 		case "ctrl+o":
