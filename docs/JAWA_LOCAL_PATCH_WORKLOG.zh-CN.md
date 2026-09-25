@@ -1,20 +1,20 @@
 # Jawa 本地 Reasonix 语义补丁台账
 
-更新时间：2026-09-24
+更新时间：2026-09-25
 
 ## 维护基线
 
 - 唯一长期分支：`jawa/reasonix-composer-state-visibility`
 - 主 checkout：`/Users/jawa/Lab/2026-07-06-reasonix-dev`
-- 本轮固定上游：`675b5741f587b6faa9b1fff6e5b01f563cdc2e7b`
-- 补丁结构：14 个产品语义 owner + 2 个维护闸门 + 1 个临时 renderer pin，共 17 个受维护单元。计费日历、队列图片预算、canonical session 适配、runtime context pressure 和 resume/compaction progress 等 follow-up fix 仍归所属 owner，不增加语义补丁数量。固定上游至当前 HEAD 共 41 个线性提交：原 40 个补丁逐项重放，另 1 个为本轮生成物与台账维护提交；准确提交列表以本文给出的 `git log` 命令为准。
+- 本轮固定上游：`6845b6de3c5e079737a3b010ebcdd87f6cd0228c`（v1.39.0）
+- 补丁结构：14 个产品语义 owner + 2 个维护闸门 + 1 个临时 renderer pin，共 17 个受维护单元。计费日历、队列图片预算、canonical session 适配、runtime context pressure 和 resume/compaction progress 等 follow-up fix 仍归所属 owner，不增加语义补丁数量。固定上游至当前 HEAD 共 42 个线性提交：原 41 个补丁逐项重放，另 1 个为本轮结构基线与台账维护提交；准确提交列表以本文给出的 `git log` 命令为准。
 - 同步入口：`scripts/jawa-upstream-sync.sh`
 - 临时 worktree：只允许位于仓库内 `.worktree/<task>`
 
 本台账描述行为契约，不把某次提交 SHA 当成真源。每次重放后，准确提交以：
 
 ```sh
-git log --reverse --format='%H %s' 675b5741f587b6faa9b1fff6e5b01f563cdc2e7b..HEAD
+git log --reverse --format='%H %s' 6845b6de3c5e079737a3b010ebcdd87f6cd0228c..HEAD
 ```
 
 为准。最后一个提交不能在自己的正文中记录自己的 SHA，避免自指。
@@ -720,6 +720,13 @@ Thought/Image 点击区域过大、hover 抖动、展开向下顶、选择文字
 - 原 40 个本地提交保持顺序重放。唯一源码冲突在 Desktop `historyItems.ts`：保留 upstream 的 notice message identity，同时保留本地 typed `kind` 投影，确保 applied/unapplied guidance 在 event-first、history-first、legacy、local 和 remote 路径只出现一行。Go agent/transcript/inbox 回归与前端 transcript 测试组覆盖该契约。
 - 前端 typecheck 揭示旧 `types.ts` 仍重复声明 `HistoryToolCall`，而 `resultObservation` 已在独立 `historyToolTypes.ts`。删除旧声明，以独立类型为唯一真源；不改变 wire 格式或 runtime 行为。
 - Desktop inventory 与 repolint baseline 从最终集成树重建，仍为 922 项与 1182 findings / 435 files。产品语义 owner 仍为 14 个，维护闸门 2 个，renderer pin 1 个，无新增语义依赖。
+
+## 2026-09-25 v1.39.0 重放判定
+
+- 固定目标为 `6845b6de3c5e079737a3b010ebcdd87f6cd0228c`，相对上一固定基线新增 3 个 upstream 提交。上游将普通 provider 错误改为单次快速失败，同时保留协议/context 专用的有界修复；另修复损坏历史 tool args、缺失历史图片和 extension replacement 对话的 replay。
+- 原 41 个本地提交按顺序完整重放。`range-diff` 有 40 项逐项相等，唯一非机械差异是计费补丁与上游 `internal/provider/auxiliary_recovery.go` 的失败策略改写相交。采用上游单次失败策略，仅补回本地 `RequestStartedAt` 归因；不复活已删除的普通错误重试。
+- replay 仍以 canonical session/transcript 为 owner，不增加第二套读取器；本轮无产品语义 owner 退休、新增、合并或循环依赖。Desktop contract 与 inventory 生成结果不变；结构 baseline 因上游源码尺寸变化重建。
+- 验证：主模块 `go test -count=1 ./...`、`go vet ./...`、TUI 专项、`repolint` 和 inventory check 通过；Desktop 的 HistoryMessages、NativeHistory、ProtocolRecoveryHistory 与中断恢复定向用例通过。Desktop 根包全量测试仍在 Go 默认 10 分钟上限超时，不记为通过；当前用户交付仅安装 CLI，Desktop 全量测试容量问题保留为已知缺口。
 
 ## 每次追上游的执行协议
 
